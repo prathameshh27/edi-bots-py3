@@ -5,6 +5,10 @@ Author
 ======
 * Ludovic Watteaux
 
+Bots 4.0
+========
+* Prathamesh Pavnoji (stabilisation for production use, database support, migration tools, tests, manual)
+
 Contributors
 ============
 * Ludovic Watteaux
