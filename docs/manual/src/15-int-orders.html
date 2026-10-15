@@ -1,0 +1,2160 @@
+<section id="int-orders-in" data-title="Tutorial: orders in from a partner" data-group="Integration tutorials">
+<h2>Tutorial: orders in from a partner</h2>
+<p class="lead">A retailer, PartnerA, sends you X12 850 purchase orders. In this tutorial you build the complete inbound flow the way it runs in production: Bots fetches the orders, checks them, sends a 997 acknowledgement back, and delivers every order twice to your ERP, as a csv file and as rows in two database tables. It takes about two hours. Do <a href="#tutorial-first-route">Tutorial: your first route</a> and <a href="#tutorial-first-translation">Tutorial: your first translation</a> first.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>PartnerA puts order files on its server. Bots picks them up, reads each order in the file, and checks it. It tells PartnerA "received" with a small 997 file. Each good order goes to your ERP: once as a spreadsheet-like csv file and once straight into the ERP database. A bad order is stopped and shown as an error, and the good orders in the same file still go through.</p></div>
+
+<h3 id="int-orders-in--build">What you will build</h3>
+<p>MyCompany sells office supplies to PartnerA, a retailer. PartnerA sends purchase orders as X12 850 (version 004010) files, several orders in one file. PartnerA also has a test system that sends test orders with another ID, <code>PARTNERATEST</code>. Your ERP wants each order as a csv file in a folder (production and test orders in separate folders) and also as rows in its tables <code>edi_orders</code> (one row per order) and <code>edi_order_lines</code> (one row per order line). PartnerA wants a 997 for every file.</p>
+<div class="diagram"><svg viewBox="0 0 760 300" width="760" role="img" aria-label="Orders in: partnera_sftp_in receives X12 850 files; route orders_in translates each order twice (to the database object and to csv) and makes a 997; erp_db_out writes the database tables, erp_orders_out and erp_orders_test_out write csv files, partnera_sftp_out sends the 997 back">
+<defs><marker id="arrow-intin-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="105" width="170" height="90" rx="10"/><text x="95" y="135" text-anchor="middle" font-weight="600">1. Receive</text><text class="small" x="95" y="157" text-anchor="middle">partnera_sftp_in</text><text class="small" x="95" y="177" text-anchor="middle">X12 850 files</text>
+<path class="arrow" d="M184,150 L226,150" marker-end="url(#arrow-intin-1)"/>
+<rect class="box mid" x="230" y="85" width="220" height="130" rx="10"/><text x="340" y="115" text-anchor="middle" font-weight="600">2. Translate (orders_in)</text><text class="small" x="340" y="140" text-anchor="middle">check envelope, split orders</text><text class="small" x="340" y="160" text-anchor="middle">orders_x12_to_db, then</text><text class="small" x="340" y="180" text-anchor="middle">orders_x12_to_csv (alt csv)</text><text class="small" x="340" y="200" text-anchor="middle">997 per group</text>
+<path class="arrow" d="M454,120 L506,45" marker-end="url(#arrow-intin-1)"/>
+<path class="arrow" d="M454,150 L506,150" marker-end="url(#arrow-intin-1)"/>
+<path class="arrow" d="M454,180 L506,255" marker-end="url(#arrow-intin-1)"/>
+<rect class="box out" x="510" y="10" width="240" height="70" rx="10"/><text x="630" y="38" text-anchor="middle" font-weight="600">3a. erp_db_out</text><text class="small" x="630" y="60" text-anchor="middle">edi_orders + edi_order_lines</text>
+<rect class="box out" x="510" y="115" width="240" height="70" rx="10"/><text x="630" y="143" text-anchor="middle" font-weight="600">3b. erp_orders_out / _test_out</text><text class="small" x="630" y="165" text-anchor="middle">one csv file per order</text>
+<rect class="box out" x="510" y="220" width="240" height="70" rx="10"/><text x="630" y="248" text-anchor="middle" font-weight="600">3c. partnera_sftp_out</text><text class="small" x="630" y="270" text-anchor="middle">997 back to PartnerA</text>
+</svg></div>
+<ol>
+<li>The channel <code>partnera_sftp_in</code> fetches the files. In this tutorial it is a file channel on a folder; for real use you change it to SFTP (Part 5 shows the settings).</li>
+<li>The route <code>orders_in</code> reads each file as an X12 interchange. Bots checks the envelope (ISA/GS/ST and their counts), finds the sender (<code>PARTNERA</code> or <code>PARTNERATEST</code>) and the test indicator (ISA15), and splits the file into orders.</li>
+<li>For each order the translation runs the mapping <code>orders_x12_to_db</code>. It checks the order, stops duplicates and builds a Python object for the database. It then asks Bots for a second translation of the same order (a <b>chained translation</b> with alt <code>csv</code>), which runs <code>orders_x12_to_csv</code> and makes the csv file.</li>
+<li>Because of a confirm rule, Bots makes a 997 for each functional group (GS) of the file.</li>
+<li>Four route parts deliver the results: the database object to <code>erp_db_out</code>, production csv files to <code>erp_orders_out</code>, test csv files to <code>erp_orders_test_out</code>, the 997 to <code>partnera_sftp_out</code>.</li>
+<li>The communication script of <code>erp_db_out</code> inserts the order header and its lines in one database transaction.</li>
+</ol>
+
+<h3 id="int-orders-in--need">What you need</h3>
+<ul>
+<li>Bots 4.0.0 installed, with an environment you can use for this tutorial (see <a href="#environments">Environments</a>). This tutorial was checked with Bots 4.0.0 on Windows with SQLite; every input and output below is copied from those runs.</li>
+<li>The pages <a href="#editype-x12">X12</a>, <a href="#channel-database">Database channels</a>, <a href="#translations">Translations</a> and <a href="#acknowledgements">Acknowledgements</a> as reference.</li>
+<li>For the database: SQLite needs nothing extra. For MySQL/MariaDB or PostgreSQL install the driver (see <a href="#channel-database">Database channels</a>).</li>
+<li>The specification of your partner: its ISA and GS IDs and qualifiers for production and test, the version (here 004010), and which segments it sends. See <a href="#int-overview">Planning an integration</a>.</li>
+</ul>
+<p>The files you create (paths relative to the environment folder):</p>
+<div class="table-wrap"><table>
+<tr><th>File</th><th>What it is</th><th>Part</th></tr>
+<tr><td><code>botssys/erp.sqlite3</code> (from <code>erp_schema.sql</code>)</td><td>The ERP database of this tutorial (SQLite). Also used by <a href="#int-orders-out">the outbound tutorial</a>.</td><td>1</td></tr>
+<tr><td><code>usersys/grammars/x12/x12.py</code></td><td>Envelope grammar: ISA, GS, GE, IEA.</td><td>2</td></tr>
+<tr><td><code>usersys/grammars/x12/850004010.py</code></td><td>Message grammar of the 850 (cut down).</td><td>2</td></tr>
+<tr><td><code>usersys/grammars/x12/997004010.py</code></td><td>Message grammar of the 997 that Bots writes.</td><td>2</td></tr>
+<tr><td><code>usersys/grammars/csv/orders_erp.py</code></td><td>Grammar of the csv file for the ERP.</td><td>2</td></tr>
+<tr><td><code>usersys/partners/x12/PARTNERA.py</code>, <code>PARTNERATEST.py</code></td><td>Partner syntax: qualifiers, version, test indicator.</td><td>3</td></tr>
+<tr><td><code>usersys/mappings/x12/orders_common.py</code></td><td>Shared code: reads one 850 into a Python dict and checks it.</td><td>4</td></tr>
+<tr><td><code>usersys/mappings/x12/orders_x12_to_db.py</code></td><td>Mapping 850 to the database object; duplicate check; chains to the csv mapping.</td><td>4</td></tr>
+<tr><td><code>usersys/mappings/x12/orders_x12_to_csv.py</code></td><td>Mapping 850 to the csv file.</td><td>4</td></tr>
+<tr><td><code>usersys/communicationscripts/erp_db_out.py</code></td><td>Writes an order in the tables, in one transaction.</td><td>5</td></tr>
+<tr><td><code>botssys/infile/partnera/*.x12</code></td><td>The test files from PartnerA.</td><td>7</td></tr>
+</table></div>
+<p>In the web interface you add 3 partners, 5 channels, 2 translations, a route with 4 parts and 1 confirm rule.</p>
+
+<h3 id="int-orders-in--part1">Part 1: The environment and the ERP database</h3>
+<ol class="steps">
+<li><b>Make or choose an environment</b> for the tutorial, for example <code>C:\edi\tutorial</code> or <code>/srv/edi/tutorial</code>, with <code>bots-init</code> (see <a href="#environments">Environments</a>). All paths below are relative to that folder.</li>
+<li><b>Turn on control numbers per partner.</b> In <code>config/bots.ini</code>, section <code>[settings]</code>, set:
+<pre><code class="language-ini">interchangecontrolperpartner = True</code></pre>
+With this setting the ISA13 control number of the files you send counts per sender and receiver: PartnerA and its test system each get their own row of numbers, starting at 1. Without it there is one counter per sender (MyCompany) for all partners. Decide this before the first file is sent; see <a href="#counters">Counters</a> for what happens to the numbers when you change it later.</li>
+<li><b>Make the ERP database.</b> In real life the ERP has its tables already and its administrator gives you a database login. For the tutorial you make a SQLite file <code>botssys/erp.sqlite3</code> with these tables (the last four are for <a href="#int-orders-out">the outbound tutorial</a>). Save the text as <code>erp_schema.sql</code>:
+<pre><code class="language-text">-- Tables of the ERP side (here: SQLite). Bots writes the first two; the ERP fills the others.
+CREATE TABLE edi_orders (
+    partner         VARCHAR(35) NOT NULL,
+    order_no        VARCHAR(22) NOT NULL,
+    ordered_on      CHAR(8)     NOT NULL,
+    deliver_by      CHAR(8),
+    buyer_dept      VARCHAR(30),
+    currency        CHAR(3),
+    recipient_code  VARCHAR(20),
+    recipient_name  VARCHAR(60),
+    shipto_addr1    VARCHAR(55),
+    recipient_city  VARCHAR(30),
+    recipient_state CHAR(2),
+    shipto_zip      VARCHAR(15),
+    test_flag       CHAR(1),
+    received_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (partner, order_no)
+);
+CREATE TABLE edi_order_lines (
+    partner         VARCHAR(35) NOT NULL,
+    order_no        VARCHAR(22) NOT NULL,
+    line_seq        VARCHAR(6)  NOT NULL,
+    buyer_item      VARCHAR(48),
+    vendor_item     VARCHAR(48) NOT NULL,
+    upc             VARCHAR(14),
+    item_descr      VARCHAR(80),
+    qty             DECIMAL(15,3) NOT NULL,
+    unit_code       CHAR(2)     NOT NULL,
+    price_each      DECIMAL(15,4),
+    PRIMARY KEY (partner, order_no, line_seq)
+);
+-- order acknowledgements: one row per order line, filled by the ERP
+CREATE TABLE edi_ack_lines (
+    partner         VARCHAR(35) NOT NULL,
+    order_no        VARCHAR(22) NOT NULL,
+    line_seq        VARCHAR(6)  NOT NULL,
+    ack_code        CHAR(2)     NOT NULL,   -- IA accepted, IQ quantity changed, IR rejected, IB backordered
+    qty             DECIMAL(15,3) NOT NULL,
+    unit_code       CHAR(2)     NOT NULL,
+    price_each      DECIMAL(15,4),
+    promise_date    CHAR(8),
+    send_status     CHAR(5)     NOT NULL DEFAULT 'NEW',   -- NEW, SENT, ERROR
+    sent_at         TIMESTAMP,
+    PRIMARY KEY (partner, order_no, line_seq)
+);
+-- ship notices: shipment -&gt; packages (cartons) -&gt; package lines
+CREATE TABLE edi_shipments (
+    shipment_no     VARCHAR(30) NOT NULL PRIMARY KEY,   -- also the bill of lading number
+    partner         VARCHAR(35) NOT NULL,
+    order_no        VARCHAR(22) NOT NULL,
+    shipped_date    CHAR(8)     NOT NULL,
+    carrier_scac    VARCHAR(4),
+    gross_weight    DECIMAL(10,2),
+    send_status     CHAR(5)     NOT NULL DEFAULT 'NEW',
+    sent_at         TIMESTAMP
+);
+CREATE TABLE edi_packages (
+    shipment_no     VARCHAR(30) NOT NULL,
+    package_no      VARCHAR(20) NOT NULL,              -- SSCC-18 of the carton label
+    tracking_no     VARCHAR(30),
+    carton_weight   DECIMAL(10,2),
+    PRIMARY KEY (shipment_no, package_no)
+);
+CREATE TABLE edi_package_lines (
+    shipment_no     VARCHAR(30) NOT NULL,
+    package_no      VARCHAR(20) NOT NULL,
+    line_seq        VARCHAR(6)  NOT NULL,
+    qty             DECIMAL(15,3) NOT NULL,
+    PRIMARY KEY (shipment_no, package_no, line_seq)
+);</code></pre>
+Then make the file. Windows:
+<pre><code class="language-powershell">cd C:\edi\tutorial
+python -c "import sqlite3; c = sqlite3.connect('botssys/erp.sqlite3'); c.executescript(open('erp_schema.sql').read()); c.commit()"</code></pre>
+Linux:
+<pre><code class="language-bash">cd /srv/edi/tutorial
+python3 -c "import sqlite3; c = sqlite3.connect('botssys/erp.sqlite3'); c.executescript(open('erp_schema.sql').read()); c.commit()"</code></pre>
+Use the Python of Bots; <code>sqlite3</code> is part of Python.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>The file <code>botssys/erp.sqlite3</code> exists. <code>python -c "import sqlite3; print(sqlite3.connect('botssys/erp.sqlite3').execute('select name from sqlite_master').fetchall())"</code> lists the six tables (and the indexes of their primary keys).</p></div>
+
+<h3 id="int-orders-in--part2">Part 2: The grammars</h3>
+<p>A <a href="#glossary">grammar</a> describes a file format. You need four. Bots 4.0 itself comes without X12 message grammars; the grammars of this tutorial are <b>cut down</b> to the segments that PartnerA sends and that you write, so that you can read them in full. They are correct for version 004010 as far as they go, but a real partner may send segments that are not in them, and Bots then rejects the file. For real partners, install complete X12 grammars from a plugin that contains them (<span class="ui">SysTasks</span> → <span class="ui">Plugins</span> → <span class="ui">Read plugin</span>, see <a href="#plugins">Plugins</a>) and compare them with the implementation guide of the partner.</p>
+<ol class="steps">
+<li><b>Write the envelope grammar</b> <code>usersys/grammars/x12/x12.py</code>. Bots reads it for every X12 file: for reading, its <code>QUERIES</code> find the sender (ISA06), the receiver (ISA08), the control number (ISA13) and the test indicator (ISA15); for writing, its <code>syntax</code> gives the defaults for the envelope of every X12 file you send.
+<pre><code class="language-python">from bots.botsconfig import *
+
+# Envelope grammar for all X12 files of this environment (ISA, GS, GE, IEA).
+# Its syntax gives the defaults for every outgoing X12 file; a partner syntax file can override them.
+syntax = {
+    'version': '00401',      # ISA12
+    'ISA05': 'ZZ',           # qualifier of the sender ID (ISA06)
+    'ISA07': 'ZZ',           # qualifier of the receiver ID (ISA08)
+    'ISA14': '0',            # do not ask the receiver for a TA1
+    'ISA15': 'P',            # production; a partner syntax can set 'T'
+}
+
+nextmessage = ({'BOTSID': 'ISA'}, {'BOTSID': 'GS'}, {'BOTSID': 'ST'})
+
+structure = [
+    {ID: 'ISA', MIN: 1, MAX: 1,
+     QUERIES: {
+         'frompartner':   {'BOTSID': 'ISA', 'ISA06': None},
+         'topartner':     {'BOTSID': 'ISA', 'ISA08': None},
+         'reference':     {'BOTSID': 'ISA', 'ISA13': None},
+         'testindicator': {'BOTSID': 'ISA', 'ISA15': None},
+     },
+     LEVEL: [
+         {ID: 'GS', MIN: 1, MAX: 99999, LEVEL: [
+             {ID: 'ST', MIN: 0, MAX: 99999,       # 0: the envelope is written without the messages
+              QUERIES: {'reference': {'BOTSID': 'ST', 'ST02': None}},
+              SUBTRANSLATION: {'BOTSID': 'ST', 'ST01': None}},
+             {ID: 'GE', MIN: 1, MAX: 1},
+         ]},
+         {ID: 'IEA', MIN: 1, MAX: 1},
+     ]},
+]
+
+recorddefs = {
+    'ISA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ISA01', 'M', (2, 2), 'ID'],
+        ['ISA02', 'M', (10, 10), 'AN'],
+        ['ISA03', 'M', (2, 2), 'ID'],
+        ['ISA04', 'M', (10, 10), 'AN'],
+        ['ISA05', 'M', (2, 2), 'ID'],
+        ['ISA06', 'M', (15, 15), 'AN'],
+        ['ISA07', 'M', (2, 2), 'ID'],
+        ['ISA08', 'M', (15, 15), 'AN'],
+        ['ISA09', 'M', (6, 6), 'DT'],
+        ['ISA10', 'M', (4, 4), 'TM'],
+        ['ISA11', 'C', (1, 1), 'AN'],
+        ['ISA12', 'M', (5, 5), 'ID'],
+        ['ISA13', 'M', (9, 9), 'N0'],
+        ['ISA14', 'M', (1, 1), 'ID'],
+        ['ISA15', 'M', (1, 1), 'ID'],
+        ['ISA16', 'C', [['ISA16.01', 'C', 1, 'AN'], ['ISA16.02', 'C', 1, 'AN']]],
+    ],
+    'GS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GS01', 'M', (2, 2), 'ID'],
+        ['GS02', 'M', (2, 15), 'AN'],
+        ['GS03', 'M', (2, 15), 'AN'],
+        ['GS04', 'M', (6, 8), 'DT'],
+        ['GS05', 'M', (4, 8), 'TM'],
+        ['GS06', 'M', (1, 9), 'N0'],
+        ['GS07', 'M', (1, 2), 'ID'],
+        ['GS08', 'M', (1, 12), 'AN'],
+    ],
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'GE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GE01', 'M', (1, 6), 'N0'],
+        ['GE02', 'M', (1, 9), 'N0'],
+    ],
+    'IEA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['IEA01', 'M', (1, 5), 'N0'],
+        ['IEA02', 'M', (9, 9), 'N0'],
+    ],
+}</code></pre>
+<ul>
+<li><code>ISA05</code>/<code>ISA07</code>: the qualifiers of the sender and receiver IDs. The default of Bots is <code>01</code> (a DUNS number); PartnerA uses <code>ZZ</code> (mutually defined).</li>
+<li><code>ISA14 '0'</code>: you do not ask for a TA1 (the default of Bots is <code>1</code>).</li>
+<li>ST has <code>MIN: 0</code>. When Bots writes the envelope, the messages are not in its tree yet; with <code>MIN: 1</code> writing fails with <code>[S03]: Record "ISA-GS-ST" occurs 0 times, min is 1.</code></li>
+</ul></li>
+<li><b>Write the 850 grammar</b> <code>usersys/grammars/x12/850004010.py</code>. The name is the message type (ST01 <code>850</code>) plus the version (GS08 <code>004010</code>):
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 850 Purchase Order, version 004010: cut down to the segments of the tutorial.
+syntax = {
+    'functionalgroup': 'PO',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BEG', MIN: 1, MAX: 1},
+        {ID: 'CUR', MIN: 0, MAX: 1},
+        {ID: 'REF', MIN: 0, MAX: 12},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'N1', MIN: 0, MAX: 200, LEVEL: [
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+            {ID: 'PER', MIN: 0, MAX: 3},
+        ]},
+        {ID: 'PO1', MIN: 1, MAX: 100000, LEVEL: [
+            {ID: 'PID', MIN: 0, MAX: 1000},
+        ]},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'BEG': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['BEG01', 'M', (2, 2), 'ID'],      # 00 original
+        ['BEG02', 'M', (2, 2), 'ID'],      # SA stand-alone order
+        ['BEG03', 'M', (1, 22), 'AN'],     # purchase order number
+        ['BEG04', 'C', (1, 30), 'AN'],
+        ['BEG05', 'M', (8, 8), 'DT'],      # order date
+    ],
+    'CUR': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CUR01', 'M', (2, 3), 'ID'],
+        ['CUR02', 'M', (3, 3), 'ID'],
+    ],
+    'REF': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['REF01', 'M', (2, 3), 'ID'],
+        ['REF02', 'C', (1, 30), 'AN'],
+        ['REF03', 'C', (1, 80), 'AN'],
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['DTM01', 'M', (3, 3), 'ID'],      # 002 delivery requested
+        ['DTM02', 'C', (8, 8), 'DT'],
+    ],
+    'N1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N101', 'M', (2, 3), 'ID'],       # ST ship to, BT bill to
+        ['N102', 'C', (1, 60), 'AN'],
+        ['N103', 'C', (1, 2), 'ID'],
+        ['N104', 'C', (2, 80), 'AN'],
+    ],
+    'N3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N301', 'M', (1, 55), 'AN'],
+        ['N302', 'C', (1, 55), 'AN'],
+    ],
+    'N4': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N401', 'C', (2, 30), 'AN'],
+        ['N402', 'C', (2, 2), 'ID'],
+        ['N403', 'C', (3, 15), 'ID'],
+        ['N404', 'C', (2, 3), 'ID'],
+    ],
+    'PER': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PER01', 'M', (2, 2), 'ID'],
+        ['PER02', 'C', (1, 60), 'AN'],
+        ['PER03', 'C', (2, 2), 'ID'],
+        ['PER04', 'C', (1, 80), 'AN'],
+    ],
+    'PO1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PO101', 'C', (1, 20), 'AN'],     # line number
+        ['PO102', 'M', (1, 15), 'R'],      # quantity
+        ['PO103', 'M', (2, 2), 'ID'],      # unit of measure
+        ['PO104', 'C', (1, 17), 'R'],      # unit price
+        ['PO105', 'C', (2, 2), 'ID'],
+        ['PO106', 'C', (2, 2), 'ID'],      # BP buyer's part number
+        ['PO107', 'C', (1, 48), 'AN'],
+        ['PO108', 'C', (2, 2), 'ID'],      # VP vendor's part number
+        ['PO109', 'C', (1, 48), 'AN'],
+        ['PO110', 'C', (2, 2), 'ID'],      # UP UPC
+        ['PO111', 'C', (1, 48), 'AN'],
+    ],
+    'PID': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PID01', 'M', (1, 1), 'ID'],
+        ['PID02', 'C', (2, 3), 'ID'],
+        ['PID03', 'C', (2, 2), 'ID'],
+        ['PID04', 'C', (1, 12), 'AN'],
+        ['PID05', 'C', (1, 80), 'AN'],
+    ],
+    'CTT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CTT01', 'M', (1, 6), 'N0'],
+        ['CTT02', 'C', (1, 10), 'R'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre></li>
+<li><b>Write the 997 grammar</b> <code>usersys/grammars/x12/997004010.py</code>. Bots writes the 997 itself, with this grammar (see <a href="#acknowledgements">Acknowledgements</a>):
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 997 Functional Acknowledgment, version 004010: cut down for the tutorial.
+syntax = {
+    'functionalgroup': 'FA',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'AK1', MIN: 1, MAX: 1},
+        {ID: 'AK2', MIN: 0, MAX: 999999, LEVEL: [
+            {ID: 'AK3', MIN: 0, MAX: 999999, LEVEL: [
+                {ID: 'AK4', MIN: 0, MAX: 99},
+            ]},
+            {ID: 'AK5', MIN: 1, MAX: 1},
+        ]},
+        {ID: 'AK9', MIN: 1, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'AK1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK101', 'M', (2, 2), 'ID'],      # GS01 of the acknowledged group
+        ['AK102', 'M', (1, 9), 'N0'],      # GS06 of the acknowledged group
+    ],
+    'AK2': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK201', 'M', (3, 3), 'ID'],      # ST01
+        ['AK202', 'M', (4, 9), 'AN'],      # ST02
+    ],
+    'AK3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK301', 'M', (2, 3), 'ID'],
+        ['AK302', 'M', (1, 6), 'N0'],
+        ['AK303', 'C', (1, 6), 'AN'],
+        ['AK304', 'C', (1, 3), 'ID'],
+    ],
+    'AK4': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK401', 'M', [['AK401.01', 'M', (1, 2), 'N0'], ['AK401.02', 'C', (1, 2), 'N0']]],
+        ['AK402', 'C', (1, 4), 'N0'],
+        ['AK403', 'M', (1, 3), 'ID'],
+        ['AK404', 'C', (1, 99), 'AN'],
+    ],
+    'AK5': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK501', 'M', (1, 1), 'ID'],      # A accepted, R rejected
+        ['AK502', 'C', (1, 3), 'ID'],
+    ],
+    'AK9': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK901', 'M', (1, 1), 'ID'],
+        ['AK902', 'M', (1, 6), 'N0'],      # number of messages in the group
+        ['AK903', 'M', (1, 6), 'N0'],      # number received
+        ['AK904', 'M', (1, 6), 'N0'],      # number accepted
+        ['AK905', 'C', (1, 3), 'ID'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre></li>
+<li><b>Write the csv grammar</b> <code>usersys/grammars/csv/orders_erp.py</code>. The ERP reads files with a header line and one line per order line; the order data are repeated on each line:
+<pre><code class="language-python">from bots.botsconfig import *
+
+# The order file for the ERP: one line per order line; the order header is repeated on every line.
+# The envelope 'csvheader' writes the field names as the first line.
+syntax = {
+    'field_sep': ';',
+    'quote_char': '"',
+    'forcequote': 0,           # quote only when needed
+    'charset': 'utf-8',
+    'noBOTSID': True,          # the lines have no record ID
+    'envelope': 'csvheader',
+    'merge': False,            # one file per order
+}
+
+structure = [
+    {ID: 'line', MIN: 1, MAX: 99999},
+]
+
+recorddefs = {
+    'line': [
+        ['BOTSID', 'M', 4, 'A'],
+        ['order_no', 'M', 22, 'A'],
+        ['partner', 'M', 35, 'A'],
+        ['ordered_on', 'M', 10, 'A'],
+        ['deliver_by', 'C', 10, 'A'],
+        ['recipient_code', 'C', 20, 'A'],
+        ['recipient_name', 'C', 60, 'A'],
+        ['shipto_addr1', 'C', 55, 'A'],
+        ['recipient_city', 'C', 30, 'A'],
+        ['recipient_state', 'C', 2, 'A'],
+        ['shipto_zip', 'C', 15, 'A'],
+        ['line_seq', 'M', 6, 'A'],
+        ['buyer_item', 'C', 48, 'A'],
+        ['vendor_item', 'M', 48, 'A'],
+        ['upc', 'C', 14, 'A'],
+        ['item_descr', 'C', 80, 'A'],
+        ['qty', 'M', 15, 'R'],
+        ['unit_code', 'M', 2, 'A'],
+        ['price_each', 'C', 17, 'R'],
+        ['test_flag', 'C', 1, 'A'],
+    ],
+}</code></pre>
+<code>merge: False</code> makes one file per order (the default for csv is to merge the orders of a run into one file). <code>noBOTSID</code>: the lines have no record ID; <code>csvheader</code> writes the field names as the first line.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Run <code>bots-grammarcheck -c&lt;config folder&gt; x12 850004010</code>, and the same for <code>x12 x12</code>, <code>x12 997004010</code> and <code>csv orders_erp</code>. Each ends with <code>OK - no error found in grammar</code>. An error names the record and field.</p></div>
+
+<h3 id="int-orders-in--part3">Part 3: Partners and partner settings</h3>
+<p>Bots knows the sender and receiver of a file by the IDs in ISA06 and ISA08, without the padding spaces. PartnerA sends production orders as <code>PARTNERA</code> and test orders as <code>PARTNERATEST</code>, both to <code>MYCOMPANY</code>, all with qualifier <code>ZZ</code>.</p>
+<ol class="steps">
+<li><b>Add the partners.</b> <span class="ui">Configuration</span> → <span class="ui">Partners</span> → <span class="ui">Add</span>: tick <span class="ui">Active</span>, <span class="ui">Partner identification</span> <code>MYCOMPANY</code>, <span class="ui">Name</span> <code>MyCompany</code>, <span class="ui">Save</span>. Then <code>PARTNERA</code> (<code>PartnerA</code>) and <code>PARTNERATEST</code> (<code>PartnerA test system</code>).</li>
+<li><b>Write the partner syntax</b> <code>usersys/partners/x12/PARTNERA.py</code>. When Bots writes an X12 file to (or from) this partner, these values override the envelope grammar. Put here what the partner's guide asks for:
+<pre><code class="language-python"># Settings for PartnerA (production ID PARTNERA). Used when Bots writes an X12 file to or from this partner.
+syntax = {
+    'ISA05': 'ZZ',           # qualifier of our ID (MYCOMPANY)
+    'ISA07': 'ZZ',           # qualifier of PartnerA's ID
+    'version': '00401',      # ISA12 as agreed with PartnerA
+    'ISA15': 'P',            # production data
+}</code></pre></li>
+<li><b>Write</b> <code>usersys/partners/x12/PARTNERATEST.py</code> for the test system. The only difference is <code>ISA15 'T'</code>, so every file you send to the test ID is marked as test data, also 855s, 856s and 810s from <a href="#int-orders-out">the outbound tutorial</a>:
+<pre><code class="language-python"># Settings for the test system of PartnerA (ID PARTNERATEST).
+syntax = {
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+    'version': '00401',
+    'ISA15': 'T',            # everything we send to this ID is test data
+}</code></pre></li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Many retailers use another ID in GS02/GS03 than in ISA06/ISA08, or a DUNS number with qualifier <code>01</code>. For that, Bots 4 has the syntax setting <code>IDmode</code> (partner ID <code>ISA-ID|qualifier|GS-ID</code>) and the settings <code>ISA06</code>, <code>ISA08</code>, <code>GS02</code>, <code>GS03</code> in the partner syntax. See <a href="#envelopes">Envelopes</a>. Note that Bots checks <a href="#confirm-rules">confirm rules</a> with GS02/GS03 and sends the 997 to GS02.</p></div>
+
+<h3 id="int-orders-in--part4">Part 4: The mappings and translations</h3>
+<p>Two mappings read the same 850: one for the database, one for the csv file. The code that reads and checks the order is the same for both, so it is in a separate file that both import.</p>
+<ol class="steps">
+<li><b>Write the shared code</b> <code>usersys/mappings/x12/orders_common.py</code>. It reads the order into a plain dict (<code>header</code> and a list of <code>lines</code>) and raises an error for an order the ERP can not use: no ship-to address, or a line without your item number.
+<pre><code class="language-python">"""Shared code of the two order mappings: read one X12 850 into a plain Python dict.
+Not a mapping itself (no translation uses it)."""
+from bots.botslib import MappingFormatError
+
+
+def read_order(inn):
+    """Return {'header': {...}, 'lines': [...]} for the 850 in inn; raise an error for a bad order."""
+    order_no = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+    header = {
+        'order_no': order_no,
+        'partner': inn.ta_info['frompartner'],
+        'ordered_on': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG05': None}),
+        'deliver_by': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'DTM', 'DTM01': '002', 'DTM02': None}),
+        'buyer_dept': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'REF', 'REF01': 'DP', 'REF02': None}),
+        'currency': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'CUR', 'CUR01': 'BY', 'CUR02': None}) or 'USD',
+        'test_flag': inn.ta_info['testindicator'],
+    }
+    # the ship-to address: required by our ERP
+    shipto = inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'N1', 'N101': 'ST'})
+    shipto = next(iter(shipto), None)
+    if shipto is None:
+        raise MappingFormatError('Order "%(order)s" has no ship-to address (N1*ST).', {'order': order_no})
+    header.update({
+        'recipient_code': shipto.get({'BOTSID': 'N1', 'N104': None}),
+        'recipient_name': shipto.get({'BOTSID': 'N1', 'N102': None}),
+        'shipto_addr1': shipto.get({'BOTSID': 'N1'}, {'BOTSID': 'N3', 'N301': None}),
+        'recipient_city': shipto.get({'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N401': None}),
+        'recipient_state': shipto.get({'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N402': None}),
+        'shipto_zip': shipto.get({'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N403': None}),
+    })
+    lines = []
+    for count, po1 in enumerate(inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}), start=1):
+        vendor_item = po1.get({'BOTSID': 'PO1', 'PO108': 'VP', 'PO109': None})
+        if not vendor_item:
+            raise MappingFormatError('Order "%(order)s" line %(line)s has no vendor item number (PO108 VP).',
+                                     {'order': order_no, 'line': count})
+        lines.append({
+            'order_no': order_no,
+            'partner': header['partner'],
+            'line_seq': po1.get({'BOTSID': 'PO1', 'PO101': None}) or str(count),
+            'buyer_item': po1.get({'BOTSID': 'PO1', 'PO106': 'BP', 'PO107': None}),
+            'vendor_item': vendor_item,
+            'upc': po1.get({'BOTSID': 'PO1', 'PO110': 'UP', 'PO111': None}),
+            'item_descr': po1.get({'BOTSID': 'PO1'}, {'BOTSID': 'PID', 'PID01': 'F', 'PID05': None}),
+            'qty': po1.get({'BOTSID': 'PO1', 'PO102': None}),
+            'unit_code': po1.get({'BOTSID': 'PO1', 'PO103': None}),
+            'price_each': po1.get({'BOTSID': 'PO1', 'PO104': None}),
+        })
+    return {'header': header, 'lines': lines}</code></pre>
+<ul>
+<li><code>inn.ta_info['frompartner']</code> is the sender found by the envelope grammar (<code>PARTNERA</code>); <code>inn.ta_info['testindicator']</code> is ISA15 (<code>P</code> or <code>T</code>).</li>
+<li><code>MappingFormatError</code> stops this order only. The text is what you see in <span class="ui">Incoming</span>.</li>
+</ul></li>
+<li><b>Write the database mapping</b> <code>usersys/mappings/x12/orders_x12_to_db.py</code>. For editype <code>db</code> the mapping puts any Python object in <code>out.root</code>; Bots stores it and gives it to the communication script of the database channel.
+<pre><code class="language-python">"""X12 850 from a retailer -&gt; one Python object for the database channel erp_db_out.
+After this mapping Bots runs the translation with alt 'csv' (the ERP csv file) for the same order."""
+from bots import transform
+from bots.botslib import MappingFormatError
+from .orders_common import read_order
+
+
+def main(inn, out):
+    order = read_order(inn)
+    header = order['header']
+    # botskey: the order number is shown in the reports and can be used in file names
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = header['order_no']
+
+    # a retailer sometimes sends the same order twice: stop it here, before the csv and the database
+    key = '%(partner)s/%(order_no)s' % header
+    seen = transform.persist_lookup('orders_in', key)
+    if seen is not None:
+        raise MappingFormatError('Order "%(key)s" was already received on %(seen)s.', {'key': key, 'seen': seen})
+    transform.persist_add('orders_in', key, transform.strftime('%Y-%m-%d %H:%M'))
+
+    out.root = order          # the communication script erp_db_out.py gets this object
+    return 'csv'              # chain: next translation x12 / 850004010 with alt 'csv'</code></pre>
+<ul>
+<li><b>Duplicate check</b>: <code>persist_lookup</code>/<code>persist_add</code> remember in the Bots database which orders were received (see <a href="#mapping-functions--persist">persist</a>). A second copy of an order stops here, before the csv file is made. The entries are kept for <code>maxdayspersist</code> days (default 30).</li>
+<li><b>Chained translation</b>: <code>return 'csv'</code> tells Bots to translate the same order again with the translation that has <span class="ui">Alternative translation</span> <code>csv</code>. If this mapping raises an error, there is no csv file either: the ERP gets the order in both places or in none.</li>
+</ul></li>
+<li><b>Write the csv mapping</b> <code>usersys/mappings/x12/orders_x12_to_csv.py</code>:
+<pre><code class="language-python">"""X12 850 from a retailer -&gt; the csv order file for the ERP (one line per order line)."""
+from bots import transform
+from .orders_common import read_order
+
+HEADER_FIELDS = ('order_no', 'partner', 'recipient_code', 'recipient_name', 'shipto_addr1', 'recipient_city',
+                 'recipient_state', 'shipto_zip', 'test_flag')
+LINE_FIELDS = ('line_seq', 'buyer_item', 'vendor_item', 'upc', 'item_descr', 'qty', 'unit_code', 'price_each')
+
+
+def record(values):
+    """Bots skips a whole put() if one value is None: leave out the empty values."""
+    return {key: value for key, value in values.items() if value not in (None, '')}
+
+
+def main(inn, out):
+    order = read_order(inn)
+    header = order['header']
+    out.ta_info['botskey'] = header['order_no']
+    for line in order['lines']:
+        values = {'BOTSID': 'line',
+                  'ordered_on': transform.datemask(header['ordered_on'], 'CCYYMMDD', 'CCYY-MM-DD'),
+                  'deliver_by': transform.datemask(header['deliver_by'], 'CCYYMMDD', 'CCYY-MM-DD')}
+        values.update((field, header[field]) for field in HEADER_FIELDS)
+        values.update((field, line[field]) for field in LINE_FIELDS)
+        out.putloop({'BOTSID': 'line'}).put(record(values))</code></pre>
+<div class="note warn"><span class="label">Watch out</span><p>If one value in the dict of a <code>put()</code> is <code>None</code>, Bots skips the whole <code>put()</code> without an error (the debug log says <code>"None" in put …</code>). An order without a delivery date would then lose all its fields. The helper <code>record()</code> leaves out the empty values; use it, or put optional fields in a <code>put()</code> of their own.</p></div></li>
+<li><b>Add the translations.</b> <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>, tick <span class="ui">Active</span>:
+<div class="table-wrap"><table>
+<tr><th>Fromeditype</th><th>Frommessagetype</th><th>Alternative translation</th><th>Mapping Script</th><th>Toeditype</th><th>Tomessagetype</th></tr>
+<tr><td><code>x12</code></td><td><code>850004010</code></td><td>(empty)</td><td><code>orders_x12_to_db</code></td><td><code>db</code></td><td><code>orders_db</code></td></tr>
+<tr><td><code>x12</code></td><td><code>850004010</code></td><td><code>csv</code></td><td><code>orders_x12_to_csv</code></td><td><code>csv</code></td><td><code>orders_erp</code></td></tr>
+</table></div>
+<code>orders_db</code> is a free name: editype <code>db</code> needs no grammar.</li>
+</ol>
+
+<h3 id="int-orders-in--part5">Part 5: The channels and the database script</h3>
+<ol class="steps">
+<li><b>Add the incoming channel.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> → <span class="ui">Add incoming channel</span>: <span class="ui">Idchannel</span> <code>partnera_sftp_in</code>, <span class="ui">Type</span> <code>file</code>, <span class="ui">Path</span> <code>botssys/infile/partnera</code>, <span class="ui">Filename</span> <code>*.x12</code>, tick <span class="ui">Remove</span>, <span class="ui">Charset</span> <code>us-ascii</code>. Make the folder.</li>
+<li><b>Add the outgoing file channels</b> (<span class="ui">Out</span> → <span class="ui">Add outgoing channel</span>):
+<div class="table-wrap"><table>
+<tr><th>Idchannel</th><th>Type</th><th>Path</th><th>Filename</th><th>Charset</th></tr>
+<tr><td><code>erp_orders_out</code></td><td>file</td><td><code>botssys/outfile/erp_orders</code></td><td><code>order_{botskey}_*.csv</code></td><td><code>utf-8</code></td></tr>
+<tr><td><code>erp_orders_test_out</code></td><td>file</td><td><code>botssys/outfile/erp_orders_test</code></td><td><code>order_{botskey}_*.csv</code></td><td><code>utf-8</code></td></tr>
+<tr><td><code>partnera_sftp_out</code></td><td>file</td><td><code>botssys/outfile/partnera</code></td><td><code>{topartner}_{messagetype}_{reference:0&gt;9}.x12</code></td><td><code>us-ascii</code></td></tr>
+</table></div>
+<code>{botskey}</code> is the order number the mapping set; <code>*</code> is a counter of the channel. For an X12 file, <code>{reference}</code> is the ISA13 control number; <code>:0&gt;9</code> pads it to 9 digits. So the file name tells partner, message type and control number, for example <code>PARTNERA_997004010_000000001.x12</code>. See <a href="#channels--filenames">file names</a>.</li>
+<li><b>Add the database channel</b> <span class="ui">Out</span> → <span class="ui">Add outgoing channel</span>: <span class="ui">Idchannel</span> <code>erp_db_out</code>, <span class="ui">Type</span> <code>db</code>, <span class="ui">Path</span> <code>botssys/erp.sqlite3</code>; open <span class="ui">Database specific</span> and set <span class="ui">Database</span> <code>SQLite</code>. Bots then opens the connection itself (relative paths are relative to the environment folder).</li>
+<li><b>Write the communication script</b> <code>usersys/communicationscripts/erp_db_out.py</code> (the file name is the channel ID). Bots calls <code>outcommunicate</code> once for every order, with the object the mapping made:
+<pre><code class="language-python">"""Database channel erp_db_out: writes one received order into the ERP tables edi_orders and edi_order_lines.
+Bots makes the connection (field Database of the channel), calls outcommunicate once per order, commits
+when it ends without error and rolls back when it raises an error: an order is written completely or not."""
+
+HEADER_FIELDS = ('order_no', 'partner', 'ordered_on', 'deliver_by', 'buyer_dept', 'currency',
+                 'recipient_code', 'recipient_name', 'shipto_addr1', 'recipient_city', 'recipient_state', 'shipto_zip',
+                 'test_flag')
+LINE_FIELDS = ('order_no', 'partner', 'line_seq', 'buyer_item', 'vendor_item', 'upc', 'item_descr', 'qty',
+               'unit_code', 'price_each')
+
+
+def insert_sql(table, fields):
+    return 'INSERT INTO %s (%s) VALUES (%s)' % (
+        table, ', '.join(fields), ', '.join('%%(%s)s' % field for field in fields))
+
+
+def outcommunicate(channeldict, dbconnection, db_object):
+    header = db_object['header']
+    cursor = dbconnection.cursor()
+    cursor.execute('SELECT COUNT(*) AS found FROM edi_orders WHERE partner = %(partner)s AND order_no = %(order_no)s',
+                   header)
+    if cursor.fetchone()['found']:
+        raise Exception('Order %(order_no)s of %(partner)s is already in edi_orders.' % header)
+    cursor.execute(insert_sql('edi_orders', HEADER_FIELDS), header)
+    for line in db_object['lines']:
+        cursor.execute(insert_sql('edi_order_lines', LINE_FIELDS), line)</code></pre>
+<ul>
+<li>The script does not commit. Bots commits when <code>outcommunicate</code> ends without error and rolls back when it raises one. The header and the lines of an order are written together or not at all; the other orders are not affected.</li>
+<li>The placeholders <code>%(name)s</code> work for all databases Bots connects to.</li>
+<li>The duplicate check in the script is a second safety net, for orders that reach the ERP another way.</li>
+</ul></li>
+</ol>
+<p>For a real ERP database you only change the channel. Examples:</p>
+<div class="table-wrap"><table>
+<tr><th>Database</th><th>Database (Database specific)</th><th>Host / Port</th><th>Username / Password</th><th>Path</th><th>Parameters</th></tr>
+<tr><td>SQLite (this tutorial)</td><td>SQLite</td><td>empty / 0</td><td>empty</td><td><code>botssys/erp.sqlite3</code></td><td>-</td></tr>
+<tr><td>MySQL / MariaDB</td><td>MySQL / MariaDB</td><td><code>db.example.com</code> / 0 (3306)</td><td><code>bots</code> / <code>********</code></td><td><code>erp</code></td><td><code>charset=utf8mb4</code></td></tr>
+<tr><td>PostgreSQL</td><td>PostgreSQL</td><td><code>db.example.com</code> / 0 (5432)</td><td><code>bots</code> / <code>********</code></td><td><code>erp</code></td><td><code>sslmode=require</code></td></tr>
+</table></div>
+<p>For real use, change <code>partnera_sftp_in</code> and <code>partnera_sftp_out</code> to SFTP. Keep the IDs, so routes and confirm rules stay the same:</p>
+<div class="table-wrap"><table>
+<tr><th>Field</th><th><code>partnera_sftp_in</code></th><th><code>partnera_sftp_out</code></th></tr>
+<tr><td><span class="ui">Type</span></td><td><code>sftp</code></td><td><code>sftp</code></td></tr>
+<tr><td><span class="ui">Host</span> / <span class="ui">Port</span></td><td><code>sftp.example.net</code> / <code>22</code></td><td><code>sftp.example.net</code> / <code>22</code></td></tr>
+<tr><td><span class="ui">Username</span></td><td>given by PartnerA, eg <code>mycompany</code></td><td>the same</td></tr>
+<tr><td><span class="ui">Password</span></td><td><code>********</code>, or the passphrase of the key</td><td>the same</td></tr>
+<tr><td><span class="ui">Private key file</span> (<span class="ui">Other</span>)</td><td><code>config/keys/partnera_id_ed25519</code> if PartnerA wants a key</td><td>the same</td></tr>
+<tr><td><span class="ui">Path</span></td><td>the folder where PartnerA puts the orders, eg <code>out</code></td><td>the folder where PartnerA picks up, eg <code>in</code></td></tr>
+<tr><td><span class="ui">Filename</span></td><td><code>*.x12</code> (or what PartnerA uses)</td><td><code>{topartner}_{messagetype}_{reference:0&gt;9}.x12</code></td></tr>
+<tr><td><span class="ui">Remove</span></td><td>ticked: delete on the server after download</td><td>-</td></tr>
+<tr><td><span class="ui">Tmp-part file name</span></td><td>-</td><td><code>.tmp</code> if PartnerA picks up files while they are written</td></tr>
+</table></div>
+<p>Install the SFTP library first (<code>pip install bots-ediint[sftp]</code>). See <a href="#channel-sftp">SFTP channels</a>.</p>
+
+<h3 id="int-orders-in--part6">Part 6: The route and the 997</h3>
+<ol class="steps">
+<li><b>Add the route.</b> <span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>, four times, each with <span class="ui">Idroute</span> <code>orders_in</code> and <span class="ui">Active</span> ticked:
+<div class="table-wrap"><table>
+<tr><th>Sequence</th><th>Incoming channel</th><th>Fromeditype / Frommessagetype</th><th>translate</th><th>Outgoing channel</th><th>Filtering for outchannel</th></tr>
+<tr><td>10</td><td><code>partnera_sftp_in</code></td><td><code>x12</code> / <code>x12</code></td><td>Translate</td><td><code>erp_db_out</code></td><td>Toeditype <code>db</code></td></tr>
+<tr><td>20</td><td>-</td><td>-</td><td>Nothing</td><td><code>erp_orders_out</code></td><td>Toeditype <code>csv</code>, Testindicator <code>P</code></td></tr>
+<tr><td>30</td><td>-</td><td>-</td><td>Nothing</td><td><code>erp_orders_test_out</code></td><td>Toeditype <code>csv</code>, Testindicator <code>T</code></td></tr>
+<tr><td>40</td><td>-</td><td>-</td><td>Nothing</td><td><code>partnera_sftp_out</code></td><td>Toeditype <code>x12</code>, Tomessagetype <code>997004010</code></td></tr>
+</table></div>
+Part 10 receives and translates. All results of the translation (database objects, csv files, 997s) belong to the route; each part sends only what passes its filter. Messagetype <code>x12</code> means "read the envelope and find the message type of each message".</li>
+<li><b>Add the confirm rule.</b> <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span> → <span class="ui">Add</span>: tick <span class="ui">Active</span>, <span class="ui">Confirmtype</span> <code>send a x12 confirmation (997) when receiving</code>, <span class="ui">Ruletype</span> <code>Route</code>, <span class="ui">Route</span> <code>orders_in</code>. Bots now makes a 997 for every group it receives in this route. The 997 goes from GS03 (<code>MYCOMPANY</code>) to GS02 (the sender), so test orders get a 997 to <code>PARTNERATEST</code>, with ISA15 <code>T</code> from its partner syntax.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>The 997 says the file was received and its <b>syntax</b> is correct: <code>AK5*A</code> per order and <code>AK9*A</code>. A business problem in an order (no ship-to, a duplicate) is not a reason to reject it in the 997; you tell the partner with an 855 (<a href="#int-orders-out">next tutorial</a>) or by phone. When the file itself is wrong (a count, a missing mandatory segment), Bots stops the whole file and the 997 has <code>AK5*R</code> and <code>AK9*R</code>.</p></div>
+
+<h3 id="int-orders-in--part7">Part 7: Test files</h3>
+<p>PartnerA's file with three orders. The third order has no ship-to address (only a bill-to <code>N1*BT</code>): it is the bad order. Save it as <code>botssys/infile/partnera/PA_850_20261015_0815.x12</code>:</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*PARTNERA       *ZZ*MYCOMPANY      *261015*0815*U*00401*000004711*0*P*&gt;~
+GS*PO*PARTNERA*MYCOMPANY*20261015*0815*4711*X*004010~
+ST*850*0001~
+BEG*00*SA*PA-778201**20261015~
+REF*DP*041~
+DTM*002*20261022~
+N1*ST*PartnerA Store 0112*92*0112~
+N3*100 Example Road~
+N4*Anytown*IL*60001*US~
+PO1*1*24*EA*3.15**BP*84500121*VP*MC-1001*UP*012345678905~
+PID*F****Notebook A5 lined~
+PO1*2*12*EA*7.80**BP*84500138*VP*MC-1002*UP*012345678912~
+PID*F****Desk organiser grey~
+CTT*2~
+SE*13*0001~
+ST*850*0002~
+BEG*00*SA*PA-778202**20261015~
+DTM*002*20261024~
+N1*ST*PartnerA Store 0207*92*0207~
+N3*2500 Sample Avenue~
+N4*Sampleville*CO*80001*US~
+PO1*1*6*BX*21.50**BP*84500145*VP*MC-2001*UP*012345678929~
+PID*F****Ballpoint pens blue, box of 50~
+CTT*1~
+SE*10*0002~
+ST*850*0003~
+BEG*00*SA*PA-778203**20261015~
+DTM*002*20261023~
+N1*BT*PartnerA Accounts Payable*92*9000~
+PO1*1*48*EA*1.25**BP*84500152*VP*MC-3001*UP*012345678936~
+PID*F****Sticky notes yellow~
+CTT*1~
+SE*8*0003~
+GE*3*4711~
+IEA*1*000004711~</code></pre>
+<p>A test order from PartnerA's test system, <code>botssys/infile/partnera/PA_850_20261015_0930.x12</code>. Note ISA06 <code>PARTNERATEST</code> and ISA15 <code>T</code>:</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*PARTNERATEST   *ZZ*MYCOMPANY      *261015*0815*U*00401*000000012*0*T*&gt;~
+GS*PO*PARTNERATEST*MYCOMPANY*20261015*0815*12*X*004010~
+ST*850*0001~
+BEG*00*SA*TST-0001**20261015~
+DTM*002*20261030~
+N1*ST*PartnerA Test Store*92*9999~
+N3*1 Test Street~
+N4*Testville*OH*43001*US~
+PO1*1*1*EA*3.15**BP*84500121*VP*MC-1001*UP*012345678905~
+PID*F****Notebook A5 lined~
+CTT*1~
+SE*10*0001~
+GE*1*12~
+IEA*1*000000012~</code></pre>
+<div class="note warn"><span class="label">Watch out</span><p>ISA is fixed length: ISA06 and ISA08 are padded with spaces to 15 characters, ISA13 has 9 digits. Copy the files exactly. The segment count in SE01 includes ST and SE.</p></div>
+
+<h3 id="int-orders-in--run">Run it end to end</h3>
+<ol class="steps">
+<li><b>Run the route</b>: in the web interface <span class="ui">Run</span> → <span class="ui">Run (only new)</span>, or on the command line:
+<pre><code class="language-bash">bots-engine -c/srv/edi/tutorial/config --new orders_in</code></pre>
+<pre><code class="language-powershell">bots-engine -cC:\edi\tutorial\config --new orders_in</code></pre></li>
+<li><b>Read the run report</b> at the end of the engine log (<code>botssys/logging/engine.log</code>):
+<pre><code class="language-text">2026.10.15 21:39:52 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:39:52, duration: 0:00:00.939675
+    2 files received/processed in run.
+    1 files without errors,
+    1 files with errors,
+    8 files send in run.</code></pre>
+"1 files with errors" is the file with the bad order; the file is in error, but its two good orders went through.</li>
+<li><b>Look at the csv files.</b> <code>botssys/outfile/erp_orders/order_PA-778201_1.csv</code>:
+<pre><code class="language-text">order_no;partner;ordered_on;deliver_by;recipient_code;recipient_name;shipto_addr1;recipient_city;recipient_state;shipto_zip;line_seq;buyer_item;vendor_item;upc;item_descr;qty;unit_code;price_each;test_flag
+PA-778201;PARTNERA;2026-10-15;2026-10-22;0112;PartnerA Store 0112;100 Example Road;Anytown;IL;60001;1;84500121;MC-1001;012345678905;Notebook A5 lined;24;EA;3.15;P
+PA-778201;PARTNERA;2026-10-15;2026-10-22;0112;PartnerA Store 0112;100 Example Road;Anytown;IL;60001;2;84500138;MC-1002;012345678912;Desk organiser grey;12;EA;7.80;P</code></pre>
+<code>order_PA-778202_2.csv</code>:
+<pre><code class="language-text">order_no;partner;ordered_on;deliver_by;recipient_code;recipient_name;shipto_addr1;recipient_city;recipient_state;shipto_zip;line_seq;buyer_item;vendor_item;upc;item_descr;qty;unit_code;price_each;test_flag
+PA-778202;PARTNERA;2026-10-15;2026-10-24;0207;PartnerA Store 0207;2500 Sample Avenue;Sampleville;CO;80001;1;84500145;MC-2001;012345678929;Ballpoint pens blue, box of 50;6;BX;21.50;P</code></pre>
+and the test order in <code>botssys/outfile/erp_orders_test/order_TST-0001_1.csv</code>:
+<pre><code class="language-text">order_no;partner;ordered_on;deliver_by;recipient_code;recipient_name;shipto_addr1;recipient_city;recipient_state;shipto_zip;line_seq;buyer_item;vendor_item;upc;item_descr;qty;unit_code;price_each;test_flag
+TST-0001;PARTNERATEST;2026-10-15;2026-10-30;9999;PartnerA Test Store;1 Test Street;Testville;OH;43001;1;84500121;MC-1001;012345678905;Notebook A5 lined;1;EA;3.15;T</code></pre>
+There is no file for <code>PA-778203</code>.</li>
+<li><b>Look at the database</b> (<code>select * from edi_orders</code> and <code>edi_order_lines</code>):
+<pre><code class="language-text">edi_orders:
+partner | order_no | ordered_on | deliver_by | buyer_dept | currency | recipient_code | recipient_name | shipto_addr1 | recipient_city | recipient_state | shipto_zip | test_flag
+PARTNERA | PA-778201 | 20261015 | 20261022 | 041 | USD | 0112 | PartnerA Store 0112 | 100 Example Road | Anytown | IL | 60001 | P
+PARTNERA | PA-778202 | 20261015 | 20261024 |  | USD | 0207 | PartnerA Store 0207 | 2500 Sample Avenue | Sampleville | CO | 80001 | P
+PARTNERATEST | TST-0001 | 20261015 | 20261030 |  | USD | 9999 | PartnerA Test Store | 1 Test Street | Testville | OH | 43001 | T
+
+edi_order_lines:
+partner | order_no | line_seq | buyer_item | vendor_item | upc | item_descr | qty | unit_code | price_each
+PARTNERA | PA-778201 | 1 | 84500121 | MC-1001 | 012345678905 | Notebook A5 lined | 24 | EA | 3.15
+PARTNERA | PA-778201 | 2 | 84500138 | MC-1002 | 012345678912 | Desk organiser grey | 12 | EA | 7.8
+PARTNERA | PA-778202 | 1 | 84500145 | MC-2001 | 012345678929 | Ballpoint pens blue, box of 50 | 6 | BX | 21.5
+PARTNERATEST | TST-0001 | 1 | 84500121 | MC-1001 | 012345678905 | Notebook A5 lined | 1 | EA | 3.15</code></pre></li>
+<li><b>Look at the 997s</b> in <code>botssys/outfile/partnera</code>. <code>PARTNERA_997004010_000000001.x12</code> acknowledges the three orders of group 4711:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *261015*2139*U*00401*000000001*0*P*&gt;~
+GS*FA*MYCOMPANY*PARTNERA*20261015*2139*1*X*004010~
+ST*997*0006~
+AK1*PO*4711~
+AK2*850*0001~
+AK5*A~
+AK2*850*0002~
+AK5*A~
+AK2*850*0003~
+AK5*A~
+AK9*A*3*3*3~
+SE*10*0006~
+GE*1*1~
+IEA*1*000000001~</code></pre>
+<code>PARTNERATEST_997004010_000000001.x12</code> goes to the test system, as test data, with its own control number 1:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERATEST   *261015*2139*U*00401*000000001*0*T*&gt;~
+GS*FA*MYCOMPANY*PARTNERATEST*20261015*2139*1*X*004010~
+ST*997*0009~
+AK1*PO*12~
+AK2*850*0001~
+AK5*A~
+AK9*A*1*1*1~
+SE*6*0009~
+GE*1*1~
+IEA*1*000000001~</code></pre></li>
+<li><b>Look at the web interface.</b> <span class="ui">Incoming</span> shows the two files (newest first):
+<div class="table-wrap"><table>
+<tr><th>Status</th><th>Route</th><th>From channel</th><th>InFile</th><th>Ineditype</th><th>Inmessagetype</th><th>#mes</th><th>Error</th></tr>
+<tr><td>Done</td><td><code>orders_in</code></td><td><code>partnera_sftp_in</code></td><td><code>PA_850_20261015_0930.x12</code></td><td><code>x12</code></td><td><code>850004010</code></td><td>1</td><td></td></tr>
+<tr><td>Error</td><td><code>orders_in</code></td><td><code>partnera_sftp_in</code></td><td><code>PA_850_20261015_0815.x12</code></td><td><code>x12</code></td><td><code>850004010</code></td><td>3</td><td><code>ScriptError: Userscript "…\usersys\mappings\x12\orders_x12_to_db": "MappingFormatError: Order "PA-778203" has no ship-to address (N1*ST). ".</code></td></tr>
+</table></div>
+<span class="ui">Outgoing</span> shows 8 files: three database objects (out file <code>erp.sqlite3</code>, references <code>PA-778201</code>, <code>PA-778202</code>, <code>TST-0001</code>), three csv files (column Test <code>P</code>, <code>P</code>, <code>T</code>) and the two 997s. <span class="ui">All runs</span> → <span class="ui">Confirmations</span> shows both received files as <span class="ui">Confirmed</span>, type <code>send-x12-997</code>.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Two production csv files and one test csv file; 3 rows in <code>edi_orders</code> and 4 in <code>edi_order_lines</code>; two 997s, each with ISA13 <code>000000001</code>; one error in <span class="ui">Incoming</span> for order <code>PA-778203</code>.</p></div>
+
+<h4 id="int-orders-in--errors">What happens with errors</h4>
+<p>These are the results of further runs in the same environment.</p>
+<ul>
+<li><b>PartnerA sends the same file again.</b> The two good orders stop in the mapping, the third as before; nothing new reaches the csv folder or the database. PartnerA still gets a 997 (the file is correct X12). The errors in <span class="ui">Incoming</span>:
+<pre><code class="language-text">MappingFormatError: Order "PARTNERA/PA-778201" was already received on 2026-10-15 21:39.
+MappingFormatError: Order "PARTNERA/PA-778202" was already received on 2026-10-15 21:39.
+MappingFormatError: Order "PA-778203" has no ship-to address (N1*ST).</code></pre></li>
+<li><b>A file with a syntax error</b> (here SE01 says 11 segments, there are 10): the whole file stops at the envelope check, no order is translated, and the 997 rejects it:
+<pre><code class="language-text">MessageError: [E20]: Count in SE-SE01 is 11; should be equal to number of segments 10.</code></pre>
+<pre><code class="language-text">ST*997*0016~
+AK1*PO*13~
+AK2*850*0001~
+AK5*R~
+AK9*R*1*1*1~
+SE*6*0016~</code></pre>
+Bots fills AK902 to AK904 with the number of messages in the group, also when it rejects.</li>
+<li><b>An order the database refuses</b> (here two lines with the same line number <code>1</code>): the csv file is made, but <code>erp_db_out</code> fails for this order; the header that was already inserted is rolled back, so <code>edi_orders</code> has no half order. <span class="ui">Outgoing</span> shows the error:
+<pre><code class="language-text">ScriptError: Userscript "…\usersys\communicationscripts\erp_db_out": "sqlite3.IntegrityError: UNIQUE constraint failed: edi_order_lines.partner, edi_order_lines.order_no, edi_order_lines.line_seq".</code></pre>
+After the ERP side is fixed, use <span class="ui">Resend</span> on that line in <span class="ui">Outgoing</span>.</li>
+<li><b>Fixing the bad order.</b> Ask PartnerA to send <code>PA-778203</code> again with a ship-to address. If you rereceive the old file instead (<span class="ui">Incoming</span> → <span class="ui">Rereceive</span>), the two good orders are stopped as duplicates, which is what you want.</li>
+</ul>
+
+<h3 id="int-orders-in--variations">Variations</h3>
+<ul>
+<li><b>Several retailers.</b> Add each retailer as a partner, with its own partner syntax file and its own SFTP channels. Put the retailers in a partner group <code>Retailers</code> and use <span class="ui">Topartner tochannel</span> in the route part of the 997 to send each 997 over the right channel. Give a retailer its own translation (<span class="ui">Frompartner</span> in the translation) when its 850 differs.</li>
+<li><b>A VAN or mailbox</b> instead of the partner's server: the channels change, nothing else.</li>
+<li><b>Only the database or only the csv file.</b> Remove the return value <code>'csv'</code> (no chain) or make <code>orders_x12_to_csv</code> the only translation.</li>
+<li><b>Stop the whole file for one bad order.</b> Some partners want all or nothing. Set <code>'KillWholeFile': True</code> in the syntax of <code>850004010.py</code>: one error then drops all results of the file.</li>
+<li><b>Track the 997s PartnerA sends for your 855s, 856s and 810s</b>: see <a href="#acknowledgements">Acknowledgements</a> and <a href="#int-orders-out">the outbound tutorial</a>.</li>
+<li><b>Business checks against the ERP</b> (known items, prices): read them in the mapping with a code list (<a href="#code-lists">Code lists</a>) or a query, and raise <code>MappingFormatError</code> with a clear text.</li>
+<li><b>Running on a schedule</b>: see <a href="#scheduling">Scheduling</a> and <a href="#int-going-live">Going live</a>.</li>
+</ul>
+
+<h3 id="int-orders-in--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>MessageError: [S03]: Record "ISA-GS-ST" occurs 0 times, min is 1.</code> on the 997 in <span class="ui">Outgoing</span>; the 997 is not sent</td><td>The envelope grammar <code>x12.py</code> has ST with <code>MIN: 1</code>. When Bots writes the envelope, the ST segments are not in the tree.</td><td>Set <code>MIN: 0</code> for ST in <code>x12.py</code>, as in Part 2, and use <span class="ui">Rereceive</span>.</td></tr>
+<tr><td><code>MappingFormatError: Order "PA-778203" has no ship-to address (N1*ST).</code></td><td>The order misses data the ERP needs; the check in <code>orders_common.py</code> stops it.</td><td>Ask the partner for a corrected order. The other orders of the file are not affected.</td></tr>
+<tr><td><code>MappingFormatError: Order "PARTNERA/PA-778201" was already received on …</code></td><td>The same order came again; the duplicate check stops it.</td><td>Nothing, if it really is a copy. If the partner must send it again on purpose, delete the entry: <code>transform.persist_delete('orders_in', 'PARTNERA/PA-778201')</code> in a small script, or wait <code>maxdayspersist</code> days.</td></tr>
+<tr><td><code>MessageError: [E20]: Count in SE-SE01 is 11; should be equal to number of segments 10.</code> and a 997 with <code>AK5*R</code></td><td>The file is not correct X12; Bots rejects the whole file.</td><td>Ask the partner to send a correct file. See <a href="#editype-x12">X12</a> for the other [E..] errors.</td></tr>
+<tr><td><code>ScriptError: Userscript "…erp_db_out": "sqlite3.IntegrityError: UNIQUE constraint failed: …"</code> (other databases: their own error text)</td><td>The database refuses the rows (a key that exists, a value too long, a missing NOT NULL value). The order is rolled back.</td><td>Fix the data or the table, then <span class="ui">Resend</span> the database line in <span class="ui">Outgoing</span>.</td></tr>
+<tr><td><code>Exception: Order PA-778201 of PARTNERA is already in edi_orders.</code></td><td>The order is in the ERP tables, but not in the duplicate check of Bots (older than <code>maxdayspersist</code>, or entered another way).</td><td>Check with the ERP users whether it is a real new order.</td></tr>
+<tr><td><code>MessageError: [F02]: Record "line" field "order_no" is mandatory.</code> followed by the same for <code>partner</code>, <code>ordered_on</code>, <code>line_seq</code> … for an order without a delivery date</td><td>A value in the <code>put()</code> was <code>None</code> (no <code>DTM*002</code>) and Bots skipped the whole <code>put()</code>, so the line has no fields at all.</td><td>Leave out empty values (<code>record()</code> in Part 4).</td></tr>
+<tr><td>All orders of a run are in one csv file</td><td>csv grammars merge by default.</td><td>Set <code>'merge': False</code> in <code>orders_erp.py</code>.</td></tr>
+<tr><td>Test orders end up in the production folder</td><td>The route parts do not filter on the test indicator, or the partner sends <code>P</code> in ISA15 from its test system.</td><td>Set <span class="ui">Testindicator</span> on route parts 20 and 30. Check ISA15 of the file in <span class="ui">Incoming</span>.</td></tr>
+<tr><td>No 997 is made</td><td>No active confirm rule for the route, or the file had a fatal error (not readable as X12).</td><td>Check <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span>. See <a href="#acknowledgements">Acknowledgements</a>.</td></tr>
+<tr><td>The 997 goes to the ERP folder, or the csv file to PartnerA</td><td>A route part has no Toeditype filter.</td><td>Give every route part with an outgoing channel its <span class="ui">Toeditype</span> (and for the 997 its <span class="ui">Tomessagetype</span>).</td></tr>
+<tr><td>No csv file for any order, and for a new order <code>MappingFormatError: Order "PARTNERA/PA-778220" was already received on …</code></td><td>The mapping returned <code>'csv'</code>, but the translation with <span class="ui">Alternative translation</span> <code>csv</code> is missing or not active. Bots then uses the translation without alt, so <code>orders_x12_to_db</code> runs a second time for the same order and its duplicate check stops it.</td><td>Add or activate the second translation of Part 4, then <span class="ui">Rereceive</span> after removing the persist entries (or let PartnerA send the orders again after <code>maxdayspersist</code>).</td></tr>
+<tr><td>The ISA of the 997 has qualifier <code>01</code> instead of <code>ZZ</code></td><td>Neither the envelope grammar nor the partner syntax sets <code>ISA05</code>/<code>ISA07</code>; the default of Bots is <code>01</code>.</td><td>Set them as in Parts 2 and 3.</td></tr>
+<tr><td><code>Channel "erp_db_out" is type "db", but no communicationscript exists.</code></td><td>The script name differs from the channel ID.</td><td>Name it <code>usersys/communicationscripts/erp_db_out.py</code>.</td></tr>
+</table></div>
+</section>
+
+
+<section id="int-orders-out" data-title="Tutorial: acknowledgements, ship notices and invoices out" data-group="Integration tutorials">
+<h2>Tutorial: acknowledgements, ship notices and invoices out</h2>
+<p class="lead">After the orders come in (<a href="#int-orders-in">previous tutorial</a>), your ERP answers: it confirms the orders, ships them and sends the invoice. In this tutorial Bots turns these ERP data into X12 855 order acknowledgements, 856 ship notices and 810 invoices for PartnerA, reads database rows only once, and sends one file per partner and message type per run. It takes about three hours.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>The ERP writes what it wants to tell PartnerA in its own tables and files: "we accept your order", "the goods left today in these two boxes", "here is the bill". Bots collects that, writes it in the X12 language PartnerA expects, puts all documents of one kind for one partner together in one file with the next control number, and drops it in PartnerA's mailbox. Rows Bots has handled are marked, so nothing is sent twice.</p></div>
+
+<h3 id="int-orders-out--build">What you will build</h3>
+<p>One route <code>docs_out</code> with three sources:</p>
+<ul>
+<li><b>Order acknowledgements (855).</b> The ERP writes one row per order line in table <code>edi_ack_lines</code> with <code>send_status = 'NEW'</code>. Bots reads the new rows, makes one 855 per order, and marks the rows <code>SENT</code> after a successful translation, or <code>ERROR</code>.</li>
+<li><b>Ship notices (856).</b> The ERP writes a shipment in <code>edi_shipments</code>, its cartons in <code>edi_packages</code> (with the carton label number and the tracking number of the carrier) and the contents of each carton in <code>edi_package_lines</code>. Bots makes one 856 per shipment with the hierarchy shipment, order, carton, item.</li>
+<li><b>Invoices (810).</b> The ERP writes one XML file per invoice in a folder. Bots checks the totals and makes an 810 with three addresses, a freight charge and a discount.</li>
+</ul>
+<p>All results for one partner and one message type in a run go in one interchange, with the next control number of that partner, in a file named after partner, message type and control number.</p>
+<div class="diagram"><svg viewBox="0 0 760 300" width="760" role="img" aria-label="Documents out: erp_acks_in and erp_asn_in read database tables, erp_invoices_in reads XML files; route docs_out translates them to 855, 856 and 810, marks the database rows, merges per partner and message type, and sends with partnera_sftp_out">
+<defs><marker id="arrow-intout-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="10" width="200" height="70" rx="10"/><text x="110" y="38" text-anchor="middle" font-weight="600">erp_acks_in (db)</text><text class="small" x="110" y="60" text-anchor="middle">edi_ack_lines</text>
+<rect class="box in" x="10" y="115" width="200" height="70" rx="10"/><text x="110" y="143" text-anchor="middle" font-weight="600">erp_asn_in (db)</text><text class="small" x="110" y="165" text-anchor="middle">shipments, packages, lines</text>
+<rect class="box in" x="10" y="220" width="200" height="70" rx="10"/><text x="110" y="248" text-anchor="middle" font-weight="600">erp_invoices_in (file)</text><text class="small" x="110" y="270" text-anchor="middle">ERP invoice XML</text>
+<path class="arrow" d="M214,45 L276,120" marker-end="url(#arrow-intout-1)"/>
+<path class="arrow" d="M214,150 L276,150" marker-end="url(#arrow-intout-1)"/>
+<path class="arrow" d="M214,255 L276,180" marker-end="url(#arrow-intout-1)"/>
+<rect class="box mid" x="280" y="80" width="220" height="140" rx="10"/><text x="390" y="110" text-anchor="middle" font-weight="600">docs_out</text><text class="small" x="390" y="135" text-anchor="middle">translate to 855 / 856 / 810</text><text class="small" x="390" y="157" text-anchor="middle">route script: mark rows</text><text class="small" x="390" y="179" text-anchor="middle">SENT or ERROR</text><text class="small" x="390" y="201" text-anchor="middle">merge per partner + type</text>
+<path class="arrow" d="M504,150 L546,150" marker-end="url(#arrow-intout-1)"/>
+<rect class="box out" x="550" y="105" width="200" height="90" rx="10"/><text x="650" y="135" text-anchor="middle" font-weight="600">partnera_sftp_out</text><text class="small" x="650" y="157" text-anchor="middle">PARTNERA_855004010_</text><text class="small" x="650" y="177" text-anchor="middle">000000003.x12</text>
+</svg></div>
+
+<h3 id="int-orders-out--need">What you need</h3>
+<ul>
+<li>The environment of <a href="#int-orders-in">Tutorial: orders in from a partner</a>, after its run: the partners, the envelope grammar <code>x12.py</code>, the partner syntax files, the channel <code>partnera_sftp_out</code>, <code>interchangecontrolperpartner = True</code>, and the ERP database with the orders <code>PA-778201</code>, <code>PA-778202</code> and <code>TST-0001</code>.</li>
+<li>Reference: <a href="#channel-database">Database channels</a>, <a href="#route-scripts">Route scripts</a>, <a href="#editype-xml-json">XML and JSON</a>, <a href="#code-lists">Code lists</a>, <a href="#envelopes">Envelopes</a>, <a href="#counters">Counters</a>.</li>
+<li>Checked with Bots 4.0.0 on Windows with SQLite; all outputs below are from those runs.</li>
+</ul>
+<div class="table-wrap"><table>
+<tr><th>File</th><th>What it is</th><th>Part</th></tr>
+<tr><td><code>erp_part2.sql</code></td><td>Test data the ERP would write: acknowledgements and a shipment.</td><td>1</td></tr>
+<tr><td><code>usersys/grammars/x12/855004010.py</code>, <code>856004010.py</code>, <code>810004010.py</code></td><td>Message grammars (cut down).</td><td>2</td></tr>
+<tr><td><code>usersys/grammars/xml/invoice_erp.py</code></td><td>Grammar of the ERP invoice XML.</td><td>2</td></tr>
+<tr><td><code>usersys/communicationscripts/erp_acks_in.py</code></td><td>Reads new acknowledgement rows; marks them.</td><td>3</td></tr>
+<tr><td><code>usersys/mappings/db/acks_db_to_x12.py</code></td><td>Mapping to the 855.</td><td>3</td></tr>
+<tr><td><code>usersys/routescripts/docs_out.py</code></td><td>Marks the rows SENT or ERROR after the translation.</td><td>4</td></tr>
+<tr><td><code>usersys/communicationscripts/erp_asn_in.py</code></td><td>Reads new shipments with cartons and lines; marks them.</td><td>5</td></tr>
+<tr><td><code>usersys/mappings/db/asn_db_to_x12.py</code></td><td>Mapping to the 856.</td><td>5</td></tr>
+<tr><td><code>usersys/mappings/xml/invoice_xml_to_x12.py</code></td><td>Mapping to the 810.</td><td>6</td></tr>
+<tr><td><code>botssys/infile/erp_invoices/*.xml</code></td><td>Test invoices of the ERP.</td><td>6</td></tr>
+</table></div>
+<p>In the web interface you add 3 channels, 3 translations, a code list, a route with 3 parts and 1 confirm rule.</p>
+
+<h3 id="int-orders-out--part1">Part 1: What the ERP writes</h3>
+<p>The tables are in <code>erp_schema.sql</code> of the <a href="#int-orders-in--part1">previous tutorial</a>. The ERP has confirmed the orders: line 2 of <code>PA-778201</code> only 10 of the 12 pieces (<code>IQ</code>, quantity changed), and by mistake also an order <code>PA-778299</code> that Bots never received. It shipped <code>PA-778201</code> in two cartons. Save this as <code>erp_part2.sql</code> and run it on <code>botssys/erp.sqlite3</code> as in Part 1 of the previous tutorial:</p>
+<pre><code class="language-text">-- What the ERP writes after part 1: acknowledgements and one shipment.
+INSERT INTO edi_ack_lines (partner, order_no, line_seq, ack_code, qty, unit_code, price_each, promise_date) VALUES
+  ('PARTNERA',     'PA-778201', '1', 'IA', 24, 'EA', 3.15,  '20261020'),
+  ('PARTNERA',     'PA-778201', '2', 'IQ', 10, 'EA', 7.80,  '20261020'),
+  ('PARTNERA',     'PA-778202', '1', 'IA',  6, 'BX', 21.50, '20261021'),
+  ('PARTNERATEST', 'TST-0001',  '1', 'IA',  1, 'EA', 3.15,  '20261028'),
+  ('PARTNERA',     'PA-778299', '1', 'IA',  5, 'EA', 1.00,  '20261021');
+INSERT INTO edi_shipments (shipment_no, partner, order_no, shipped_date, carrier_scac, gross_weight) VALUES
+  ('SHP-26101501', 'PARTNERA', 'PA-778201', '20261020', 'EXPL', 18.40);
+INSERT INTO edi_packages (shipment_no, package_no, tracking_no, carton_weight) VALUES
+  ('SHP-26101501', '00006141410000000011', 'TRK7731000001', 9.80),
+  ('SHP-26101501', '00006141410000000028', 'TRK7731000002', 8.60);
+INSERT INTO edi_package_lines (shipment_no, package_no, line_seq, qty) VALUES
+  ('SHP-26101501', '00006141410000000011', '1', 24),
+  ('SHP-26101501', '00006141410000000028', '2', 10);</code></pre>
+<div class="note info"><span class="label">Note</span><p>The column <code>send_status</code> is the contract between the ERP and Bots: the ERP writes <code>NEW</code>; Bots reads only <code>NEW</code> rows and sets <code>SENT</code> or <code>ERROR</code>. To send a row again, the ERP (or you) sets it back to <code>NEW</code>.</p></div>
+
+<h3 id="int-orders-out--part2">Part 2: The grammars</h3>
+<p>Like in the previous tutorial, the X12 grammars are cut down to the segments used here, and correct for 004010 as far as they go. For production use complete grammars from a plugin (see <a href="#plugins">Plugins</a>) and the partner's guide.</p>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/grammars/x12/855004010.py</code>. <code>functionalgroup</code> <code>PR</code> becomes GS01:
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 855 Purchase Order Acknowledgment, version 004010: cut down to the segments of the tutorial.
+syntax = {
+    'functionalgroup': 'PR',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BAK', MIN: 1, MAX: 1},
+        {ID: 'REF', MIN: 0, MAX: 12},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'PO1', MIN: 0, MAX: 100000, LEVEL: [
+            {ID: 'PID', MIN: 0, MAX: 1000},
+            {ID: 'ACK', MIN: 0, MAX: 104},
+        ]},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'BAK': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['BAK01', 'M', (2, 2), 'ID'],      # 00 original
+        ['BAK02', 'M', (2, 2), 'ID'],      # AD accepted, AC accepted with changes, RJ rejected
+        ['BAK03', 'M', (1, 22), 'AN'],     # purchase order number
+        ['BAK04', 'M', (8, 8), 'DT'],      # purchase order date
+        ['BAK05', 'C', (1, 30), 'AN'],
+        ['BAK06', 'C', (2, 2), 'ID'],
+        ['BAK07', 'C', (2, 2), 'ID'],
+        ['BAK08', 'C', (1, 30), 'AN'],
+        ['BAK09', 'C', (8, 8), 'DT'],      # acknowledgment date
+    ],
+    'REF': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['REF01', 'M', (2, 3), 'ID'],
+        ['REF02', 'C', (1, 30), 'AN'],
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['DTM01', 'M', (3, 3), 'ID'],
+        ['DTM02', 'C', (8, 8), 'DT'],
+    ],
+    'PO1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PO101', 'C', (1, 20), 'AN'],
+        ['PO102', 'M', (1, 15), 'R'],
+        ['PO103', 'M', (2, 2), 'ID'],
+        ['PO104', 'C', (1, 17), 'R'],
+        ['PO105', 'C', (2, 2), 'ID'],
+        ['PO106', 'C', (2, 2), 'ID'],
+        ['PO107', 'C', (1, 48), 'AN'],
+        ['PO108', 'C', (2, 2), 'ID'],
+        ['PO109', 'C', (1, 48), 'AN'],
+    ],
+    'PID': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PID01', 'M', (1, 1), 'ID'],
+        ['PID02', 'C', (2, 3), 'ID'],
+        ['PID03', 'C', (2, 2), 'ID'],
+        ['PID04', 'C', (1, 12), 'AN'],
+        ['PID05', 'C', (1, 80), 'AN'],
+    ],
+    'ACK': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ACK01', 'M', (2, 2), 'ID'],      # IA accepted, IQ quantity changed, IR rejected, IB backordered
+        ['ACK02', 'C', (1, 15), 'R'],
+        ['ACK03', 'C', (2, 2), 'ID'],
+        ['ACK04', 'C', (3, 3), 'ID'],      # 068 current schedule ship
+        ['ACK05', 'C', (8, 8), 'DT'],
+    ],
+    'CTT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CTT01', 'M', (1, 6), 'N0'],
+        ['CTT02', 'C', (1, 10), 'R'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre></li>
+<li><b>Write</b> <code>usersys/grammars/x12/856004010.py</code>. All levels of the hierarchy use the same HL loop; which segments appear at which level is up to the mapping (and the partner's guide):
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 856 Ship Notice/Manifest, version 004010: cut down to the segments of the tutorial.
+# One HL loop for all levels: S shipment, O order, P pack (carton), I item. HL02 points to the parent HL.
+syntax = {
+    'functionalgroup': 'SH',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BSN', MIN: 1, MAX: 1},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'HL', MIN: 1, MAX: 200000, LEVEL: [
+            {ID: 'LIN', MIN: 0, MAX: 1},
+            {ID: 'SN1', MIN: 0, MAX: 1},
+            {ID: 'PRF', MIN: 0, MAX: 1},
+            {ID: 'PID', MIN: 0, MAX: 200},
+            {ID: 'TD1', MIN: 0, MAX: 20},
+            {ID: 'TD5', MIN: 0, MAX: 12},
+            {ID: 'REF', MIN: 0, MAX: 200},
+            {ID: 'MAN', MIN: 0, MAX: 10},
+            {ID: 'DTM', MIN: 0, MAX: 10},
+            {ID: 'N1', MIN: 0, MAX: 200, LEVEL: [
+                {ID: 'N3', MIN: 0, MAX: 2},
+                {ID: 'N4', MIN: 0, MAX: 1},
+            ]},
+        ]},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'BSN': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['BSN01', 'M', (2, 2), 'ID'],      # 00 original
+        ['BSN02', 'M', (2, 30), 'AN'],     # shipment identification
+        ['BSN03', 'M', (8, 8), 'DT'],
+        ['BSN04', 'M', (4, 8), 'TM'],
+        ['BSN05', 'C', (4, 4), 'ID'],      # 0001: shipment, order, packaging, item
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['DTM01', 'M', (3, 3), 'ID'],      # 011 shipped
+        ['DTM02', 'C', (8, 8), 'DT'],
+    ],
+    'HL': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['HL01', 'M', (1, 12), 'AN'],      # number of this HL
+        ['HL02', 'C', (1, 12), 'AN'],      # number of the parent HL
+        ['HL03', 'M', (1, 2), 'ID'],       # level: S, O, P, I
+        ['HL04', 'C', (1, 1), 'ID'],       # 1: has children, 0: has none
+    ],
+    'LIN': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['LIN01', 'C', (1, 20), 'AN'],
+        ['LIN02', 'M', (2, 2), 'ID'],
+        ['LIN03', 'M', (1, 48), 'AN'],
+        ['LIN04', 'C', (2, 2), 'ID'],
+        ['LIN05', 'C', (1, 48), 'AN'],
+    ],
+    'SN1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SN101', 'C', (1, 20), 'AN'],
+        ['SN102', 'M', (1, 10), 'R'],      # quantity shipped
+        ['SN103', 'M', (2, 2), 'ID'],
+    ],
+    'PRF': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PRF01', 'M', (1, 22), 'AN'],     # purchase order number
+        ['PRF02', 'C', (1, 8), 'AN'],
+        ['PRF03', 'C', (1, 30), 'AN'],
+        ['PRF04', 'C', (8, 8), 'DT'],      # purchase order date
+    ],
+    'PID': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PID01', 'M', (1, 1), 'ID'],
+        ['PID02', 'C', (2, 3), 'ID'],
+        ['PID03', 'C', (2, 2), 'ID'],
+        ['PID04', 'C', (1, 12), 'AN'],
+        ['PID05', 'C', (1, 80), 'AN'],
+    ],
+    'TD1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['TD101', 'C', (3, 5), 'AN'],      # CTN25 carton
+        ['TD102', 'C', (1, 7), 'N0'],      # number of cartons
+        ['TD103', 'C', (1, 1), 'ID'],
+        ['TD104', 'C', (1, 2), 'ID'],
+        ['TD105', 'C', (1, 50), 'AN'],
+        ['TD106', 'C', (1, 2), 'ID'],      # G gross weight
+        ['TD107', 'C', (1, 10), 'R'],
+        ['TD108', 'C', (2, 2), 'ID'],      # LB pounds
+    ],
+    'TD5': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['TD501', 'C', (1, 2), 'ID'],
+        ['TD502', 'C', (1, 2), 'ID'],      # 2: TD503 is a SCAC
+        ['TD503', 'C', (2, 80), 'AN'],
+        ['TD504', 'C', (1, 2), 'ID'],
+        ['TD505', 'C', (1, 35), 'AN'],
+    ],
+    'REF': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['REF01', 'M', (2, 3), 'ID'],      # BM bill of lading
+        ['REF02', 'C', (1, 30), 'AN'],
+    ],
+    'MAN': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['MAN01', 'M', (1, 2), 'ID'],      # GM: SSCC-18 of the carton label; CP: carrier package ID (tracking)
+        ['MAN02', 'M', (1, 48), 'AN'],
+    ],
+    'N1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N101', 'M', (2, 3), 'ID'],       # ST ship to, SF ship from
+        ['N102', 'C', (1, 60), 'AN'],
+        ['N103', 'C', (1, 2), 'ID'],
+        ['N104', 'C', (2, 80), 'AN'],
+    ],
+    'N3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N301', 'M', (1, 55), 'AN'],
+        ['N302', 'C', (1, 55), 'AN'],
+    ],
+    'N4': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N401', 'C', (2, 30), 'AN'],
+        ['N402', 'C', (2, 2), 'ID'],
+        ['N403', 'C', (3, 15), 'ID'],
+        ['N404', 'C', (2, 3), 'ID'],
+    ],
+    'CTT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CTT01', 'M', (1, 6), 'N0'],      # number of HL segments
+        ['CTT02', 'C', (1, 10), 'R'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre></li>
+<li><b>Write</b> <code>usersys/grammars/x12/810004010.py</code>. Amounts in TDS01 and SAC05 have format <code>N2</code>: two implied decimals, Bots writes 163.03 as <code>16303</code>:
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 810 Invoice, version 004010: cut down to the segments of the tutorial.
+syntax = {
+    'functionalgroup': 'IN',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BIG', MIN: 1, MAX: 1},
+        {ID: 'CUR', MIN: 0, MAX: 1},
+        {ID: 'REF', MIN: 0, MAX: 12},
+        {ID: 'N1', MIN: 0, MAX: 200, LEVEL: [
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+        ]},
+        {ID: 'ITD', MIN: 0, MAX: 999},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'IT1', MIN: 1, MAX: 200000, LEVEL: [
+            {ID: 'PID', MIN: 0, MAX: 1000},
+        ]},
+        {ID: 'TDS', MIN: 1, MAX: 1},
+        {ID: 'TXI', MIN: 0, MAX: 10},
+        {ID: 'CAD', MIN: 0, MAX: 1},
+        {ID: 'SAC', MIN: 0, MAX: 25},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'BIG': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['BIG01', 'M', (8, 8), 'DT'],      # invoice date
+        ['BIG02', 'M', (1, 22), 'AN'],     # invoice number
+        ['BIG03', 'C', (8, 8), 'DT'],      # purchase order date
+        ['BIG04', 'C', (1, 22), 'AN'],     # purchase order number
+        ['BIG05', 'C', (1, 30), 'AN'],
+        ['BIG06', 'C', (1, 8), 'AN'],
+        ['BIG07', 'C', (2, 2), 'ID'],      # DI debit invoice, CR credit memo
+    ],
+    'CUR': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CUR01', 'M', (2, 3), 'ID'],
+        ['CUR02', 'M', (3, 3), 'ID'],
+    ],
+    'REF': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['REF01', 'M', (2, 3), 'ID'],
+        ['REF02', 'C', (1, 30), 'AN'],
+    ],
+    'N1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N101', 'M', (2, 3), 'ID'],       # BT bill to, ST ship to, RE remit to
+        ['N102', 'C', (1, 60), 'AN'],
+        ['N103', 'C', (1, 2), 'ID'],
+        ['N104', 'C', (2, 80), 'AN'],
+    ],
+    'N3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N301', 'M', (1, 55), 'AN'],
+        ['N302', 'C', (1, 55), 'AN'],
+    ],
+    'N4': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N401', 'C', (2, 30), 'AN'],
+        ['N402', 'C', (2, 2), 'ID'],
+        ['N403', 'C', (3, 15), 'ID'],
+        ['N404', 'C', (2, 3), 'ID'],
+    ],
+    'ITD': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ITD01', 'C', (2, 2), 'ID'],      # 01 basic terms
+        ['ITD02', 'C', (1, 2), 'ID'],      # 3 counted from the invoice date
+        ['ITD03', 'C', (1, 6), 'R'],
+        ['ITD04', 'C', (8, 8), 'DT'],
+        ['ITD05', 'C', (1, 3), 'N0'],
+        ['ITD06', 'C', (8, 8), 'DT'],      # net due date
+        ['ITD07', 'C', (1, 3), 'N0'],      # net days
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['DTM01', 'M', (3, 3), 'ID'],      # 011 shipped
+        ['DTM02', 'C', (8, 8), 'DT'],
+    ],
+    'IT1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['IT101', 'C', (1, 20), 'AN'],     # line number of the order
+        ['IT102', 'C', (1, 10), 'R'],      # quantity invoiced
+        ['IT103', 'C', (2, 2), 'ID'],
+        ['IT104', 'C', (1, 17), 'R'],      # unit price
+        ['IT105', 'C', (2, 2), 'ID'],
+        ['IT106', 'C', (2, 2), 'ID'],      # BP: number of the buyer
+        ['IT107', 'C', (1, 48), 'AN'],
+        ['IT108', 'C', (2, 2), 'ID'],      # VP: our number
+        ['IT109', 'C', (1, 48), 'AN'],
+        ['IT110', 'C', (2, 2), 'ID'],      # UP: UPC
+        ['IT111', 'C', (1, 48), 'AN'],
+    ],
+    'PID': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PID01', 'M', (1, 1), 'ID'],
+        ['PID02', 'C', (2, 3), 'ID'],
+        ['PID03', 'C', (2, 2), 'ID'],
+        ['PID04', 'C', (1, 12), 'AN'],
+        ['PID05', 'C', (1, 80), 'AN'],
+    ],
+    'TDS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['TDS01', 'M', (1, 15), 'N2'],     # total amount, 2 implied decimals: 512.35 is written 51235
+    ],
+    'TXI': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['TXI01', 'M', (2, 2), 'ID'],      # ST state sales tax
+        ['TXI02', 'C', (1, 18), 'R'],
+    ],
+    'CAD': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CAD01', 'C', (1, 2), 'ID'],
+        ['CAD02', 'C', (1, 4), 'AN'],
+        ['CAD03', 'C', (1, 10), 'AN'],
+        ['CAD04', 'C', (2, 4), 'ID'],      # SCAC of the carrier
+        ['CAD05', 'C', (1, 35), 'AN'],
+        ['CAD06', 'C', (1, 2), 'ID'],
+        ['CAD07', 'C', (2, 3), 'ID'],      # BM bill of lading
+        ['CAD08', 'C', (1, 30), 'AN'],
+    ],
+    'SAC': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SAC01', 'M', (1, 1), 'ID'],      # A allowance, C charge
+        ['SAC02', 'C', (4, 4), 'ID'],      # C310 discount, D240 freight
+        ['SAC03', 'C', (2, 2), 'ID'],
+        ['SAC04', 'C', (1, 10), 'AN'],
+        ['SAC05', 'C', (1, 15), 'N2'],     # amount, 2 implied decimals
+    ],
+    'CTT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CTT01', 'M', (1, 6), 'N0'],
+        ['CTT02', 'C', (1, 10), 'R'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre></li>
+<li><b>Write the grammar of the ERP XML</b> <code>usersys/grammars/xml/invoice_erp.py</code>. Each element that contains other elements is a record; elements with a value are its fields:
+<pre><code class="language-python">from bots.botsconfig import *
+
+# The invoice file the ERP writes: one invoice per file.
+# Elements that hold other elements are records; elements with a value are fields of their record.
+syntax = {
+    'charset': 'utf-8',
+}
+
+structure = [
+    {ID: 'InvoiceDoc', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'InvHeader', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'RemitTo', MIN: 0, MAX: 1},
+            {ID: 'BillTo', MIN: 0, MAX: 1},
+            {ID: 'ShipTo', MIN: 0, MAX: 1},
+        ]},
+        {ID: 'InvLines', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'InvLine', MIN: 1, MAX: 9999},
+        ]},
+        {ID: 'InvTotals', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'InvoiceDoc': [
+        ['BOTSID', 'M', 20, 'AN'],
+    ],
+    'InvHeader': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['InvNumber', 'M', 22, 'AN'],
+        ['InvDate', 'M', 10, 'AN'],        # MM/DD/YYYY
+        ['CustRef', 'M', 20, 'AN'],     # customer number in the ERP
+        ['CustomerPO', 'C', 22, 'AN'],
+        ['PoDate', 'C', 10, 'AN'],         # MM/DD/YYYY
+        ['ShippedDate', 'C', 10, 'AN'],    # MM/DD/YYYY
+        ['Currency', 'C', 3, 'AN'],
+        ['PayTerms', 'C', 10, 'AN'],       # NET30, NET60
+        ['CarrierScac', 'C', 4, 'AN'],
+        ['BolNo', 'C', 30, 'AN'],
+    ],
+    'RemitTo': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['Name', 'C', 60, 'AN'],
+        ['LocationCode', 'C', 20, 'AN'],
+        ['Street', 'C', 110, 'AN'],        # may have 2 lines
+        ['City', 'C', 30, 'AN'],
+        ['State', 'C', 2, 'AN'],
+        ['Zip', 'C', 15, 'AN'],
+        ['Country', 'C', 3, 'AN'],
+    ],
+    'BillTo': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['Name', 'C', 60, 'AN'],
+        ['LocationCode', 'C', 20, 'AN'],
+        ['Street', 'C', 110, 'AN'],        # may have 2 lines
+        ['City', 'C', 30, 'AN'],
+        ['State', 'C', 2, 'AN'],
+        ['Zip', 'C', 15, 'AN'],
+        ['Country', 'C', 3, 'AN'],
+    ],
+    'ShipTo': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['Name', 'C', 60, 'AN'],
+        ['LocationCode', 'C', 20, 'AN'],
+        ['Street', 'C', 110, 'AN'],        # may have 2 lines
+        ['City', 'C', 30, 'AN'],
+        ['State', 'C', 2, 'AN'],
+        ['Zip', 'C', 15, 'AN'],
+        ['Country', 'C', 3, 'AN'],
+    ],
+    'InvLines': [
+        ['BOTSID', 'M', 20, 'AN'],
+    ],
+    'InvLine': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['LineNo', 'M', 6, 'AN'],
+        ['PoLine', 'C', 6, 'AN'],
+        ['ItemNo', 'M', 48, 'AN'],
+        ['CustItemNo', 'C', 48, 'AN'],
+        ['Upc', 'C', 14, 'AN'],
+        ['Descr', 'C', 80, 'AN'],
+        ['Qty', 'M', 15, 'R'],
+        ['Uom', 'M', 2, 'AN'],
+        ['Price', 'M', 17, 'R'],
+    ],
+    'InvTotals': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['LinesAmount', 'M', 15, 'R'],
+        ['FreightAmt', 'C', 15, 'R'],
+        ['Discount', 'C', 15, 'R'],
+        ['TaxAmt', 'C', 15, 'R'],
+        ['TotalAmt', 'M', 15, 'R'],
+    ],
+}</code></pre>
+<div class="note warn"><span class="label">Watch out</span><p>Write the field list of each record out in full, even when three records have the same fields. Bots changes the field lists when it reads a grammar; one list used for three records gives <code>MessageError: Grammar "…invoice_erp", in recorddefs, record "BillTo", field "BOTSID": list has invalid number of arguments.</code></p></div></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p><code>bots-grammarcheck -c&lt;config folder&gt; xml invoice_erp</code> and the same for <code>x12 855004010</code>, <code>x12 856004010</code>, <code>x12 810004010</code> end with <code>OK - no error found in grammar</code>.</p></div>
+
+<h3 id="int-orders-out--part3">Part 3: Order acknowledgements (855) from a database table</h3>
+<ol class="steps">
+<li><b>Add the channel.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> → <span class="ui">Add incoming channel</span>: <span class="ui">Idchannel</span> <code>erp_acks_in</code>, <span class="ui">Type</span> <code>db</code>, <span class="ui">Path</span> <code>botssys/erp.sqlite3</code>, <span class="ui">Database specific</span> → <span class="ui">Database</span> <code>SQLite</code>. (For MySQL or PostgreSQL see the table in <a href="#int-orders-in--part5">the previous tutorial</a>.)</li>
+<li><b>Write the communication script</b> <code>usersys/communicationscripts/erp_acks_in.py</code>:
+<pre><code class="language-python">"""Database channel erp_acks_in: reads the order acknowledgements the ERP put in table edi_ack_lines.
+Only rows with send_status NEW are read, and nothing is changed here: the route script docs_out.py
+calls mark_rows() after the translation, to set the rows to SENT or ERROR."""
+import itertools
+
+SELECT_NEW = """
+    SELECT a.partner, a.order_no, a.line_seq, a.ack_code, a.qty, a.unit_code, a.price_each, a.promise_date,
+           o.ordered_on, l.qty AS qty_ordered, l.buyer_item, l.vendor_item, l.item_descr
+    FROM edi_ack_lines a
+    LEFT JOIN edi_orders o ON o.partner = a.partner AND o.order_no = a.order_no
+    LEFT JOIN edi_order_lines l ON l.partner = a.partner AND l.order_no = a.order_no AND l.line_seq = a.line_seq
+    WHERE a.send_status = %(status)s
+    ORDER BY a.partner, a.order_no, a.line_seq"""
+
+
+def incommunicate(channeldict, dbconnection):
+    cursor = dbconnection.cursor()
+    cursor.execute(SELECT_NEW, {'status': 'NEW'})
+    rows = [dict(row) for row in cursor.fetchall()]     # plain dicts: Bots stores them with pickle
+    acks = []
+    for (partner, order_no), lines in itertools.groupby(rows, key=lambda row: (row['partner'], row['order_no'])):
+        acks.append({'partner': partner, 'order_no': order_no, 'lines': list(lines)})
+    return acks                                         # a list: each order becomes one message
+
+
+def mark_rows(dbconnection, db_object, error):
+    """Called by the route script: error is None (translated) or the error text."""
+    cursor = dbconnection.cursor()
+    for line in db_object['lines']:
+        cursor.execute(
+            """UPDATE edi_ack_lines SET send_status = %(status)s, sent_at = CURRENT_TIMESTAMP
+               WHERE partner = %(partner)s AND order_no = %(order_no)s AND line_seq = %(line_seq)s
+               AND send_status = 'NEW'""",
+            {'status': 'ERROR' if error else 'SENT', 'partner': line['partner'], 'order_no': line['order_no'],
+             'line_seq': line['line_seq']})</code></pre>
+<ul>
+<li><code>incommunicate</code> returns a list: every element becomes one received "file", and so one 855. Here one element per order, with its lines.</li>
+<li>It joins the order Bots received (<code>edi_orders</code>, <code>edi_order_lines</code>): the 855 repeats the order date, the ordered quantity and the item numbers of the partner.</li>
+<li>It does <b>not</b> mark the rows. If it marked them here, an order whose translation fails would be marked as sent and never sent. <code>mark_rows</code> is called by the route script of Part 4, after the translation.</li>
+<li>Bots stores the returned objects with pickle: return plain dicts, lists, strings and numbers (<code>dict(row)</code>), not the cursor rows.</li>
+</ul></li>
+<li><b>Write the mapping</b> <code>usersys/mappings/db/acks_db_to_x12.py</code> (mappings for editype <code>db</code> go in <code>mappings/db</code>):
+<pre><code class="language-python">"""Order acknowledgement from the ERP (rows of edi_ack_lines, read by channel erp_acks_in) -&gt; X12 855."""
+from bots import transform
+from bots.botslib import MappingFormatError
+
+
+def record(values):
+    """Bots skips a whole put() if one value is None: leave out the empty values."""
+    return {key: value for key, value in values.items() if value not in (None, '')}
+
+
+def main(inn, out):
+    ack = inn.root                      # {'partner': ..., 'order_no': ..., 'lines': [row, row, ...]}
+    lines = ack['lines']
+    if not lines[0]['ordered_on']:
+        raise MappingFormatError('Acknowledgement for order "%(order_no)s" of %(partner)s: order not in edi_orders.',
+                                 ack)
+    out.ta_info['frompartner'] = 'MYCOMPANY'
+    out.ta_info['topartner'] = ack['partner']      # the partner who sent the order
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = ack['order_no']
+    reference = out.ta_info['reference'].zfill(4)  # ST02 has at least 4 digits
+
+    codes = set(line['ack_code'] for line in lines)
+    if codes == {'IA'}:
+        bak02 = 'AD'                    # all lines accepted as ordered
+    elif codes == {'IR'}:
+        bak02 = 'RJ'                    # all lines rejected
+    else:
+        bak02 = 'AC'                    # accepted with changes
+
+    out.put({'BOTSID': 'ST', 'ST01': '855', 'ST02': reference})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'BAK', 'BAK01': '00', 'BAK02': bak02, 'BAK03': ack['order_no'],
+                                'BAK04': lines[0]['ordered_on'], 'BAK09': transform.strftime('%Y%m%d')})
+    for line in lines:
+        po1 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'})
+        po1.put(record({'BOTSID': 'PO1', 'PO101': line['line_seq'], 'PO102': line['qty_ordered'],
+                        'PO103': line['unit_code'], 'PO104': line['price_each']}))
+        if line['buyer_item']:
+            po1.put({'BOTSID': 'PO1', 'PO106': 'BP', 'PO107': line['buyer_item']})
+        po1.put({'BOTSID': 'PO1', 'PO108': 'VP', 'PO109': line['vendor_item']})
+        if line['item_descr']:
+            po1.put({'BOTSID': 'PO1'}, {'BOTSID': 'PID', 'PID01': 'F', 'PID05': line['item_descr']})
+        po1.put({'BOTSID': 'PO1'}, {'BOTSID': 'ACK', 'ACK01': line['ack_code'], 'ACK02': line['qty'],
+                                    'ACK03': line['unit_code']})
+        if line['promise_date']:
+            po1.put({'BOTSID': 'PO1'}, {'BOTSID': 'ACK', 'ACK04': '068', 'ACK05': line['promise_date']})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'CTT', 'CTT01': len(lines)})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': reference})</code></pre>
+<ul>
+<li><code>inn.root</code> is the object from <code>incommunicate</code>; there is no grammar for editype <code>db</code>.</li>
+<li>The mapping sets <code>frompartner</code> and <code>topartner</code>: Bots needs them for the envelope, the partner syntax and the merge.</li>
+<li><code>out.ta_info['reference']</code> is the ST02 control number Bots gives to the message; <code>zfill(4)</code> makes it at least 4 digits, as ST02 requires.</li>
+<li>BAK02 is <code>AD</code> when all lines are accepted, <code>RJ</code> when all are rejected, else <code>AC</code>.</li>
+</ul></li>
+<li><b>Add the translation</b> (<span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>, <span class="ui">Active</span>): Fromeditype <code>db</code>, Frommessagetype <code>acks_db</code>, Mapping Script <code>acks_db_to_x12</code>, Toeditype <code>x12</code>, Tomessagetype <code>855004010</code>.</li>
+</ol>
+
+<h3 id="int-orders-out--part4">Part 4: Mark the rows after the translation (commit or rollback)</h3>
+<p>The database channel reads the rows before the translation; whether the translation works is known only after it. A <a href="#route-scripts">route script</a> with the hook <code>posttranslation</code> runs at that moment. It looks up, for every message received from a database channel in this run, whether its translation ended in an error, and calls <code>mark_rows</code> of that channel's script.</p>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/routescripts/docs_out.py</code> (the name is the route ID):
+<pre><code class="language-python">"""Route script of route docs_out.
+After the translation, mark the ERP rows of every message received from a database channel:
+SENT when it was translated, ERROR when the translation failed. All in one database transaction per channel:
+commit when all rows are marked, rollback when something goes wrong (the rows stay NEW and are read again)."""
+from bots import botsglobal, botslib, dbconnect, transform
+
+
+def translation_error(idta_filein):
+    """None if the received message was translated, else the error text."""
+    for parsed in botslib.query("""SELECT idta, statust, errortext FROM ta
+                                   WHERE parent = %(idta)s AND status = %(status)s""",
+                                {'idta': idta_filein, 'status': transform.PARSED}):
+        if parsed['statust'] == transform.ERROR:
+            return parsed['errortext']
+        for message in botslib.query("""SELECT statust, errortext FROM ta
+                                        WHERE parent = %(idta)s AND status = %(status)s""",
+                                     {'idta': parsed['idta'], 'status': transform.SPLITUP}):
+            if message['statust'] == transform.ERROR:
+                return message['errortext']
+        return None
+    return 'not translated'
+
+
+def posttranslation(routedict):
+    # the messages from database channels in this run of the route, per channel
+    per_channel = {}
+    for row in botslib.query("""SELECT idta, fromchannel, filename FROM ta
+                                WHERE idta &gt; %(rootidta)s AND status = %(status)s AND idroute = %(idroute)s
+                                AND editype = 'db'""",
+                             {'rootidta': botsglobal.currentrun.get_minta4query_route(),
+                              'status': transform.FILEIN, 'idroute': routedict['idroute']}):
+        per_channel.setdefault(row['fromchannel'], []).append(row)
+
+    for idchannel, rows in per_channel.items():
+        channeldict = dict(next(iter(botslib.query('SELECT * FROM channel WHERE idchannel = %(idchannel)s',
+                                                   {'idchannel': idchannel}))))
+        script, _scriptname = botslib.botsimport('communicationscripts', idchannel)
+        dbconnection = dbconnect.connect_channel(channeldict)
+        try:
+            for row in rows:
+                db_object = botslib.readdata_pickled(row['filename'])
+                script.mark_rows(dbconnection, db_object, translation_error(row['idta']))
+            dbconnection.commit()
+        except Exception:
+            dbconnection.rollback()
+            raise
+        finally:
+            dbconnection.close()</code></pre>
+<ul>
+<li>Each received message has a row in the Bots table <code>ta</code> with status <code>FILEIN</code>; its translation makes a child row (<code>PARSED</code>) and a grandchild per message (<code>SPLITUP</code>) with <code>statust</code> <code>ERROR</code> when the mapping failed.</li>
+<li>The script opens its own connection with the settings of the channel (<code>dbconnect.connect_channel</code>), marks all rows of a channel and commits once. If anything fails, it rolls back: the rows stay <code>NEW</code> and are read in the next run, and the error shows in <span class="ui">All runs</span> → <span class="ui">Process Errors</span>.</li>
+<li>The rows are marked when the X12 message is made, not when the file has reached PartnerA. If sending fails, the file stays in <span class="ui">Outgoing</span> with an error and you resend it from there; it is not made again from the database.</li>
+</ul></li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>If the engine stops between the translation and <code>posttranslation</code> (a crash, a killed process), the rows stay <code>NEW</code> and the next run makes the 855 again. After such a stop, check whether PartnerA got documents twice.</p></div>
+
+<h3 id="int-orders-out--part5">Part 5: Ship notices (856) with the full hierarchy</h3>
+<p>An 856 is a tree of HL segments. Each HL has its own number (HL01), the number of its parent (HL02) and a level code (HL03). This tutorial uses the common order shipment, order, pack, item:</p>
+<div class="table-wrap"><table>
+<tr><th>HL03</th><th>Level</th><th>Parent</th><th>Segments here</th><th>From the ERP</th></tr>
+<tr><td><code>S</code></td><td>Shipment</td><td>-</td><td>TD1 (cartons, weight), TD5 (carrier SCAC), REF*BM (bill of lading), DTM*011 (ship date), N1*ST and N1*SF with N3/N4</td><td><code>edi_shipments</code> and the ship-to of the order</td></tr>
+<tr><td><code>O</code></td><td>Order</td><td>S</td><td>PRF (order number and date)</td><td><code>edi_orders</code></td></tr>
+<tr><td><code>P</code></td><td>Pack (carton)</td><td>O</td><td>MAN*GM (SSCC-18 of the carton label), MAN*CP (tracking number)</td><td><code>edi_packages</code></td></tr>
+<tr><td><code>I</code></td><td>Item</td><td>P</td><td>LIN (line, item, UPC), SN1 (quantity shipped), PID (description)</td><td><code>edi_package_lines</code> and the order line</td></tr>
+</table></div>
+<ol class="steps">
+<li><b>Add the channel</b> <code>erp_asn_in</code>: as <code>erp_acks_in</code> (type <code>db</code>, <span class="ui">Path</span> <code>botssys/erp.sqlite3</code>, <span class="ui">Database</span> <code>SQLite</code>).</li>
+<li><b>Write</b> <code>usersys/communicationscripts/erp_asn_in.py</code>. It builds one object per shipment: the shipment, its packages, and per package its lines:
+<pre><code class="language-python">"""Database channel erp_asn_in: reads the shipments the ERP put in edi_shipments, edi_packages and
+edi_package_lines (one ship notice per shipment). Only shipments with send_status NEW are read; the route
+script docs_out.py calls mark_rows() after the translation."""
+
+
+def incommunicate(channeldict, dbconnection):
+    cursor = dbconnection.cursor()
+    cursor.execute("""SELECT s.*, o.ordered_on, o.recipient_code, o.recipient_name, o.shipto_addr1, o.recipient_city,
+                             o.recipient_state, o.shipto_zip
+                      FROM edi_shipments s
+                      LEFT JOIN edi_orders o ON o.partner = s.partner AND o.order_no = s.order_no
+                      WHERE s.send_status = %(status)s
+                      ORDER BY s.shipment_no""", {'status': 'NEW'})
+    shipments = [dict(row) for row in cursor.fetchall()]
+    for shipment in shipments:
+        cursor.execute("""SELECT * FROM edi_packages WHERE shipment_no = %(shipment_no)s ORDER BY package_no""",
+                       shipment)
+        shipment['packages'] = [dict(row) for row in cursor.fetchall()]
+        for package in shipment['packages']:
+            cursor.execute("""SELECT p.line_seq, p.qty, l.vendor_item, l.buyer_item, l.upc, l.unit_code, l.item_descr
+                              FROM edi_package_lines p
+                              LEFT JOIN edi_order_lines l ON l.partner = %(partner)s AND l.order_no = %(order_no)s
+                                                          AND l.line_seq = p.line_seq
+                              WHERE p.shipment_no = %(shipment_no)s AND p.package_no = %(package_no)s
+                              ORDER BY p.line_seq""",
+                           {'partner': shipment['partner'], 'order_no': shipment['order_no'],
+                            'shipment_no': shipment['shipment_no'], 'package_no': package['package_no']})
+            package['lines'] = [dict(row) for row in cursor.fetchall()]
+    return shipments                                    # each shipment becomes one message
+
+
+def mark_rows(dbconnection, db_object, error):
+    """Called by the route script: error is None (translated) or the error text."""
+    cursor = dbconnection.cursor()
+    cursor.execute("""UPDATE edi_shipments SET send_status = %(status)s, sent_at = CURRENT_TIMESTAMP
+                      WHERE shipment_no = %(shipment_no)s AND send_status = 'NEW'""",
+                   {'status': 'ERROR' if error else 'SENT', 'shipment_no': db_object['shipment_no']})</code></pre></li>
+<li><b>Write the mapping</b> <code>usersys/mappings/db/asn_db_to_x12.py</code>. The class <code>HLCounter</code> hands out the HL numbers and fills HL02 and HL04 (1 if the level has children):
+<pre><code class="language-python">"""Shipment from the ERP (edi_shipments, edi_packages, edi_package_lines; channel erp_asn_in) -&gt; X12 856.
+HL hierarchy: S shipment &gt; O order &gt; P carton &gt; I item."""
+from bots import transform
+from bots.botslib import MappingFormatError
+
+SHIP_FROM = {'name': 'MyCompany Warehouse', 'code': 'WH01', 'street': '1 Depot Lane', 'city': 'Exampleton',
+             'state': 'TX', 'zip': '75001'}
+
+
+def record(values):
+    """Bots skips a whole put() if one value is None: leave out the empty values."""
+    return {key: value for key, value in values.items() if value not in (None, '')}
+
+
+class HLCounter:
+    """Hands out the HL numbers: HL01 is the number of the level, HL02 the number of its parent."""
+
+    def __init__(self, out):
+        self.out = out
+        self.number = 0
+
+    def add(self, level, parent=None, has_children=True):
+        self.number += 1
+        hl = self.out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'HL'})
+        hl.put(record({'BOTSID': 'HL', 'HL01': self.number, 'HL02': parent, 'HL03': level,
+                       'HL04': '1' if has_children else '0'}))
+        return hl, self.number
+
+
+def main(inn, out):
+    shipment = inn.root
+    if not shipment['ordered_on']:
+        raise MappingFormatError('Shipment "%(shipment_no)s": order "%(order_no)s" of %(partner)s not in edi_orders.',
+                                 shipment)
+    if not shipment['packages']:
+        raise MappingFormatError('Shipment "%(shipment_no)s" has no packages.', shipment)
+    out.ta_info['frompartner'] = 'MYCOMPANY'
+    out.ta_info['topartner'] = shipment['partner']
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = shipment['shipment_no']
+
+    reference = out.ta_info['reference'].zfill(4)  # ST02 has at least 4 digits
+    out.put({'BOTSID': 'ST', 'ST01': '856', 'ST02': reference})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'BSN', 'BSN01': '00', 'BSN02': shipment['shipment_no'],
+                                'BSN03': transform.strftime('%Y%m%d'), 'BSN04': transform.strftime('%H%M'),
+                                'BSN05': '0001'})
+    hls = HLCounter(out)
+
+    # shipment level
+    ship, ship_nr = hls.add('S')
+    ship.put({'BOTSID': 'HL'}, {'BOTSID': 'TD1', 'TD101': 'CTN25', 'TD102': len(shipment['packages'])})
+    if shipment['gross_weight']:
+        ship.put({'BOTSID': 'HL'}, {'BOTSID': 'TD1', 'TD106': 'G', 'TD107': shipment['gross_weight'], 'TD108': 'LB'})
+    ship.put({'BOTSID': 'HL'}, {'BOTSID': 'TD5', 'TD501': 'B', 'TD502': '2', 'TD503': shipment['carrier_scac']})
+    ship.put({'BOTSID': 'HL'}, {'BOTSID': 'REF', 'REF01': 'BM', 'REF02': shipment['shipment_no']})
+    ship.put({'BOTSID': 'HL'}, {'BOTSID': 'DTM', 'DTM01': '011', 'DTM02': shipment['shipped_date']})
+    shipto = ship.putloop({'BOTSID': 'HL'}, {'BOTSID': 'N1'})
+    shipto.put({'BOTSID': 'N1', 'N101': 'ST', 'N102': shipment['recipient_name'], 'N103': '92',
+                'N104': shipment['recipient_code']})
+    shipto.put({'BOTSID': 'N1'}, {'BOTSID': 'N3', 'N301': shipment['shipto_addr1']})
+    shipto.put({'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N401': shipment['recipient_city'], 'N402': shipment['recipient_state'],
+                                  'N403': shipment['shipto_zip']})
+    shipfrom = ship.putloop({'BOTSID': 'HL'}, {'BOTSID': 'N1'})
+    shipfrom.put({'BOTSID': 'N1', 'N101': 'SF', 'N102': SHIP_FROM['name'], 'N103': '92', 'N104': SHIP_FROM['code']})
+    shipfrom.put({'BOTSID': 'N1'}, {'BOTSID': 'N3', 'N301': SHIP_FROM['street']})
+    shipfrom.put({'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N401': SHIP_FROM['city'], 'N402': SHIP_FROM['state'],
+                                    'N403': SHIP_FROM['zip']})
+
+    # order level: one order per shipment in this ERP
+    order, order_nr = hls.add('O', ship_nr)
+    order.put({'BOTSID': 'HL'}, {'BOTSID': 'PRF', 'PRF01': shipment['order_no'], 'PRF04': shipment['ordered_on']})
+
+    # pack level (cartons) with the item level under each carton
+    for package in shipment['packages']:
+        pack, pack_nr = hls.add('P', order_nr)
+        pack.put({'BOTSID': 'HL'}, {'BOTSID': 'MAN', 'MAN01': 'GM', 'MAN02': package['package_no']})
+        if package['tracking_no']:
+            pack.put({'BOTSID': 'HL'}, {'BOTSID': 'MAN', 'MAN01': 'CP', 'MAN02': package['tracking_no']})
+        for line in package['lines']:
+            if not line['vendor_item']:
+                raise MappingFormatError('Shipment "%(shipment_no)s": line %(line_seq)s is not in the order.',
+                                         {'shipment_no': shipment['shipment_no'], 'line_seq': line['line_seq']})
+            item, _item_nr = hls.add('I', pack_nr, has_children=False)
+            item.put({'BOTSID': 'HL'}, {'BOTSID': 'LIN', 'LIN01': line['line_seq'], 'LIN02': 'VP',
+                                        'LIN03': line['vendor_item']})
+            if line['upc']:
+                item.put({'BOTSID': 'HL'}, {'BOTSID': 'LIN', 'LIN04': 'UP', 'LIN05': line['upc']})
+            item.put({'BOTSID': 'HL'}, {'BOTSID': 'SN1', 'SN101': line['line_seq'], 'SN102': line['qty'],
+                                        'SN103': line['unit_code']})
+            if line['item_descr']:
+                item.put({'BOTSID': 'HL'}, {'BOTSID': 'PID', 'PID01': 'F', 'PID05': line['item_descr']})
+
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'CTT', 'CTT01': hls.number})      # number of HL segments
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': reference})</code></pre></li>
+<li><b>Add the translation</b>: <code>db</code> / <code>asn_db</code>, Mapping Script <code>asn_db_to_x12</code>, <code>x12</code> / <code>856004010</code>.</li>
+</ol>
+
+<h3 id="int-orders-out--part6">Part 6: Invoices (810) from an ERP XML file</h3>
+<p>The ERP writes one file per invoice. <code>INV-260512.xml</code> invoices order <code>PA-778201</code>: its ship-to street has two lines, there is a freight charge and a discount:</p>
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;InvoiceDoc&gt;
+  &lt;InvHeader&gt;
+    &lt;InvNumber&gt;INV-260512&lt;/InvNumber&gt;
+    &lt;InvDate&gt;10/20/2026&lt;/InvDate&gt;
+    &lt;CustRef&gt;C10023&lt;/CustRef&gt;
+    &lt;CustomerPO&gt;PA-778201&lt;/CustomerPO&gt;
+    &lt;PoDate&gt;10/15/2026&lt;/PoDate&gt;
+    &lt;ShippedDate&gt;10/20/2026&lt;/ShippedDate&gt;
+    &lt;Currency&gt;USD&lt;/Currency&gt;
+    &lt;PayTerms&gt;NET30&lt;/PayTerms&gt;
+    &lt;CarrierScac&gt;EXPL&lt;/CarrierScac&gt;
+    &lt;BolNo&gt;SHP-26101501&lt;/BolNo&gt;
+    &lt;RemitTo&gt;
+      &lt;Name&gt;MyCompany Inc.&lt;/Name&gt;
+      &lt;Street&gt;PO Box 1000&lt;/Street&gt;
+      &lt;City&gt;Exampleton&lt;/City&gt;
+      &lt;State&gt;TX&lt;/State&gt;
+      &lt;Zip&gt;75001&lt;/Zip&gt;
+      &lt;Country&gt;US&lt;/Country&gt;
+    &lt;/RemitTo&gt;
+    &lt;BillTo&gt;
+      &lt;Name&gt;PartnerA Accounts Payable&lt;/Name&gt;
+      &lt;LocationCode&gt;9000&lt;/LocationCode&gt;
+      &lt;Street&gt;500 Invoice Plaza&lt;/Street&gt;
+      &lt;City&gt;Anytown&lt;/City&gt;
+      &lt;State&gt;IL&lt;/State&gt;
+      &lt;Zip&gt;60002&lt;/Zip&gt;
+      &lt;Country&gt;US&lt;/Country&gt;
+    &lt;/BillTo&gt;
+    &lt;ShipTo&gt;
+      &lt;Name&gt;PartnerA Store 0112&lt;/Name&gt;
+      &lt;LocationCode&gt;0112&lt;/LocationCode&gt;
+      &lt;Street&gt;100 Example Road
+Receiving door 4&lt;/Street&gt;
+      &lt;City&gt;Anytown&lt;/City&gt;
+      &lt;State&gt;IL&lt;/State&gt;
+      &lt;Zip&gt;60001&lt;/Zip&gt;
+      &lt;Country&gt;US&lt;/Country&gt;
+    &lt;/ShipTo&gt;
+  &lt;/InvHeader&gt;
+  &lt;InvLines&gt;
+    &lt;InvLine&gt;
+      &lt;LineNo&gt;1&lt;/LineNo&gt;
+      &lt;PoLine&gt;1&lt;/PoLine&gt;
+      &lt;ItemNo&gt;MC-1001&lt;/ItemNo&gt;
+      &lt;CustItemNo&gt;84500121&lt;/CustItemNo&gt;
+      &lt;Upc&gt;012345678905&lt;/Upc&gt;
+      &lt;Descr&gt;Notebook A5 lined&lt;/Descr&gt;
+      &lt;Qty&gt;24&lt;/Qty&gt;
+      &lt;Uom&gt;EA&lt;/Uom&gt;
+      &lt;Price&gt;3.15&lt;/Price&gt;
+    &lt;/InvLine&gt;
+    &lt;InvLine&gt;
+      &lt;LineNo&gt;2&lt;/LineNo&gt;
+      &lt;PoLine&gt;2&lt;/PoLine&gt;
+      &lt;ItemNo&gt;MC-1002&lt;/ItemNo&gt;
+      &lt;CustItemNo&gt;84500138&lt;/CustItemNo&gt;
+      &lt;Upc&gt;012345678912&lt;/Upc&gt;
+      &lt;Descr&gt;Desk organiser grey&lt;/Descr&gt;
+      &lt;Qty&gt;10&lt;/Qty&gt;
+      &lt;Uom&gt;EA&lt;/Uom&gt;
+      &lt;Price&gt;7.80&lt;/Price&gt;
+    &lt;/InvLine&gt;
+  &lt;/InvLines&gt;
+  &lt;InvTotals&gt;
+    &lt;LinesAmount&gt;153.60&lt;/LinesAmount&gt;
+    &lt;FreightAmt&gt;12.50&lt;/FreightAmt&gt;
+    &lt;Discount&gt;3.07&lt;/Discount&gt;
+    &lt;TaxAmt&gt;0.00&lt;/TaxAmt&gt;
+    &lt;TotalAmt&gt;163.03&lt;/TotalAmt&gt;
+  &lt;/InvTotals&gt;
+&lt;/InvoiceDoc&gt;</code></pre>
+<p><code>INV-260513.xml</code> invoices <code>PA-778202</code> with sales tax and no freight. <code>INV-260514.xml</code> is the same as <code>INV-260513.xml</code> with a wrong total (<code>&lt;TotalAmt&gt;193.32&lt;/TotalAmt&gt;</code>): it must not reach PartnerA.</p>
+<ol class="steps">
+<li><b>Add the channel</b> <span class="ui">In</span> → <span class="ui">Add incoming channel</span>: <code>erp_invoices_in</code>, <span class="ui">Type</span> <code>file</code>, <span class="ui">Path</span> <code>botssys/infile/erp_invoices</code>, <span class="ui">Filename</span> <code>*.xml</code>, <span class="ui">Remove</span> ticked, <span class="ui">Charset</span> <code>utf-8</code>. Put the three files in that folder.</li>
+<li><b>Add a code list</b> that turns the customer number of the ERP into the partner ID. <span class="ui">Configuration</span> → <span class="ui">User Code types</span> → <span class="ui">Add</span>: <span class="ui">Type of user code</span> <code>customer2partner</code>. Then <span class="ui">Configuration</span> → <span class="ui">User Codes list</span> → <span class="ui">Add</span>: type <code>customer2partner</code>, <span class="ui">Leftcode</span> <code>C10023</code>, <span class="ui">Rightcode</span> <code>PARTNERA</code>. See <a href="#code-lists">Code lists</a>.</li>
+<li><b>Write the mapping</b> <code>usersys/mappings/xml/invoice_xml_to_x12.py</code>:
+<pre><code class="language-python">"""Invoice file of the ERP (xml, grammar invoice_erp) -&gt; X12 810."""
+import datetime
+import decimal
+
+from bots import transform
+from bots.botslib import MappingFormatError
+
+TERMS_DAYS = {'NET30': 30, 'NET45': 45, 'NET60': 60}
+# the N1 loops, always in this order: bill to, ship to, remit to
+PARTIES = (('BT', 'BillTo'), ('ST', 'ShipTo'), ('RE', 'RemitTo'))
+LINES = ({'BOTSID': 'InvoiceDoc'}, {'BOTSID': 'InvLines'}, {'BOTSID': 'InvLine'})
+
+
+def record(values):
+    """Bots skips a whole put() if one value is None: leave out the empty values."""
+    return {key: value for key, value in values.items() if value not in (None, '')}
+
+
+def header(inn, field):
+    """Value of a field of InvHeader."""
+    return inn.get({'BOTSID': 'InvoiceDoc'}, {'BOTSID': 'InvHeader', field: None})
+
+
+def amount(inn, field):
+    """Amount of a field of InvTotals as a decimal number (0 if empty)."""
+    return decimal.Decimal(inn.get({'BOTSID': 'InvoiceDoc'}, {'BOTSID': 'InvTotals', field: None}) or '0')
+
+
+def us_date(value):
+    """MM/DD/YYYY (ERP) -&gt; YYYYMMDD (X12)."""
+    return transform.datemask(value, 'MM/DD/CCYY', 'CCYYMMDD')
+
+
+def main(inn, out):
+    inv_number = header(inn, 'InvNumber')
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = inv_number
+    # the customer number of the ERP gives the partner (code list customer2partner)
+    out.ta_info['frompartner'] = 'MYCOMPANY'
+    out.ta_info['topartner'] = transform.ccode('customer2partner', header(inn, 'CustRef'))
+
+    # check the totals before anything is sent
+    lines_amount = amount(inn, 'LinesAmount')
+    total = amount(inn, 'TotalAmt')
+    sum_lines = sum(decimal.Decimal(line.get({'BOTSID': 'InvLine', 'Qty': None})) *
+                    decimal.Decimal(line.get({'BOTSID': 'InvLine', 'Price': None}))
+                    for line in inn.getloop(*LINES))
+    if sum_lines != lines_amount:
+        raise MappingFormatError('Invoice "%(nr)s": lines add up to %(sum)s, LinesAmount is %(amount)s.',
+                                 {'nr': inv_number, 'sum': sum_lines, 'amount': lines_amount})
+    if lines_amount + amount(inn, 'FreightAmt') - amount(inn, 'Discount') + amount(inn, 'TaxAmt') != total:
+        raise MappingFormatError('Invoice "%(nr)s": Total %(total)s does not match the amounts.',
+                                 {'nr': inv_number, 'total': total})
+
+    reference = out.ta_info['reference'].zfill(4)     # ST02 has at least 4 digits
+    out.put({'BOTSID': 'ST', 'ST01': '810', 'ST02': reference})
+    invoiced_on = us_date(header(inn, 'InvDate'))
+    out.put({'BOTSID': 'ST'}, record({'BOTSID': 'BIG', 'BIG01': invoiced_on, 'BIG02': inv_number,
+                                      'BIG03': us_date(header(inn, 'PoDate')), 'BIG04': header(inn, 'CustomerPO'),
+                                      'BIG07': 'CR' if total &lt; 0 else 'DI'}))
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'CUR', 'CUR01': 'SE', 'CUR02': header(inn, 'Currency') or 'USD'})
+
+    # addresses: one N1 loop per address, in the fixed order of PARTIES
+    for qualifier, element in PARTIES:
+        party = next(iter(inn.getloop({'BOTSID': 'InvoiceDoc'}, {'BOTSID': 'InvHeader'}, {'BOTSID': element})), None)
+        if party is None:
+            continue
+
+        def field(name):
+            return party.get({'BOTSID': element, name: None})
+
+        n1 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'N1'})
+        n1.put(record({'BOTSID': 'N1', 'N101': qualifier, 'N102': field('Name')}))
+        if field('LocationCode'):
+            n1.put({'BOTSID': 'N1', 'N103': '92', 'N104': field('LocationCode')})
+        street = (field('Street') or '').splitlines()      # the ERP may give 2 lines: N301 and N302
+        if street:
+            n1.put({'BOTSID': 'N1'}, record({'BOTSID': 'N3', 'N301': street[0][:55],
+                                             'N302': street[1][:55] if len(street) &gt; 1 else None}))
+        n1.put({'BOTSID': 'N1'}, record({'BOTSID': 'N4', 'N401': field('City'), 'N402': field('State'),
+                                         'N403': field('Zip'), 'N404': field('Country')}))
+
+    days = TERMS_DAYS.get(header(inn, 'PayTerms'))
+    if days:
+        due = datetime.datetime.strptime(invoiced_on, '%Y%m%d') + datetime.timedelta(days=days)
+        out.put({'BOTSID': 'ST'}, {'BOTSID': 'ITD', 'ITD01': '01', 'ITD02': '3',
+                                    'ITD06': due.strftime('%Y%m%d'), 'ITD07': days})
+    if header(inn, 'ShippedDate'):
+        out.put({'BOTSID': 'ST'}, {'BOTSID': 'DTM', 'DTM01': '011', 'DTM02': us_date(header(inn, 'ShippedDate'))})
+
+    for line in inn.getloop(*LINES):
+        def value(name):
+            return line.get({'BOTSID': 'InvLine', name: None})
+
+        it1 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'IT1'})
+        it1.put(record({'BOTSID': 'IT1', 'IT101': value('PoLine') or value('LineNo'), 'IT102': value('Qty'),
+                        'IT103': value('Uom'), 'IT104': value('Price')}))
+        if value('CustItemNo'):
+            it1.put({'BOTSID': 'IT1', 'IT106': 'BP', 'IT107': value('CustItemNo')})
+        it1.put({'BOTSID': 'IT1', 'IT108': 'VP', 'IT109': value('ItemNo')})
+        if value('Upc'):
+            it1.put({'BOTSID': 'IT1', 'IT110': 'UP', 'IT111': value('Upc')})
+        if value('Descr'):
+            it1.put({'BOTSID': 'IT1'}, {'BOTSID': 'PID', 'PID01': 'F', 'PID05': value('Descr')})
+
+    # summary: total (N2: Bots writes 163.03 as 16303), tax, carrier, charges and allowances
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'TDS', 'TDS01': total})
+    if amount(inn, 'TaxAmt'):
+        out.put({'BOTSID': 'ST'}, {'BOTSID': 'TXI', 'TXI01': 'ST', 'TXI02': amount(inn, 'TaxAmt')})
+    if header(inn, 'CarrierScac'):
+        out.put({'BOTSID': 'ST'}, record({'BOTSID': 'CAD', 'CAD04': header(inn, 'CarrierScac'),
+                                          'CAD07': 'BM', 'CAD08': header(inn, 'BolNo')}))
+    if amount(inn, 'FreightAmt'):
+        out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'SAC', 'SAC01': 'C', 'SAC02': 'D240',
+                                       'SAC05': amount(inn, 'FreightAmt')})
+    if amount(inn, 'Discount'):
+        out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'SAC', 'SAC01': 'A', 'SAC02': 'C310',
+                                       'SAC05': amount(inn, 'Discount')})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'CTT', 'CTT01': out.getcountoccurrences({'BOTSID': 'ST'}, {'BOTSID': 'IT1'})})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': reference})</code></pre>
+<ul>
+<li><b>Totals</b> are checked with <code>decimal</code> (not <code>float</code>) before anything is written: the sum of the lines must equal <code>LinesAmount</code>, and lines + freight - discount + tax must equal <code>TotalAmt</code>.</li>
+<li><b>Addresses</b>: the N1 loops are written in the fixed order of <code>PARTIES</code> (bill to, ship to, remit to), whatever the order in the XML. A two-line street becomes N301 and N302, each at most 55 characters.</li>
+<li><b>Allowances and charges</b>: freight is a charge (<code>SAC*C*D240</code>), the discount an allowance (<code>SAC*A*C310</code>). Ask your partner which codes it wants.</li>
+<li><b>Terms</b>: <code>NET30</code> gives ITD with the net due date (ITD06) and the net days (ITD07).</li>
+</ul></li>
+<li><b>Add the translation</b>: <code>xml</code> / <code>invoice_erp</code>, Mapping Script <code>invoice_xml_to_x12</code>, <code>x12</code> / <code>810004010</code>.</li>
+</ol>
+
+<h3 id="int-orders-out--part7">Part 7: The route, merging, control numbers and file names</h3>
+<ol class="steps">
+<li><b>Add the route</b> <code>docs_out</code>, three parts, all <span class="ui">Active</span>:
+<div class="table-wrap"><table>
+<tr><th>Sequence</th><th>Incoming channel</th><th>Fromeditype / Frommessagetype</th><th>translate</th><th>Outgoing channel</th><th>Filtering for outchannel</th></tr>
+<tr><td>10</td><td><code>erp_acks_in</code></td><td><code>db</code> / <code>acks_db</code></td><td>Nothing</td><td>-</td><td>-</td></tr>
+<tr><td>20</td><td><code>erp_asn_in</code></td><td><code>db</code> / <code>asn_db</code></td><td>Nothing</td><td>-</td><td>-</td></tr>
+<tr><td>30</td><td><code>erp_invoices_in</code></td><td><code>xml</code> / <code>invoice_erp</code></td><td>Translate</td><td><code>partnera_sftp_out</code></td><td>Toeditype <code>x12</code></td></tr>
+</table></div>
+Parts 10 and 20 only receive. Part 30 receives the invoices and then translates everything the route received in this run, so all 855s, 856s and 810s are translated, merged and sent together, and <code>posttranslation</code> runs once for all of them.</li>
+<li><b>Merging.</b> X12 grammars merge by default (<code>'merge': True</code>). Bots puts the messages of one route in one interchange when they have the same sender, receiver, message type, test indicator and character set. The two 855s for <code>PARTNERA</code> go in one file; the 855 for <code>PARTNERATEST</code> in another; the 856 and the 810s each in their own file. (Bots does not put different message types in one interchange.)</li>
+<li><b>Control numbers.</b> With <code>interchangecontrolperpartner = True</code> (Part 1 of the previous tutorial) Bots keeps a counter per sender and receiver, <code>isacounter_MYCOMPANY_PARTNERA</code>: ISA13 and GS06 of every file to PartnerA are the next number of that counter, for every message type. You see and set counters in <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span> (see <a href="#counters">Counters</a>). ST02 comes from the counter <code>messagecounter</code>.</li>
+<li><b>File names.</b> The channel <code>partnera_sftp_out</code> already has <span class="ui">Filename</span> <code>{topartner}_{messagetype}_{reference:0&gt;9}.x12</code>: partner, message type and control number.</li>
+<li><b>Ask for 997s</b> (optional). <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span> → <span class="ui">Add</span>: <span class="ui">Active</span>, <span class="ui">Confirmtype</span> <code>ask a x12 confirmation (997) when sending</code>, <span class="ui">Ruletype</span> <code>Route</code>, <span class="ui">Route</span> <code>docs_out</code>. Every interchange then shows as <span class="ui">Pending …</span> in <span class="ui">All runs</span> → <span class="ui">Confirmations</span> until a 997 for it is processed (see <a href="#acknowledgements">Acknowledgements</a> for the mapping that matches incoming 997s).</li>
+</ol>
+
+<h3 id="int-orders-out--run">Run it end to end</h3>
+<ol class="steps">
+<li><b>Run the route</b>: <span class="ui">Run</span> → <span class="ui">Run (only new)</span>, or
+<pre><code class="language-bash">bots-engine -c/srv/edi/tutorial/config --new docs_out</code></pre>
+The run report:
+<pre><code class="language-text">2026.10.15 21:39:54 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:39:54, duration: 0:00:00.555201
+    8 files received/processed in run.
+    6 files without errors,
+    2 files with errors,
+    4 files send in run.</code></pre>
+8 received: 5 acknowledgement objects (one per order, also <code>PA-778299</code>), 1 shipment and 3 invoices. 2 with errors: <code>PA-778299</code> and <code>INV-260514</code>. 4 files sent.</li>
+<li><b>Look at the files</b> in <code>botssys/outfile/partnera</code>. Two 855s for PartnerA in one interchange, control number 3 (numbers 1 and 2 went to the 997 and the 810 of this partner):
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *261015*2139*U*00401*000000003*0*P*&gt;~
+GS*PR*MYCOMPANY*PARTNERA*20261015*2139*3*X*004010~
+ST*855*0010~
+BAK*00*AC*PA-778201*20261015*****20261015~
+PO1*1*24*EA*3.15**BP*84500121*VP*MC-1001~
+PID*F****Notebook A5 lined~
+ACK*IA*24*EA*068*20261020~
+PO1*2*12*EA*7.8**BP*84500138*VP*MC-1002~
+PID*F****Desk organiser grey~
+ACK*IQ*10*EA*068*20261020~
+CTT*2~
+SE*10*0010~
+ST*855*0011~
+BAK*00*AD*PA-778202*20261015*****20261015~
+PO1*1*6*BX*21.5**BP*84500145*VP*MC-2001~
+PID*F****Ballpoint pens blue, box of 50~
+ACK*IA*6*BX*068*20261021~
+CTT*1~
+SE*7*0011~
+GE*2*3~
+IEA*1*000000003~</code></pre>
+The 855 for the test system, test indicator <code>T</code>, its own control number:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERATEST   *261015*2139*U*00401*000000002*0*T*&gt;~
+GS*PR*MYCOMPANY*PARTNERATEST*20261015*2139*2*X*004010~
+ST*855*0013~
+BAK*00*AD*TST-0001*20261015*****20261015~
+PO1*1*1*EA*3.15**BP*84500121*VP*MC-1001~
+PID*F****Notebook A5 lined~
+ACK*IA*1*EA*068*20261028~
+CTT*1~
+SE*7*0013~
+GE*1*2~
+IEA*1*000000002~</code></pre>
+The ship notice:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *261015*2139*U*00401*000000004*0*P*&gt;~
+GS*SH*MYCOMPANY*PARTNERA*20261015*2139*4*X*004010~
+ST*856*0014~
+BSN*00*SHP-26101501*20261015*2139*0001~
+HL*1**S*1~
+TD1*CTN25*2****G*18.4*LB~
+TD5*B*2*EXPL~
+REF*BM*SHP-26101501~
+DTM*011*20261020~
+N1*ST*PartnerA Store 0112*92*0112~
+N3*100 Example Road~
+N4*Anytown*IL*60001~
+N1*SF*MyCompany Warehouse*92*WH01~
+N3*1 Depot Lane~
+N4*Exampleton*TX*75001~
+HL*2*1*O*1~
+PRF*PA-778201***20261015~
+HL*3*2*P*1~
+MAN*GM*00006141410000000011~
+MAN*CP*TRK7731000001~
+HL*4*3*I*0~
+LIN*1*VP*MC-1001*UP*012345678905~
+SN1*1*24*EA~
+PID*F****Notebook A5 lined~
+HL*5*2*P*1~
+MAN*GM*00006141410000000028~
+MAN*CP*TRK7731000002~
+HL*6*5*I*0~
+LIN*2*VP*MC-1002*UP*012345678912~
+SN1*2*10*EA~
+PID*F****Desk organiser grey~
+CTT*6~
+SE*31*0014~
+GE*1*4~
+IEA*1*000000004~</code></pre>
+The two good invoices in one interchange:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *261015*2139*U*00401*000000002*0*P*&gt;~
+GS*IN*MYCOMPANY*PARTNERA*20261015*2139*2*X*004010~
+ST*810*0015~
+BIG*20261020*INV-260512*20261015*PA-778201***DI~
+CUR*SE*USD~
+N1*BT*PartnerA Accounts Payable*92*9000~
+N3*500 Invoice Plaza~
+N4*Anytown*IL*60002*US~
+N1*ST*PartnerA Store 0112*92*0112~
+N3*100 Example Road*Receiving door 4~
+N4*Anytown*IL*60001*US~
+N1*RE*MyCompany Inc.~
+N3*PO Box 1000~
+N4*Exampleton*TX*75001*US~
+ITD*01*3****20261119*30~
+DTM*011*20261020~
+IT1*1*24*EA*3.15**BP*84500121*VP*MC-1001*UP*012345678905~
+PID*F****Notebook A5 lined~
+IT1*2*10*EA*7.80**BP*84500138*VP*MC-1002*UP*012345678912~
+PID*F****Desk organiser grey~
+TDS*16303~
+CAD****EXPL***BM*SHP-26101501~
+SAC*C*D240***1250~
+SAC*A*C310***307~
+CTT*2~
+SE*24*0015~
+ST*810*0016~
+BIG*20261021*INV-260513*20261015*PA-778202***DI~
+CUR*SE*USD~
+N1*BT*PartnerA Accounts Payable*92*9000~
+N3*500 Invoice Plaza~
+N4*Anytown*IL*60002*US~
+N1*ST*PartnerA Store 0207*92*0207~
+N3*2500 Sample Avenue~
+N4*Sampleville*CO*80001*US~
+N1*RE*MyCompany Inc.~
+N3*PO Box 1000~
+N4*Exampleton*TX*75001*US~
+ITD*01*3****20261120*30~
+DTM*011*20261021~
+IT1*1*6*BX*21.50**BP*84500145*VP*MC-2001*UP*012345678929~
+PID*F****Ballpoint pens blue, box of 50~
+TDS*13932~
+TXI*ST*10.32~
+CTT*1~
+SE*20*0016~
+GE*2*2~
+IEA*1*000000002~</code></pre></li>
+<li><b>Look at the ERP tables</b>: the rows are marked.
+<pre><code class="language-text">partner | order_no | line_seq | ack_code | send_status
+PARTNERA | PA-778201 | 1 | IA | SENT
+PARTNERA | PA-778201 | 2 | IQ | SENT
+PARTNERA | PA-778202 | 1 | IA | SENT
+PARTNERATEST | TST-0001 | 1 | IA | SENT
+PARTNERA | PA-778299 | 1 | IA | ERROR
+
+shipment_no | send_status
+SHP-26101501 | SENT</code></pre></li>
+<li><b>Look at the web interface.</b> <span class="ui">Incoming</span> shows each received object or file with its result:
+<div class="table-wrap"><table>
+<tr><th>Status</th><th>From channel</th><th>InFile</th><th>Ineditype / Inmessagetype</th><th>OutFile</th><th>To partner</th><th>Mapping Script</th></tr>
+<tr><td>Error</td><td><code>erp_invoices_in</code></td><td><code>INV-260514.xml</code></td><td><code>xml</code> / <code>invoice_erp</code></td><td></td><td></td><td></td></tr>
+<tr><td>Done</td><td><code>erp_invoices_in</code></td><td><code>INV-260513.xml</code></td><td><code>xml</code> / <code>invoice_erp</code></td><td><code>PARTNERA_810004010_000000002.x12</code></td><td><code>PARTNERA</code></td><td><code>invoice_xml_to_x12</code></td></tr>
+<tr><td>Done</td><td><code>erp_invoices_in</code></td><td><code>INV-260512.xml</code></td><td><code>xml</code> / <code>invoice_erp</code></td><td><code>PARTNERA_810004010_000000002.x12</code></td><td><code>PARTNERA</code></td><td><code>invoice_xml_to_x12</code></td></tr>
+<tr><td>Done</td><td><code>erp_asn_in</code></td><td><code>erp.sqlite3</code></td><td><code>db</code> / <code>asn_db</code></td><td><code>PARTNERA_856004010_000000004.x12</code></td><td><code>PARTNERA</code></td><td><code>asn_db_to_x12</code></td></tr>
+<tr><td>Done</td><td><code>erp_acks_in</code></td><td><code>erp.sqlite3</code></td><td><code>db</code> / <code>acks_db</code></td><td><code>PARTNERATEST_855004010_000000002.x12</code></td><td><code>PARTNERATEST</code></td><td><code>acks_db_to_x12</code></td></tr>
+<tr><td>Error</td><td><code>erp_acks_in</code></td><td><code>erp.sqlite3</code></td><td><code>db</code> / <code>acks_db</code></td><td></td><td></td><td></td></tr>
+<tr><td>Done</td><td><code>erp_acks_in</code></td><td><code>erp.sqlite3</code></td><td><code>db</code> / <code>acks_db</code></td><td><code>PARTNERA_855004010_000000003.x12</code></td><td><code>PARTNERA</code></td><td><code>acks_db_to_x12</code></td></tr>
+<tr><td>Done</td><td><code>erp_acks_in</code></td><td><code>erp.sqlite3</code></td><td><code>db</code> / <code>acks_db</code></td><td><code>PARTNERA_855004010_000000003.x12</code></td><td><code>PARTNERA</code></td><td><code>acks_db_to_x12</code></td></tr>
+</table></div>
+The errors:
+<pre><code class="language-text">ScriptError: Userscript "…\usersys\mappings\db\acks_db_to_x12": "MappingFormatError: Acknowledgement for order "PA-778299" of PARTNERA: order not in edi_orders. ".
+ScriptError: Userscript "…\usersys\mappings\xml\invoice_xml_to_x12": "MappingFormatError: Invoice "INV-260514": Total 193.32 does not match the amounts. ".</code></pre>
+<span class="ui">Outgoing</span> shows the four files with <span class="ui">#mes</span> 2, 1, 1 and 2, and in column <span class="ui">Reference</span> the control numbers 3, 2, 4 and 2. <span class="ui">All runs</span> → <span class="ui">Confirmations</span> lists the four interchanges as <span class="ui">Pending …</span>, type <code>ask-x12-997</code>, with reference 2, 3, 2 and 4.</li>
+<li><b>Run again.</b> Nothing new is read: the report says <code>0 files received/processed in run.</code> The acknowledgement rows are <code>SENT</code> or <code>ERROR</code>, so they are not read again.</li>
+<li><b>Fix the error and send again.</b> Here the order <code>PA-778299</code> really existed but came by phone; the ERP adds it to <code>edi_orders</code>/<code>edi_order_lines</code> and sets the row back:
+<pre><code class="language-text">UPDATE edi_ack_lines SET send_status = 'NEW' WHERE order_no = 'PA-778299' AND send_status = 'ERROR';</code></pre>
+The next run sends it, with the next control number of PartnerA (here 9, because the error tests of the <a href="#int-orders-in--errors">previous tutorial</a> ran in between and sent 997s to PartnerA):
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *261015*2140*U*00401*000000009*0*P*&gt;~
+GS*PR*MYCOMPANY*PARTNERA*20261015*2140*9*X*004010~
+ST*855*0033~
+BAK*00*AD*PA-778299*20261014*****20261015~
+PO1*1*5*EA*1****VP*MC-3001~
+ACK*IA*5*EA*068*20261021~
+CTT*1~
+SE*6*0033~
+GE*1*9~
+IEA*1*000000009~</code></pre>
+For the wrong invoice the ERP writes a corrected XML file in the folder.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Four files in <code>botssys/outfile/partnera</code> from this run; ISA13 per partner continues the numbers of the previous tutorial (PARTNERA 2, 3, 4; PARTNERATEST 2); four rows <code>SENT</code> and one <code>ERROR</code> in <code>edi_ack_lines</code>; the shipment <code>SENT</code>; two errors in <span class="ui">Incoming</span>.</p></div>
+
+<h3 id="int-orders-out--variations">Variations</h3>
+<ul>
+<li><b>Several partners.</b> The mappings take the partner from the data, so more retailers need only partners, partner syntax files and channels. To send each partner over its own channel, add route parts with <span class="ui">Topartner tochannel</span> (a partner or a partner group such as <code>Retailers</code>). Merging and control numbers already work per partner.</li>
+<li><b>One file per document</b> instead of one per partner and type: set <code>'merge': False</code> in the partner syntax (or in the message grammar).</li>
+<li><b>Separate routes</b> per document type (<code>acks_out</code>, <code>asn_out</code>, <code>invoices_out</code>) so they can run at other times. Merging then happens per route; the control numbers stay per partner. Copy the route script for each route.</li>
+<li><b>The ERP writes csv instead of XML or tables</b>: only the incoming grammar and the reading part of the mapping change. See <a href="#editype-csv-fixed">csv and fixed</a>.</li>
+<li><b>An ERP stored procedure</b> that marks the rows: call it in <code>mark_rows</code> with <code>cursor.execute('CALL …')</code> (MySQL, PostgreSQL) instead of the UPDATE.</li>
+<li><b>Process the 997s PartnerA sends back</b> to move the interchanges from Pending to Confirmed: a translation for <code>x12</code> / <code>997004010</code> in the receiving route with the mapping of <a href="#acknowledgements">Acknowledgements</a>.</li>
+<li><b>Multiple orders in one shipment</b>: add an O level per order and hang the cartons under the order they belong to (or use the order "pick and pack" structure your partner's guide prescribes).</li>
+</ul>
+
+<h3 id="int-orders-out--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>MessageError: [F21]: Record "ST" field "ST02" too small (min 4): "10".</code> (and the same for SE02)</td><td>The message counter is below 1000 and ST02 must have at least 4 characters.</td><td>Use <code>out.ta_info['reference'].zfill(4)</code> for ST02 and SE02.</td></tr>
+<tr><td><code>MessageError: [F02]: Record "ST-HL" field "HL01" is mandatory.</code> and <code>… "HL03" is mandatory.</code></td><td>The HL was put with <code>HL02: None</code> (the shipment level has no parent); Bots skips a <code>put()</code> with a <code>None</code> value completely.</td><td>Leave out empty values, as <code>record()</code> in the mapping does.</td></tr>
+<tr><td><code>MappingFormatError: Acknowledgement for order "PA-778299" of PARTNERA: order not in edi_orders.</code></td><td>The ERP acknowledges an order Bots never received (wrong number, or an order that came another way).</td><td>Fix the data in the ERP, then set the rows back to <code>NEW</code>.</td></tr>
+<tr><td><code>MappingFormatError: Invoice "INV-260514": Total 193.32 does not match the amounts.</code></td><td>The amounts in the ERP file do not add up.</td><td>Let the ERP write a corrected file. Do not change amounts in the mapping.</td></tr>
+<tr><td><code>ScriptError: Userscript "…invoice_xml_to_x12": "CodeConversionError: Value "C10099" not in code-conversion, user table "customer2partner". ".</code></td><td>An invoice for a customer that has no partner in the code list.</td><td>Add the customer to the code list, then <span class="ui">Rereceive</span> the file in <span class="ui">Incoming</span>.</td></tr>
+<tr><td><code>MessageError: Grammar "…invoice_erp", in recorddefs, record "BillTo", field "BOTSID": list has invalid number of arguments.</code></td><td>Several records share one Python list of fields.</td><td>Write the fields of every record out in full (Part 2).</td></tr>
+<tr><td><code>Error in process: ScriptError: Userscript "…\usersys\routescripts\docs_out": "AttributeError: 'sqlite3.Row' object has no attribute 'get'"</code> in <span class="ui">Process Errors</span>; rows stay <code>NEW</code></td><td>A row from <code>botslib.query</code> was used as a dict for <code>dbconnect.connect_channel</code>.</td><td>Convert it: <code>dict(row)</code>, as in Part 4.</td></tr>
+<tr><td>The same 855 is sent in every run</td><td>The rows are not marked: no route script (file name must be the route ID), the hook is not called (no part with <span class="ui">Translate</span>), or <code>mark_rows</code> fails and rolls back.</td><td>Check the name <code>usersys/routescripts/docs_out.py</code>, <span class="ui">Process Errors</span>, and the <code>send_status</code> column.</td></tr>
+<tr><td>Rows are <code>SENT</code> but the file is not at PartnerA</td><td>Sending failed after the translation (connection, login).</td><td>See the error in <span class="ui">Outgoing</span>; fix the channel and <span class="ui">Resend</span>. Do not set the rows back to <code>NEW</code>: that makes the documents a second time.</td></tr>
+<tr><td>Each 855 is in its own file</td><td><code>'merge': False</code> somewhere (message grammar or partner syntax), or the messages differ in test indicator, partner or envelope data set by the mapping.</td><td>Check the syntax, and the columns of the messages in <span class="ui">Outgoing</span> → <span class="ui">Document-out</span>.</td></tr>
+<tr><td>ISA13 to PartnerA jumps or is shared with other partners</td><td><code>interchangecontrolperpartner</code> is <code>False</code> (one counter per sender) or was changed while running.</td><td>Set it to <code>True</code> before going live; set the counter in <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span> to the last number the partner received.</td></tr>
+<tr><td><code>In enveloping "topartner" unknown.</code></td><td>The mapping did not set <code>out.ta_info['topartner']</code>, or the value is empty.</td><td>Set both partners in the mapping.</td></tr>
+<tr><td>TDS01 is <code>163.03</code> instead of <code>16303</code>; the partner rejects the invoice</td><td>The grammar has <code>R</code> instead of <code>N2</code> for TDS01 (X12 amounts in TDS and SAC have implied decimals).</td><td>Use <code>N2</code> in the grammar; the mapping gives the amount with its decimals (<code>163.03</code>).</td></tr>
+</table></div>
+</section>
+

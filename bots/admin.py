@@ -15,6 +15,7 @@ import django.contrib.auth
 from django.contrib.auth.admin import UserAdmin
 from django.contrib import messages
 from django.core.exceptions import ValidationError
+from django.db import models as django_models
 import django.forms.utils
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -56,12 +57,11 @@ def admin_link(obj, **kwargs):
     )
 
 
-@mark_safe
 def script_icon(script):
     if script and os.path.isfile(script):
         title = script.split(botsglobal.ini.get("directories", "usersysabs"))[1].lstrip(os.path.sep)
-        return f"""<span class="icon-yes" title="{title}"></span>"""
-    return models.ICON_NO
+        return format_html('<span class="icon-yes" title="{}"></span>', title)
+    return mark_safe(models.ICON_NO)
 
 
 def make_plugin(cls, request, queryset, cleaned_data=None):
@@ -172,6 +172,13 @@ class BotsAdmin(admin.ModelAdmin):
         extra_context.setdefault("title", f"Bots {self.model._meta.verbose_name_plural.title()}")
         return super().changelist_view(request, extra_context=extra_context)
 
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        """A text field (description) has no maximum length in the form. Bots 3 (django 1.x) did not check the
+        256 of the model and the database has no limit: a longer text of bots 3 can be saved again."""
+        if isinstance(db_field, django_models.TextField):
+            kwargs.setdefault('max_length', None)
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
     def get_form(self, request, obj=None, change=False, **kwargs):
         """over-ride form text field widths to better fit their actual size"""
         form = super().get_form(request, obj, change, **kwargs)
@@ -200,7 +207,8 @@ class CcodeAdmin(BotsAdmin):
     def get_queryset(self, request):
         if not request.user.is_superuser:
             # usershortcuts = self.model.objects.all(ccodeid='shortcut', attr8=request.user.id)
-            otherusers = [u.id for u in User.objects.exclude(id=request.user.id)]
+            # attr8 is text: compare with text (postgresql does not compare text with a number)
+            otherusers = [str(u.id) for u in User.objects.exclude(id=request.user.id)]
             return self.model.objects.exclude(ccodeid='shortcut', attr8__in=otherusers + [''])
         return self.model.objects.all()
 
@@ -284,8 +292,10 @@ class ChannelAdminForm(forms.ModelForm):
             self.fields["type"].widget.attrs["onchange"] = "onchange_inorout()"
 
     def clean_host(self):
-        # If http auth is set and credentials are missing raise error
-        if not self.cleaned_data.get('type') in ['file', 'mimefile', 'trash', 'communicationscript']:
+        # host is mandatory for the types that connect to a host themselves.
+        # Not for 'db': the communication script makes the connection and may not use the host field (bots 3
+        # did not ask for it either; a channel of bots 3 without host could not be saved again).
+        if not self.cleaned_data.get('type') in ['file', 'mimefile', 'trash', 'communicationscript', 'db']:
             if not self.cleaned_data.get('host'):
                 raise ValidationError(
                     _('HOST field is mandatory for %s channel') % self.cleaned_data.get('type'))
@@ -301,16 +311,14 @@ class ChannelAdmin(BotsAdmin):
 
     secret_.short_description = _('Password')
 
-    @mark_safe
     def idchannel_(self, obj):
-        return f'<span class="ico-{obj.inorout}channel">{obj.idchannel}</span>'
+        return format_html('<span class="ico-{}channel">{}</span>', obj.inorout, obj.idchannel)
 
     idchannel_.admin_order_field = 'idchannel'
     idchannel_.short_description = _('Idchannel')
 
-    @mark_safe
     def inorout_(self, obj):
-        return f'<span class="ico-{obj.inorout}channel">{obj.get_inorout_display()}</span>'
+        return format_html('<span class="ico-{}channel">{}</span>', obj.inorout, obj.get_inorout_display())
 
     inorout_.admin_order_field = 'inorout'
     inorout_.short_description = _('in/out')
@@ -389,6 +397,12 @@ class ChannelAdmin(BotsAdmin):
             'fields': ('ftpactive', 'ftpbinary', 'ftpaccount'),
             'classes': ('collapse',),
         }),
+        (_('Database specific'), {
+            'fields': ('dbengine',),
+            'description': _('For channels of type "db". Also uses host, port, username, password, path (or '
+                             'filename) and parameters.'),
+            'classes': ('collapse',),
+        }),
         (_('Safe writing & file locking'), {
             'fields': ('mdnchannel', 'syslock', 'lockname'),
             "description": (
@@ -398,7 +412,7 @@ class ChannelAdmin(BotsAdmin):
             'classes': ('collapse',),
         }),
         (_('Other'), {
-            'fields': ('testpath', 'keyfile', 'certfile', 'rsrv2', 'rsrv1', 'debug', 'parameters'),
+            'fields': ('testpath', 'keyfile', 'certfile', 'cafile', 'verify_cert', 'rsrv2', 'rsrv1', 'debug', 'parameters'),
             'classes': ('collapse',),
         }),
     )
@@ -881,9 +895,8 @@ class RoutesAdmin(BotsAdmin):
     routescript_icon.admin_order_field = 'idroute'
     routescript_icon.short_description = _('Script')
 
-    @mark_safe
     def translt_(self, obj):
-        return f"{obj.translt()} &nbsp; {obj.translate_link()}"
+        return format_html("{} &nbsp; {}", obj.translt() or '', obj.translate_link())
 
     translt_.admin_order_field = 'translateind'
     translt_.short_description = _('Translate')

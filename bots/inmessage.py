@@ -50,6 +50,16 @@ except ImportError:
     from xml.etree import ElementTree as ET
 
 
+def to_float(value):
+    """
+    Convert the text of a numeric field to a number; ValueError if it is not a number.
+    As float(), but python 3 accepts 1_000 as number; in an edi-file that is not a number.
+    """
+    if '_' in value:
+        raise ValueError(value)
+    return float(value)
+
+
 def parse_edi_file(**ta_info):
     """
     Read,lex, parse edi-file. Is a dispatch function for Inmessage and subclasses.
@@ -260,6 +270,9 @@ class Inmessage(message.Message):
                         }
                     )
         else:  # elif field_definition[BFORMAT] in 'RNI':  # numerics (R, N, I)
+            # whitespace is never significant in a numeric field (also when syntax 'strip_value' is off);
+            # counting decimals on an unstripped value would add zeros ('12.5 ' -> '12.50').
+            value = value.strip() or value
             if self.ta_info['lengthnumericbare']:
                 chars_not_counted = '-+' + self.ta_info['decimaal']
                 length = 0
@@ -322,7 +335,7 @@ class Inmessage(message.Message):
                 lendecimal = len(value.partition('.')[2])
                 try:
                     # convert to float in order to check validity
-                    valuedecimal = float(value)
+                    valuedecimal = to_float(value)
                     value = '%.*F' % (lendecimal, valuedecimal)
                 except Exception:
                     self.add2errorlist(
@@ -354,7 +367,7 @@ class Inmessage(message.Message):
                     )
                 try:
                     # convert to float in order to check validity
-                    valuedecimal = float(value)
+                    valuedecimal = to_float(value)
                     value = '%.*F' % (lendecimal, valuedecimal)
                 except Exception:
                     self.add2errorlist(
@@ -385,7 +398,7 @@ class Inmessage(message.Message):
                     )
                 else:
                     try:  # convert to float in order to check validity
-                        valuedecimal = float(value)
+                        valuedecimal = to_float(value)
                         valuedecimal = valuedecimal / 10 ** field_definition[DECIMALS]
                         value = '%.*F' % (field_definition[DECIMALS], valuedecimal)
                     except Exception:
@@ -657,7 +670,7 @@ class Inmessage(message.Message):
                     # eachmessage is a list: [mpath,mpath, etc, node]
                     count += 1
                     ta_info = self.ta_info.copy()
-                    ta_info.update(eachmessage.queries[-1])
+                    ta_info.update(eachmessage[-1].queries)
                     ta_info['message_number'] = count
                     # give mappingscript access to envelope
                     ta_info['bots_accessenvelope'] = self.root
@@ -774,6 +787,8 @@ class Inmessage(message.Message):
         messagefromnode.root = inode
         messagefromnode.syntax = syntax
         messagefromnode.envelope_content = envelope_content
+        # name in bots 3
+        messagefromnode.envelope = envelope_content
         return messagefromnode
 
 
@@ -937,6 +952,7 @@ class fixed(Inmessage):
                         }
                     )
         else:  # elif field_definition[BFORMAT] in 'RNI':   #numerics (R, N, I)
+            value = value.strip() or value
             if value[-1] == '-':
                 # if minus-sign at the end, put it in front.
                 value = value[-1] + value[:-1]
@@ -961,7 +977,7 @@ class fixed(Inmessage):
                 lendecimal = len(value.partition('.')[2])
                 try:
                     # convert to decimal in order to check validity
-                    valuedecimal = float(value)
+                    valuedecimal = to_float(value)
                     value = '%.*F' % (lendecimal, valuedecimal)
                 except Exception:
                     self.add2errorlist(
@@ -993,7 +1009,7 @@ class fixed(Inmessage):
                     )
                 try:
                     # convert to decimal in order to check validity
-                    valuedecimal = float(value)
+                    valuedecimal = to_float(value)
                     value = '%.*F' % (lendecimal, valuedecimal)
                 except Exception:
                     self.add2errorlist(
@@ -1025,7 +1041,7 @@ class fixed(Inmessage):
                 else:
                     try:
                         # convert to decimal in order to check validity
-                        valuedecimal = float(value)
+                        valuedecimal = to_float(value)
                         valuedecimal = valuedecimal / 10 ** field_definition[DECIMALS]
                         value = '%.*F' % (field_definition[DECIMALS], valuedecimal)
                     except Exception:
@@ -1137,7 +1153,7 @@ class var(Inmessage):
                         raise InMessageError(
                             _(
                                 '[A67]: Found space characters between segments.'
-                                ' Line %(countline)s, position %(pos)s, position %(countpos)s.'
+                                ' Line %(countline)s, position %(countpos)s.'
                             ),
                             {'countline': countline, 'countpos': countpos},
                         )
@@ -1187,7 +1203,7 @@ class var(Inmessage):
                     # check for 'double' record seperator.
                     raise InMessageError(
                         _('[A69]: Found double record seperator. Line %(countline)s,'
-                          ' position %(pos)s, position %(countpos)s.'),
+                          ' position %(countpos)s.'),
                         {'countline': countline, 'countpos': countpos})
                 # write current value to lex_record
                 lex_record.append(
@@ -1427,7 +1443,8 @@ class csv(var):
             # if it is an integer, skip that many lines
             # if True, skip just the first line
             if isinstance(self.ta_info['skip_firstline'], bool):
-                del self.lex_records[0]
+                # slice: no error for an empty file
+                del self.lex_records[0:1]
             else:
                 del self.lex_records[0:self.ta_info['skip_firstline']]
 
@@ -1452,18 +1469,23 @@ class csv(var):
 
 
 class excel(csv):
+    """
+    Excel file: the first sheet is converted to csv; the grammar is a csv grammar.
+    Reads .xlsx/.xlsm (needs python library "openpyxl") and .xls (needs "xlrd").
+    Values in the csv:
+    - number: as is; a whole number without decimals (12.0 -> 12);
+    - date and/or time: ISO, eg 2026-01-31, 2026-01-31T13:45:00, T13:45:00;
+    - boolean: 1 or 0;
+    - error in a cell: the text excel shows, eg #DIV/0!;
+    - formula: the value excel calculated last.
+    """
+
     def initfromfile(self):
         """
         initialisation from an excel file.
-        file is first converted to csv using python module xlrd
+        file is first converted to csv
         """
         # pylint: disable=import-outside-toplevel
-        try:
-            self.xlrd = botslib.botsbaseimport('xlrd')
-        except ImportError as exc:
-            raise ImportError(
-                _('Dependency failure: editype "excel" requires python library "xlrd".')
-            ) from exc
         import csv as csvlib
         import io
 
@@ -1474,11 +1496,12 @@ class excel(csv):
         doublequote = not bool(self.ta_info['escape'])
 
         botsglobal.logger.debug('Read edi file "%(filename)s".', self.ta_info)
-        # xlrd reads excel file; python's csv modules write this to file-like StringIO (as utf-8);
-        # read StringIO as self.rawinput; decode this (utf-8->unicode)
+        # read excel file; python's csv module writes this to file-like StringIO; this is self.rawinput
         infilename = botslib.abspathdata(self.ta_info['filename'])
         try:
             xlsdata = self.read_xls(infilename)
+        except ImportError:
+            raise
         except Exception as exc:
             txt = txtexc()
             botsglobal.logger.error(
@@ -1489,19 +1512,18 @@ class excel(csv):
                 _('Excel extraction failed, may not be an Excel file? Error:\n%(txt)s'),
                 {'txt': txt},
             ) from exc
-        rawinputfile = io.StringIO()
+        rawinputfile = io.StringIO(newline='')
         csvout = csvlib.writer(
             rawinputfile,
-            quotechar=self.ta_info['quote_char'],
+            quotechar=self.ta_info['quote_char'] or '"',
             delimiter=self.ta_info['field_sep'],
             doublequote=doublequote,
-            escapechar=self.ta_info['escape'],
+            escapechar=self.ta_info['escape'] or None,
+            lineterminator='\r\n',
         )
-        csvout.writerows(map(self.utf8ize, xlsdata))
-        rawinputfile.seek(0)
-        self.rawinput = rawinputfile.read()
+        csvout.writerows(xlsdata)
+        self.rawinput = rawinputfile.getvalue()
         rawinputfile.close()
-        self.rawinput = self.rawinput.decode('utf-8')
         # start lexing and parsing as csv
         self._lex()
         if hasattr(self, 'rawinput'):
@@ -1519,23 +1541,74 @@ class excel(csv):
         self.checkmessage(self.root, self.defmessage)
 
     def read_xls(self, infilename):
-        """
-        Read excel first sheet into a 2-d array
-
-        Need testing ...
-        """
+        """Read first sheet of excel file into a list of rows; a row is a list of values."""
+        with open(infilename, 'rb') as excelfile:
+            start = excelfile.read(4)
+        if start == b'PK\x03\x04':
+            # zip: excel 2007 and later (.xlsx, .xlsm)
+            return self.read_xlsx(infilename)
+        try:
+            self.xlrd = botslib.botsbaseimport('xlrd')
+        except ImportError as exc:
+            raise ImportError(
+                _('Dependency failure: editype "excel" requires python library "xlrd" for a .xls file.')
+            ) from exc
         book = self.xlrd.open_workbook(infilename)
         sheet = book.sheet_by_index(0)
-
-        # TODO: ... need testing
-        def formatter(typ, val, format_func=self.format_excelval, book=book):
-            """formatter = lambda t, v: self.format_excelval(book, t, v, False)"""
-            return format_func(book, typ, val, False)
         xlsdata = []
         for row in range(sheet.nrows):
-            (types, values) = (sheet.row_types(row), sheet.row_values(row))
-            xlsdata.append(map(formatter, zip(types, values)))
+            xlsdata.append([
+                self.format_excelval(book, datatype, value, False)
+                for datatype, value in zip(sheet.row_types(row), sheet.row_values(row))
+            ])
         return xlsdata
+
+    def read_xlsx(self, infilename):
+        """Read first sheet of a .xlsx file; same result as read_xls for the same content."""
+        # pylint: disable=import-outside-toplevel
+        import datetime
+        try:
+            openpyxl = botslib.botsbaseimport('openpyxl')
+        except ImportError as exc:
+            raise ImportError(
+                _('Dependency failure: editype "excel" requires python library "openpyxl" for a .xlsx file.')
+            ) from exc
+        # as file object: openpyxl checks the extension of a file name, the files of bots have none
+        excelfile = open(infilename, 'rb')  # pylint: disable=consider-using-with
+        try:
+            book = openpyxl.load_workbook(excelfile, read_only=True, data_only=True)
+            sheet = book.worksheets[0]
+            xlsdata = []
+            for row in sheet.iter_rows(values_only=True):
+                values = []
+                for value in row:
+                    if value is None:
+                        value = ''
+                    elif isinstance(value, bool):
+                        value = int(value)
+                    elif isinstance(value, float):
+                        if value == int(value):
+                            value = int(value)
+                    elif isinstance(value, datetime.datetime):
+                        value = self.tupledate_to_isodate(value.timetuple()[:6])
+                    elif isinstance(value, datetime.date):
+                        value = self.tupledate_to_isodate((value.year, value.month, value.day, 0, 0, 0))
+                    elif isinstance(value, datetime.time):
+                        value = self.tupledate_to_isodate((0, 0, 0, value.hour, value.minute, value.second))
+                    elif isinstance(value, datetime.timedelta):
+                        seconds = int(value.total_seconds())
+                        value = self.tupledate_to_isodate((0, 0, 0, seconds // 3600, seconds // 60 % 60, seconds % 60))
+                    values.append(value)
+                xlsdata.append(values)
+        finally:
+            excelfile.close()
+        # as xlrd: no empty rows at the end, all rows the same number of columns
+        while xlsdata and not any(value != '' for value in xlsdata[-1]):
+            xlsdata.pop()
+        width = max([len(values) for values in xlsdata] or [0])
+        while width and not any(len(values) >= width and values[width - 1] != '' for values in xlsdata):
+            width -= 1
+        return [(values + [''] * width)[:width] for values in xlsdata]
 
     # -------------------------------------------------------------------------------
     def format_excelval(self, book, datatype, value, wanttupledate):
@@ -1557,23 +1630,9 @@ class excel(csv):
         into a standard YYYY-MM-DDTHH:MM:SS ISO date.
         """
         (y, m, d, hh, mm, ss) = tupledate
-
-        def nonzero(num) -> bool:
-            """nonzero = lambda n: n != 0"""
-            return num != 0
-
-        datestring = '%04d-%02d-%02d' % (y, m, d) if filter(nonzero, (y, m, d)) else ''
-        timestring = (
-            'T%02d:%02d:%02d' % (hh, mm, ss)
-            if filter(nonzero, (hh, mm, ss)) or not datestring
-            else ''
-        )
+        datestring = '%04d-%02d-%02d' % (y, m, d) if any((y, m, d)) else ''
+        timestring = 'T%02d:%02d:%02d' % (hh, mm, ss) if any((hh, mm, ss)) or not datestring else ''
         return datestring + timestring
-
-    # -------------------------------------------------------------------------------
-    def utf8ize(self, data: list) -> list:
-        """Make string-like things into utf-8, leave other things alone"""
-        return [str(s).encode("utf-8") if hasattr(s, "encode") else s for s in data]
 
 
 class edifact(var):
@@ -1865,8 +1924,10 @@ class edifact(var):
         # copy fields from UNB received to UNB of CONTRL to send
         for UNB in self.getloop({'BOTSID': 'UNB'}):
             # pylint: disable=protected-access
-            sender = UNB._queries.get('frompartner')
-            receiver = UNB._queries.get('topartner')
+            # from QUERIES of the envelope grammar if present, else straight from UNB (as bots 3.x did)
+            unb_queries = UNB._queries or {}
+            sender = unb_queries.get('frompartner') or UNB.get({'BOTSID': 'UNB', 'S002.0004': None})
+            receiver = unb_queries.get('topartner') or UNB.get({'BOTSID': 'UNB', 'S003.0010': None})
             nr_message_to_confirm = 0
             messages_not_confirm = []
             for nodeunh in UNB.getloop({'BOTSID': 'UNB'}, {'BOTSID': 'UNH'}):
@@ -2270,13 +2331,15 @@ class x12(var):
             if GS.get({'BOTSID': 'GS', 'GS01': None}) == 'FA':
                 # do not generate 997 for 997
                 continue
-            # get the partnerID's from received file
-            # pylint: disable=protected-access
-            sender = GS._queries.get('frompartner')
-            receiver = GS._queries.get('topartner')
-            # there is: messagetype/messageversion received; messagetype/messageversion send as ack (997)
-            # always send back same messageversion.
-            confirm_GS = False
+            # the partnerID's of the received file are GS02/GS03, as in bots 3.2.0: these are the IDs in the
+            # 997 and the IDs the confirmrules are checked with.
+            # (4.0 used the QUERIES of the envelope grammar, mostly the ISA-IDs; that gives another 997.)
+            sender = GS.get({'BOTSID': 'GS', 'GS02': None})
+            receiver = GS.get({'BOTSID': 'GS', 'GS03': None})
+            # confirmrules are evaluated for each message (ST) in the group;
+            # only the messages that have to be confirmed are acknowledged (as in bots 3.x).
+            nr_message_to_confirm = 0
+            messages_not_confirm = []
             for nodest in GS.getloop({'BOTSID': 'GS'}, {'BOTSID': 'ST'}):
                 if botslib.checkconfirmrules(
                         confirmtype,
@@ -2287,11 +2350,16 @@ class x12(var):
                         messagetype=nodest.queries['messagetype'],
                         confirmasked=confirmasked,
                 ):
-                    confirm_GS = True
-                break
-            if not confirm_GS:
+                    nr_message_to_confirm += 1
+                else:
+                    messages_not_confirm.append(nodest)
+            if not nr_message_to_confirm:
                 # do not generate 997
                 continue
+            # remove messages not to be confirmed from tree
+            # (is destructive, but this is end of file processing anyway).
+            for message_not_confirm in messages_not_confirm:
+                GS.children.remove(message_not_confirm)
 
             # check if there is a user mappingscript
             tscript, _toeditype, tomessagetype = botslib.lookup_translation(
@@ -2305,9 +2373,7 @@ class x12(var):
                 # import the mappingscript
                 translationscript, scriptfilename = botslib.botsimport('mappings', editype, tscript)
             else:
-                from_message_version = GS.get({'BOTSID': 'GS', 'GS08': None}) or '004010'
-                # use same version 997 as in GS08 of received message
-                tomessagetype = '997' + from_message_version
+                tomessagetype = x12_997_messagetype(GS.get({'BOTSID': 'GS', 'GS08': None}), editype)
                 translationscript, scriptfilename = None, None
 
             # generate 997.(one per GS-GE)
@@ -2626,6 +2692,39 @@ class xml(Inmessage):
         self.stack = [self.defmessage.structure[0]]
 
 
+def x12_997_messagetype(version_received, editype='x12'):
+    """Messagetype (grammar) of a 997 that bots makes itself (no mapping script for 997).
+    Default '997004010', as bots 3: a partner keeps getting the 997 it got.
+    With bots.ini [settings] x12_997_version_as_received = True (as 4.0 did): the version in GS08 of the
+    received group if there is a grammar for it. GS08 often has an implementation suffix (004010VICS,
+    005010X222A1) for which no 997 grammar exists: than the plain version, than 997004010.
+    """
+    if not botsglobal.ini.getboolean('settings', 'x12_997_version_as_received', False):
+        return '997004010'
+    version_received = version_received or '004010'
+    for messagetype in dict.fromkeys(
+            ('997' + version_received, '997' + version_received[:6], '997004010')):
+        try:
+            botslib.botsimport('grammars', editype, messagetype)
+            return messagetype
+        except BotsImportError:
+            continue
+    return '997004010'
+
+
+class mailbag(xml):
+    """A file that is parsed with editype 'mailbag' is read as xml.
+    Normally a file does not get here as 'mailbag': the mailbag step of a route (preprocess.mailbag) finds out
+    if it is edifact, x12, tradacoms or xml and sets the editype. This class is for a file that did not pass
+    that step (eg editype set by a user script, or a translation started for editype 'mailbag').
+    With messagetype 'mailbag' the messagetype is searched via usersys/grammars/xml/mailbag.py.
+    """
+
+    def initfromfile(self):
+        self.ta_info['editype'] = 'xml'
+        super().initfromfile()
+
+
 class xmlnocheck(xml):
     """class for ediobjects in XML. Uses ElementTree"""
 
@@ -2646,10 +2745,10 @@ class xmlnocheck(xml):
 class json(Inmessage):
     def initfromfile(self):
         self.messagegrammarread(typeofgrammarfile='grammars')
-        name_root_dict_according_to_grammar = self._getrootid()
         self._readcontent_edifile()
         jsonobject = simplejson.loads(self.rawinput)
         del self.rawinput
+        name_root_dict_according_to_grammar = self._getrootid(jsonobject)
         # several options for format...
         # examine content, determine IsNamed, IsOneMessage, convert to Node tree
         # option 2 and 5 are preferred...
@@ -2704,6 +2803,9 @@ class json(Inmessage):
         else:
             raise InMessageError(
                 _('[J53]: content of json not OK. Content is not a "list" or "object".'))
+        if self.root is None or (not IsOneMessage and not self.root.children):
+            # eg {} or [] or [{}]
+            raise InMessageError(_('[J52]: No usable content.'))
         # check message(s) with grammar
         self.checkmessage(self.root, self.defmessage)
         if IsOneMessage:
@@ -2713,8 +2815,37 @@ class json(Inmessage):
                 self.ta_info.update(child.queries)
                 break
 
-    def _getrootid(self):
+    def _getrootid(self, jsonobject=None):
+        # pylint: disable=unused-argument
         return self.defmessage.structure[0][ID]
+
+    def _formatfield(self, value, field_definition, structure_record, node_instance):
+        if isinstance(value, list):
+            # a list of values where the grammar has one value
+            self.add2errorlist(
+                _('[J57]%(linpos)s: Record "%(record)s" field "%(field)s" is a list, but can not be repeated.\n')
+                % {
+                    'linpos': node_instance.linpos(),
+                    'record': self.mpathformat(structure_record[MPATH]),
+                    'field': field_definition[ID],
+                })
+            return value
+        if field_definition[BFORMAT] == 'B':
+            # boolean; in the tree a boolean is 'True' or 'False'
+            if value.strip().lower() in ('true', '1'):
+                return 'True'
+            if value.strip().lower() in ('false', '0'):
+                return 'False'
+            self.add2errorlist(
+                _('[F35]%(linpos)s: Record "%(record)s" field "%(field)s" is not of type bool: "%(content)s".\n')
+                % {
+                    'linpos': node_instance.linpos(),
+                    'record': self.mpathformat(structure_record[MPATH]),
+                    'field': field_definition[ID],
+                    'content': value,
+                })
+            return value
+        return super()._formatfield(value, field_definition, structure_record, node_instance)
 
     def _dojsonlist(self, jsonobject, name):
         # initialise empty list, used to append a listof (converted) json objects
@@ -2729,8 +2860,9 @@ class json(Inmessage):
                 if newnode:
                     lijst.append(newnode)
             elif isinstance(i, (str, int, float)):
+                # values are strings (as every value in bots)
                 is_repeting_data_element = True
-                lijst.append(i)
+                lijst.append(i if isinstance(i, str) else str(i))
             # note: list within list is non-sense.
             # A name is required, so list are always in dict (or root is a list)
             elif self.ta_info['checkunknownentities']:
@@ -2759,7 +2891,9 @@ class json(Inmessage):
             elif isinstance(value, list):
                 is_repeting_data_element, lijst = self._dojsonlist(value, key)
                 if is_repeting_data_element:
-                    thisnode.record[key] = lijst
+                    # list of values: a repeating field. Objects in the same list are records.
+                    thisnode.record[key] = [item for item in lijst if isinstance(item, str)]
+                    thisnode.children.extend(item for item in lijst if not isinstance(item, str))
                 else:
                     thisnode.children.extend(lijst)
             elif isinstance(value, (int, float)):
@@ -2783,8 +2917,15 @@ class jsonnocheck(json):
     def checkmessage(self, node_instance, defmessage, subtranslation=False):
         pass
 
-    def _getrootid(self):
+    def _getrootid(self, jsonobject=None):
         # as there is no structure in grammar, use value form syntax.
+        if 'defaultBOTSIDroot' not in self.defmessage.original_syntaxfromgrammar \
+                and isinstance(jsonobject, dict) and len(jsonobject) == 1:
+            # as bots 3: {"order": {...}} is a message with root 'order'
+            # (unless the name of the root is set in the grammar).
+            key, value = list(jsonobject.items())[0]
+            if isinstance(value, dict):
+                return key
         return self.ta_info['defaultBOTSIDroot']
 
 

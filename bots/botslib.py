@@ -8,6 +8,7 @@ Botslib should not import code from other Bots-modules.
 import codecs
 import datetime as python_datetime
 import importlib
+import inspect
 import os
 import platform
 import socket
@@ -20,12 +21,43 @@ from django.db.backends.base.base import BaseDatabaseWrapper
 # bots-modules (no code)
 from . import botsglobal
 from .botsconfig import OK, ERROR, PROCESS, DONE, FILEOUT
-from .exceptions import (
+# User scripts written for bots 3.x use these names via botslib (eg botslib.FILEIN, botslib.BotsError,
+# 'except botslib.CommunicationError'): keep all constants and exceptions reachable here.
+from .botsconfig import *  # noqa: F401,F403  pylint: disable=wildcard-import,unused-wildcard-import
+from .exceptions import (  # noqa: F401  pylint: disable=unused-import
+    AcceptanceTestError,
+    BotsConfigError,
+    BotsError,
     BotsImportError,
+    BotsInitError,
+    CodeConversionError,
+    CommunicationError,
+    CommunicationInError,
+    CommunicationOutError,
+    DirmonitorError,
+    DummyException,
+    EanError,
+    FileTooLargeError,
+    GotoException,
+    GrammarError,
+    GrammarPartMissing,
+    InMessageError,
     KillWholeFileException,
+    LockedFileError,
+    MappingFormatError,
+    MappingRootError,
+    MessageError,
+    MessageRootError,
+    OutMessageError,
+    PanicError,
+    ParsePassthroughException,
+    PersistError,
+    PluginError,
     ScriptError,
     ScriptImportError,
-    ParsePassthroughException,
+    TraceError,
+    TranslationNotFoundError,
+    safe_unicode,
     txtexc,
 )
 
@@ -229,7 +261,9 @@ def addinfocore(change, where, wherestring):
     wherestring = ' WHERE idta > %(rootidta)s AND ' + wherestring
     # count the number of dbta changed
     counter = 0
-    for row in query("""SELECT idta FROM ta """ + wherestring, where):
+    # in the order they were made (as SQLite returns them); another database may return any order, and the new ta's
+    # (eg the outgoing files) and their numbers would come in that order
+    for row in query("""SELECT idta FROM ta """ + wherestring + """ ORDER BY idta""", where):
         counter += 1
         ta_from = OldTransaction(row["idta"])
         # make new ta from ta_from, using parameters from change
@@ -247,8 +281,9 @@ def addinfo(change, where):
     where (dict): selection.
     """
     where.setdefault('rootidta', botsglobal.currentrun.get_minta4query())
-    # where.setdefault('statust', OK)
-    # change.setdefault('statust', OK)
+    # by default: look only for statust OK, and the new ta is OK (as in bots 3.x; user route scripts rely on this).
+    where.setdefault('statust', OK)
+    change.setdefault('statust', OK)
 
     # wherestring; does not use rootidta
     wherestring = " AND ".join(f"{key}=%({key})s " for key in where if key != "rootidta")
@@ -368,43 +403,81 @@ def unique_runcounter(domain, updatewith=None):
     return nummer
 
 
-def unique(domein, updatewith=None):
+def unique(domein, updatewith=None, seedfrom=None):
     """
     generate unique number within range domain. Uses db to keep track of last generated number.
     3 use cases:
      - in acceptance: use unique_runcounter
      - if updatewith is not None: return current number, update database with updatewith
      - if updatewith is None: return current number plus 1; update database with  current number plus 1
-         if domain not used before, initialize with 1.
+         if domain not used before, initialize with 1;
+         or, if seedfrom is the domain of an existing counter, continue with the next number of that counter.
     """
     if botsglobal.ini.getboolean('acceptance', 'runacceptancetest', False):
         return unique_runcounter(domein)
 
-    cursor = botsglobal.db.cursor()
-    try:
+    for attempt in (1, 2):
+        cursor = botsglobal.db.cursor()
+        try:
+            nummer = _unique(cursor, domein, updatewith, seedfrom)
+        except Exception:
+            # eg 2 processes use a new counter at the same moment: one of them can not insert. Try once more.
+            botsglobal.db.rollback()
+            cursor.close()
+            if attempt == 2:
+                raise
+        else:
+            botsglobal.db.commit()
+            cursor.close()
+            return nummer
+    return None
+
+
+def _unique(cursor, domein, updatewith, seedfrom):
+    """
+    The update comes first: the database locks the counter until commit,
+    so 2 processes can not get the same number.
+    """
+    select = """SELECT nummer FROM uniek WHERE domein=%(domein)s"""
+    if updatewith is None:
         cursor.execute(
-            """SELECT nummer FROM uniek WHERE domein=%(domein)s""",
-            {'domein': domein}
-        )
-        nummer = dictfetchone(cursor)["nummer"]
-        if updatewith is None:
-            nummer += 1
-            updatewith = nummer
-            if updatewith > MAXINT:
-                updatewith = 0
-        cursor.execute(
-            """UPDATE uniek SET nummer=%(nummer)s WHERE domein=%(domein)s""",
-            {"domein": domein, "nummer": updatewith},
-        )
-    except TypeError:
-        # if domein does not exist, cursor.fetchone returns None, so TypeError
-        cursor.execute(
-            """INSERT INTO uniek (domein,nummer) VALUES (%(domein)s,1)""",
-            {"domein": domein}
-        )
-        nummer = 1
-    botsglobal.db.commit()
-    cursor.close()
+            """UPDATE uniek
+               SET nummer = CASE WHEN nummer >= %(maxint)s THEN 0 ELSE nummer + 1 END
+               WHERE domein=%(domein)s""",
+            {'domein': domein, 'maxint': MAXINT})
+        cursor.execute(select, {'domein': domein})
+        try:
+            return dictfetchone(cursor)["nummer"]
+        except TypeError:
+            # domein does not exist (fetchone returns None)
+            pass
+    else:
+        # lock the counter, get the number, set the new number
+        cursor.execute("""UPDATE uniek SET nummer = nummer WHERE domein=%(domein)s""", {'domein': domein})
+        cursor.execute(select, {'domein': domein})
+        try:
+            nummer = dictfetchone(cursor)["nummer"]
+        except TypeError:
+            pass
+        else:
+            cursor.execute(
+                """UPDATE uniek SET nummer=%(nummer)s WHERE domein=%(domein)s""",
+                {"domein": domein, "nummer": updatewith})
+            return nummer
+    # new counter
+    nummer = 1
+    if seedfrom and seedfrom != domein:
+        # continue where counter 'seedfrom' is (if that counter exists)
+        cursor.execute(select, {'domein': seedfrom})
+        try:
+            seed = dictfetchone(cursor)["nummer"]
+        except TypeError:
+            seed = 0
+        if 0 < seed < MAXINT:
+            nummer = seed + 1
+    cursor.execute(
+        """INSERT INTO uniek (domein,nummer) VALUES (%(domein)s,%(nummer)s)""",
+        {"domein": domein, "nummer": nummer})
     return nummer
 
 
@@ -594,6 +667,23 @@ def join(*paths):
     return os.path.normpath(os.path.join(botsglobal.ini.get("directories", "botsenv"), *paths))
 
 
+def path_in_directory(directory, *names):
+    """
+    Absolute path of names in directory; None if that is not a path within directory
+    (eg name is '../x', an absolute path, a path to a directory next to directory).
+    For file names that are received from outside, eg in a request of the web interface.
+    """
+    directory = os.path.realpath(directory)
+    target = os.path.realpath(os.path.join(directory, *names))
+    try:
+        if os.path.commonpath([directory, target]) != directory or target == directory:
+            return None
+    except ValueError:
+        # eg on another drive
+        return None
+    return target
+
+
 def dirshouldbethere(path: str) -> bool:
     """
     Create directory if path doesn't exist and return True
@@ -602,7 +692,11 @@ def dirshouldbethere(path: str) -> bool:
         - False if path already exist
     """
     if path and not os.path.exists(path):
-        os.makedirs(path)
+        try:
+            os.makedirs(path)
+        except FileExistsError:
+            # made by another process (engine, webserver, dirmonitor) at the same moment
+            return False
         return True
     return False
 
@@ -640,12 +734,19 @@ def deldata(filename):
 
 
 def opendata(filename, mode, charset=None, errors="strict"):
-    """open internal data file as unicode."""
+    """
+    open internal data file as unicode.
+    Without charset: as in bots 3 the content is read and written 'as it is': each byte is one character
+    (latin-1), no conversion of line ends. A user script that reads a file, changes it and writes it
+    (readdata(), opendata(name, 'wb').write()) gets and gives text, and the bytes it does not touch stay
+    the same. (Before: the encoding and the line ends depended on the platform.)
+    For bytes use opendata_bin / readdata_bin.
+    """
     # pylint: disable=deprecated-method
     filename = abspathdata(filename)
     if 'w' in mode:
         dirshouldbethere(os.path.dirname(filename))
-    return codecs.open(filename, mode, charset, errors)
+    return codecs.open(filename, mode, charset or 'latin-1', errors)
 
 
 def readdata(filename, charset=None, errors="strict"):
@@ -673,10 +774,37 @@ def readdata_bin(filename):
 
 def readdata_pickled(filename):
     """pickle is a binary/byte stream"""
-    filehandler = opendata_bin(filename, mode='rb')
-    content = pickle.load(filehandler)
-    filehandler.close()
-    return content
+    with opendata_bin(filename, mode='rb') as filehandler:
+        data = filehandler.read()
+    return loads_pickled(data)
+
+
+def loads_pickled(data):
+    """Object of a pickle; also of a pickle written by bots 3 (python 2): a byte string in it is read as utf-8,
+    or else as latin-1 (that is also needed for a date, time or decimal, which python 2 stored as bytes).
+    For: objects of a database channel received by bots 3 and not translated yet, values in persist."""
+    try:
+        return pickle.loads(data, encoding='utf-8')
+    except UnicodeDecodeError:
+        return _utf8_of_python2(pickle.loads(data, encoding='latin-1'))
+
+
+def _utf8_of_python2(value):
+    """After reading a python 2 pickle as latin-1: a byte string that was utf-8 is made the text it was."""
+    if isinstance(value, str):
+        if not value.isascii():
+            try:
+                return value.encode('latin-1').decode('utf-8')
+            except UnicodeError:
+                pass
+        return value
+    if isinstance(value, dict):
+        return dict((_utf8_of_python2(key), _utf8_of_python2(item)) for key, item in value.items())
+    if isinstance(value, list):
+        return [_utf8_of_python2(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_utf8_of_python2(item) for item in value)
+    return value
 
 
 def writedata_pickled(filename, content):
@@ -689,6 +817,29 @@ def writedata_pickled(filename, content):
 # **********************************************************/**
 # ***************** calling modules, programs **************/**
 # **********************************************************/**
+# arguments bots 4 passes to a user exit that bots 3 did not pass: {name of exit: names of arguments}
+NEW_ARGUMENTS = {
+    'accept_incoming_attachment': ('content_disposition', 'filename'),
+}
+
+
+def accepted_arguments(function, argv):
+    """
+    A user exit written for bots 3 does not have the arguments that are new in bots 4:
+    do not pass a new argument to a function that does not have it.
+    """
+    new = NEW_ARGUMENTS.get(getattr(function, '__name__', ''))
+    if not new:
+        return argv
+    try:
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):
+        return argv
+    if any(parameter.kind == parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return argv
+    return dict((key, value) for key, value in argv.items() if key not in new or key in parameters)
+
+
 def runscript(module, modulefile, functioninscript, **argv):
     """
     Execute userscript. Functioninscript is supposed to be there; if not AttributeError is raised.
@@ -701,7 +852,7 @@ def runscript(module, modulefile, functioninscript, **argv):
     functiontorun = getattr(module, functioninscript)
     try:
         if callable(functiontorun):
-            return functiontorun(**argv)
+            return functiontorun(**accepted_arguments(functiontorun, argv))
         return functiontorun
 
     except (ParsePassthroughException, KillWholeFileException):
@@ -731,7 +882,7 @@ def runscriptyield(module, modulefile, functioninscript, **argv):
     )
     functiontorun = getattr(module, functioninscript)
     try:
-        yield from functiontorun(**argv)
+        yield from functiontorun(**accepted_arguments(functiontorun, argv))
     except Exception as exc:
         txt = txtexc()
         _exception = ScriptError(
@@ -781,7 +932,8 @@ def set_asked_confirmrules(routedict, rootidta):
                WHERE idta>%(rootidta)s
                AND status=%(status)s
                AND statust=%(statust)s
-               AND (editype='edifact' OR editype='x12') """,
+               AND (editype='edifact' OR editype='x12')
+               ORDER BY idta""",
             {'status': FILEOUT, 'statust': OK, 'rootidta': rootidta}):
         if row["editype"] == "x12":
             if row["messagetype"][:3] in ["997", "999"]:
@@ -850,6 +1002,21 @@ def checkconfirmrules(confirmtype, **kwargs):
 # **********************************************************/**
 # ***************###############  misc.   #############
 # **********************************************************/**
+def database_has_engine_tables():
+    """False if the tables of bots-engine (ta, mutex, etc) are not in the database."""
+    for table in ('mutex', 'ta', 'uniek', 'persist'):
+        cursor = botsglobal.db.cursor()
+        try:
+            cursor.execute(f"""SELECT COUNT(*) FROM {table} WHERE 1=0""")
+            cursor.fetchall()
+        except Exception:
+            botsglobal.db.rollback()
+            return False
+        finally:
+            cursor.close()
+    return True
+
+
 def set_database_lock():
     try:
         changeq("""INSERT INTO mutex (mutexk) VALUES (1)""")
@@ -918,7 +1085,8 @@ def trace_origin(ta, where=None):
                     FROM ta
                     WHERE idta>%(minidta)s
                     AND idta<%(maxidta)s
-                    AND child=%(idta)s""",
+                    AND child=%(idta)s
+                    ORDER BY idta""",
                     {'idta': ta.idta, 'minidta': ta.script, 'maxidta': ta.idta}):
                 if row["idta"] in donelijst:
                     continue
@@ -950,8 +1118,8 @@ def lookup_translation(frommessagetype, fromeditype, alt, frompartner, topartner
     lookup the translation:
     frommessagetype,fromeditype,alt,frompartner,topartner -> mappingscript, tomessagetype, toeditype
     """
-    for row2 in query(
-            """SELECT tscript,tomessagetype,toeditype
+    rows = list(query(
+            """SELECT tscript,tomessagetype,toeditype,alt,frompartner_id,topartner_id
             FROM translate
             WHERE frommessagetype = %(frommessagetype)s
             AND fromeditype = %(fromeditype)s
@@ -975,10 +1143,16 @@ def lookup_translation(frommessagetype, fromeditype, alt, frompartner, topartner
                 'frompartner': frompartner,
                 'topartner': topartner,
                 'booll': True,
-            }):
-        # translation is found; only the first one is used
-        # - this is what the ORDER BY in the query takes care of
-        return row2["tscript"], row2["toeditype"], row2["tomessagetype"]
+            }))
+    # translation is found; only the first one is used, in the order of the ORDER BY in the query. That order is
+    # made here again: the database sorts the texts (alt, partners) with its own collation, SQLite (and bots 3 on
+    # it) by their characters.
+    rows.sort(key=lambda row: (
+        tuple(-ord(char) for char in (row['alt'] or '')) + (1,),      # alt descending
+        row['frompartner_id'] is None, row['frompartner_id'] or '',
+        row['topartner_id'] is None, row['topartner_id'] or ''))
+    if rows:
+        return rows[0]["tscript"], rows[0]["toeditype"], rows[0]["tomessagetype"]
 
     # no translation found in translate table
     return None, None, None
@@ -1125,9 +1299,15 @@ class Uri:
         self._uri.update(**kw)
 
     def uri(self, **kw) -> str:
-        """Return formated uri str"""
-        self.update(**kw)
-        return str(self)
+        """
+        Return formated uri str.
+        Parameters (eg filename='x') are used for this uri only; use update() to change the Uri object.
+        """
+        if not kw:
+            return str(self)
+        other = Uri(**self._uri)
+        other.update(**kw)
+        return str(other)
 
     def __str__(self):
         scheme = self._uri['scheme'] + ':' if self._uri['scheme'] else ''

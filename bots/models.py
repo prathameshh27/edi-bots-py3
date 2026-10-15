@@ -17,7 +17,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_integer
 from django.db import models
 from django.urls import reverse_lazy
-from django.utils.html import format_html
+from django.utils.html import conditional_escape, escape, format_html
 from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 
@@ -87,6 +87,13 @@ EDITYPES = [
 INOROUT = (
     ('in', _('in')),
     ('out', _('out'))
+)
+DBENGINES = (
+    ('', _('(script makes the connection)')),
+    ('mysql', _('MySQL / MariaDB')),
+    ('postgresql', _('PostgreSQL')),
+    ('sqlite', _('SQLite')),
+    ('mssql', _('Microsoft SQL Server')),
 )
 CHANNELTYPE = (
     # Note: in communication.py these channeltypes are converted to channeltype
@@ -433,11 +440,11 @@ def script_link(script, text='', **kwargs):
             % {
                 'url': reverse_lazy('bots:srcfiler'),
                 'src': urllib_quote(script.encode("utf-8")),
-                'text': text,
-                'title': f"{_('View source')}: {script}",
-                "attrs": "".join((f' {k}="{v}"' for k, v in attrs.items())),
+                'text': conditional_escape(text),
+                'title': escape(f"{_('View source')}: {script}"),
+                "attrs": "".join((f' {escape(k)}="{escape(v)}"' for k, v in attrs.items())),
             })
-    return f"{ICON_NO} {kwargs.get('noscript_text', text)}"
+    return f"{ICON_NO} {conditional_escape(kwargs.get('noscript_text', text))}"
 
 
 @mark_safe
@@ -601,7 +608,7 @@ class channel(models.Model):
             _("Outgoing: many options, see ") +
             f'<a target="_blank" href="{BOTS_DOCS_URL}/configuration/channel/filenames.html">documentation</a>.<br>' +
             _('Advised: use "*" in filename (is replaced by unique counter per channel).') +
-            '<br>eg "D_*.edi" gives D_1.edi, D_2.edi, etc.',
+            '<br>eg "D_*.edi" gives D_1.edi, D_2.edi, etc.'
         )
     )
     lockname = StripCharField(
@@ -712,6 +719,40 @@ class channel(models.Model):
         verbose_name=_('Certificate chain file'),
         help_text=_('Path to file that contains PEM formatted certificate chain.'),
     )  # added 20121201
+    verify_cert = models.BooleanField(
+        default=True,
+        verbose_name=_('Verify server certificate'),
+        help_text=_(
+            'For connections with TLS/SSL (pop3s, imap4s, smtps, smtpstarttls, ftps, ftpis, https): the '
+            'certificate of the server must be valid, for the host of the channel and of a known CA.<br>'
+            'Not ticked: any certificate is accepted (as in bots 3); the connection is encrypted, '
+            'but you do not know with whom.'
+        ),
+    )  # added 20261012
+    cafile = StripCharField(
+        max_length=256,
+        blank=True,
+        null=True,
+        verbose_name=_('CA certificate file'),
+        help_text=_(
+            'Path to file with PEM formatted certificate(s) of the CA of the server, or the certificate of '
+            'the server itself if that is self-signed. Empty: the CA\'s known by the system.'
+        ),
+    )  # added 20261012
+    dbengine = StripCharField(
+        max_length=35,
+        blank=True,
+        default='',
+        choices=DBENGINES,
+        verbose_name=_('Database'),
+        help_text=_(
+            'For type "db": the kind of database. Bots makes the connection with host, port, username and '
+            'password; the database is "path" (for SQLite: the file), or else "filename". Driver options in '
+            '"parameters", eg sslmode=require (PostgreSQL) or TrustServerCertificate=yes (SQL Server).<br>'
+            'The communication script then only needs incommunicate or outcommunicate. '
+            'Empty: the script makes the connection itself (connect and disconnect), as in bots 3.'
+        ),
+    )  # added 20261014
     testpath = StripCharField(
         max_length=256,
         blank=True,
@@ -772,11 +813,11 @@ class channel(models.Model):
         if self.inorout == 'in':
             title = _('incoming channel')
             query = self.rfromchannel.all()
-            hargs = f"?fromchannel__idchannel__exact={self.idchannel}&"
+            hargs = f"?fromchannel__idchannel__exact={urllib_quote(self.idchannel)}&amp;"
         else:  # elif self.inorout == "out":
             title = _('outgoing channel')
             query = self.rtochannel.all()
-            hargs = f"?tochannel__idchannel__exact={self.idchannel}&"
+            hargs = f"?tochannel__idchannel__exact={urllib_quote(self.idchannel)}&amp;"
 
         kwargs.setdefault('icon', 'ico-routes pad2')
         if len(query) > 1:
@@ -799,6 +840,8 @@ class channel(models.Model):
             href += '" onclick="return popup(this)'
 
         kwargs['href'] = href
+        kwargs['title'] = escape(kwargs['title'])
+        kwargs['icon'] = escape(kwargs['icon'])
         return (
             '<a href="%(href)s" target="_blank" class="%(icon)s" '
             'title="%(title)s"></a>') % kwargs
@@ -1248,15 +1291,15 @@ class routes(models.Model):
             title = ''
             if self.fromeditype:
                 query = query.filter(fromeditype=self.fromeditype)
-                hargs += 'fromeditype__exact=%s&' % self.fromeditype
+                hargs += 'fromeditype__exact=%s&amp;' % urllib_quote(self.fromeditype)
                 title = '%s' % self.fromeditype
             if self.frommessagetype and self.frommessagetype != self.fromeditype:
                 query = query.filter(frommessagetype=self.frommessagetype)
-                hargs += 'frommessagetype=%s&' % self.frommessagetype
+                hargs += 'frommessagetype=%s&amp;' % urllib_quote(self.frommessagetype)
                 title = '%s %s' % (self.fromeditype, self.frommessagetype)
             if self.alt:
                 query = query.filter(alt=self.alt)
-                hargs += 'alt=%s&' % self.alt
+                hargs += 'alt=%s&amp;' % urllib_quote(self.alt)
                 title += ' %s' % self.alt
             kwargs.setdefault('icon', 'ico-translate pad2')
             if len(query) > 1:
@@ -1281,6 +1324,8 @@ class routes(models.Model):
                 href += '''" onclick="return popup(this, '60%', '80%')'''
 
             kwargs['href'] = href
+            kwargs['title'] = escape(kwargs['title'])
+            kwargs['icon'] = escape(kwargs['icon'])
             return (
                 '<a href="%(href)s" target="_blank" class="%(icon)s" '
                 'title="%(title)s"></a>') % kwargs
@@ -1369,8 +1414,8 @@ class persist(models.Model):
     # Django still uses the ID in sql manager. This leads to an error in snapshot plugin.
     # Disabled this in snapshot function; to fix this really database has to be changed.
     # specific SQL is used (database defaults are used)
-    domein = StripCharField(max_length=35)
-    botskey = StripCharField(max_length=35)
+    domein = StripCharField(max_length=70)
+    botskey = StripCharField(max_length=64)
     content = models.TextField()
     ts = models.DateTimeField(default=now)
 
@@ -1509,7 +1554,7 @@ class ta(models.Model):
 
 class uniek(models.Model):
     # specific SQL is used (database defaults are used)
-    domein = StripCharField(max_length=35, primary_key=True, verbose_name=_('Counter domain'))
+    domein = StripCharField(max_length=128, primary_key=True, verbose_name=_('Counter domain'))
     nummer = models.IntegerField(verbose_name=_('Last used number'), default=1)
 
     class Meta:

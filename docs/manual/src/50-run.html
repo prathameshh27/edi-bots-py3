@@ -1,0 +1,2044 @@
+<!-- Group "Run and maintain": bots-ini, settings-py, databases, command-line, scheduling,
+     acceptance-testing, logging, maintenance, security. Source: bots-new-stable (Bots 4.0.0). -->
+
+<section id="bots-ini" data-title="bots.ini reference" data-group="Run and maintain">
+<h2>bots.ini reference</h2>
+<p class="lead"><code>bots.ini</code> is the main settings file of a Bots environment. It sets how long Bots keeps
+data, how it logs, which ports it uses, how the web interface looks and how the job queue and the directory
+monitor work. Read this page when you want to change one of these, or to look up what a setting does.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots has a small text file with switches
+and numbers in it. Each program of Bots reads it when it starts. You open it in a text editor, change a value,
+save, and restart the program that needs the new value. If a line is missing, Bots uses a built-in
+default.</p></div>
+
+<h3 id="bots-ini--how">How it works</h3>
+<ol>
+<li><b>Where the file is.</b> <code>bots.ini</code> is in the <b>config directory</b> of the environment, next to
+<code>settings.py</code>. In a standard installation that is <code>~/.bots/env/default/config/</code> (Windows:
+<code>C:\Users\&lt;you&gt;\.bots\env\default\config\</code>). You choose another config directory with the option
+<code>-c&lt;directory&gt;</code> of every command or with the environment variable <code>BOTS_CONFIG_DIR</code>; see
+<a href="#environments">Environments</a>.</li>
+<li><b>Who reads it.</b> Every program of Bots reads the file once, when it starts: <code>bots-engine</code> (so a
+change counts from the next run), <code>bots-webserver</code>, <code>bots-jobqueueserver</code> and
+<code>bots-dirmonitor</code> (restart these after a change).</li>
+<li><b>The format.</b> The file has sections, each led by a header in square brackets such as
+<code>[settings]</code>, followed by lines <code>name = value</code> (<code>name: value</code> works too). Lines that
+start with <code>#</code> or <code>;</code> are comments. Names of settings are not case-sensitive; names of
+sections are. True/false settings accept <code>True</code>, <code>False</code>, <code>yes</code>, <code>no</code>,
+<code>on</code>, <code>off</code>, <code>1</code>, <code>0</code>.</li>
+<li><b>Missing lines.</b> When a line is missing (or commented out), Bots uses the default of the program. That
+default is in the column "Default" below. In a few cases the default of the program differs from the value that
+is in the <code>bots.ini</code> that Bots installs; both are given.</li>
+<li><b>Relative paths</b> in <code>bots.ini</code> are relative to the environment directory (the folder that holds
+<code>config</code>, <code>botssys</code> and <code>usersys</code>).</li>
+<li><b>A section or a setting twice</b> is not an error: the last value counts, as in Bots 3.</li>
+<li><b>Old names.</b> Bots accepts a <code>bots.ini</code> of Bots 3: <code>log_file_number = daily</code> is read as
+<code>log_when = daily</code>, <code>use_email_address_validation</code> as <code>validate_email_address</code>, log
+levels in lower case are accepted, and a file without section <code>[dirmonitor]</code> works.
+<code>bots-portconfig</code> carries a Bots 3 file over for you; see <a href="#command-line">Command-line
+tools</a>.</li>
+</ol>
+
+<h3 id="bots-ini--howto">How to change a setting</h3>
+<ol class="steps">
+<li><b>Open the file</b> <code>config/bots.ini</code> of the environment in a text editor (Notepad, nano, vi).
+Use an editor that saves plain UTF-8 text.</li>
+<li><b>Find the section</b>, for example <code>[settings]</code>. Find the line, or add it under the section
+header.</li>
+<li><b>Change the value</b> and remove a leading <code>#</code> if the line was commented out. Do not leave a
+number or true/false setting empty: <code>maxconnectiontries =</code> with nothing after it stops the engine with
+a <code>ValueError</code>. Comment the line out instead.</li>
+<li><b>Save the file.</b></li>
+<li><b>Restart</b> <code>bots-webserver</code>, <code>bots-jobqueueserver</code> and <code>bots-dirmonitor</code> if
+the setting is for them. The engine uses the new value in its next run.</li>
+</ol>
+
+<h3 id="bots-ini--howto-common">How to make the common changes</h3>
+<h4>Keep history longer or shorter</h4>
+<pre><code class="language-ini">[settings]
+# reports, incoming/outgoing views and the data files: 60 days
+maxdays = 60
+# the archive of channels with an "Archive path": 365 days
+maxdaysarchive = 365
+</code></pre>
+<p>See <a href="#maintenance">Maintenance</a> for what is removed and when.</p>
+
+<h4>Get an e-mail when a run has errors</h4>
+<pre><code class="language-ini">[settings]
+sendreportiferror = True
+# also mail when only a process error (eg an ftp server that does not answer) occurred
+sendreportifprocesserror = True
+</code></pre>
+<p>Then set the mail server and the receivers in <code>settings.py</code>; see <a href="#settings-py">settings.py</a>.
+Test with <span class="ui">SysTasks</span> → <span class="ui">Send test report</span>.</p>
+
+<h4>Run the web interface on another port, or over HTTPS</h4>
+<pre><code class="language-ini">[webserver]
+port = 8090
+ssl_certificate = /srv/bots/certs/edi.example.com.pem
+ssl_private_key = /srv/bots/certs/edi.example.com.key
+</code></pre>
+<p>Restart <code>bots-webserver</code>; open <code>https://edi.example.com:8090</code>. See <a href="#security">Security</a>.</p>
+
+<h4>Show which environment you are in</h4>
+<pre><code class="language-ini">[webserver]
+environment_text = TEST
+environment_text_color = #c00000
+</code></pre>
+
+<h4>Run two environments on one machine at the same time</h4>
+<p>Give each environment its own ports, so they do not block each other:</p>
+<pre><code class="language-ini">[settings]
+port = 28091        ; engine lock port (default 28081)
+[webserver]
+port = 8090         ; web interface (default 8080)
+[jobqueue]
+port = 28092        ; job queue (default 28082)
+</code></pre>
+
+<h4>Find more detail when something goes wrong</h4>
+<pre><code class="language-ini">[settings]
+log_file_level = DEBUG
+log_level = DEBUG
+debug = True
+</code></pre>
+<p>Set these back after the problem is found: the log files grow fast. See <a href="#logging">Logging</a>.</p>
+
+<h3 id="bots-ini--reference">Reference</h3>
+<p>Badges: <span class="badge green">new in 4.0</span> not in Bots 3.2.0; <span class="badge orange">changed in
+4.0</span> works differently from Bots 3.2.0; <span class="badge red">removed</span> read but without effect;
+<span class="badge gray">advanced</span> rarely needed.</p>
+
+<h4 id="bots-ini--settings">Section [settings]: history and cleanup</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>maxdays</code></td><td>Number of days that reports (runs), the trace of each file (incoming, outgoing,
+document views) and the data files in <code>botssys/data</code> are kept. Older ones are removed by the cleanup.
+Also the default start date of the selection screens of the web interface (today minus <code>maxdays</code>).</td>
+<td>30</td><td>Whole number of days, eg <code>60</code></td></tr>
+<tr><td><code>maxdaysarchive</code></td><td>Number of days the files in the archive of a channel (field
+<span class="ui">Archive path</span>) are kept. A day folder (or day zip file) older than this is deleted. The
+channel field <span class="ui">Max days archive</span> overrules it for one channel.</td><td>180</td><td>eg
+<code>365</code></td></tr>
+<tr><td><code>archivezip</code></td><td>Archive each day of a channel into one zip file
+(<code>&lt;archive path&gt;/20261015.zip</code>) instead of a folder (<code>&lt;archive path&gt;/20261015/</code>).
+Saves disk space; searching is harder.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>archiveexternalname</code></td><td>In the archive, use the name the file had outside Bots (as
+received or as sent) instead of a Bots number. Only for channel types file, ftp, ftps, ftpis, sftp, mimefile and
+communicationscript, and only when the channel has a file name. If the name is in the archive already, Bots
+makes it unique.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>hoursrunwithoutresultiskept</code></td><td>Hours that the report of a run of type "new" is kept when
+that run received no file and had no process error. Checked at the end of every run, for the runs of the last
+25 hours. Keeps the <span class="ui">All runs</span> screen readable when the engine runs every few minutes.</td>
+<td>1 (program); 24 in the installed file</td><td>eg <code>24</code></td></tr>
+<tr><td><code>maxdayspersist</code></td><td>Days that values saved by mappings with <code>transform.persist_add()</code>
+and similar functions are kept (by the time they were last written).</td><td>30</td><td>eg <code>90</code></td></tr>
+<tr><td><code>whencleanup</code></td><td>When the full cleanup runs. <code>daily</code> (or <code>always</code>, which
+means the same): at the end of the first run of each day. Any other value, eg <code>never</code>: only with
+<code>bots-engine --cleanup</code>. See <a href="#maintenance">Maintenance</a>.</td><td>daily</td><td>daily,
+never</td></tr>
+</table></div>
+
+<h4 id="bots-ini--settings-run">Section [settings]: running the engine</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>port</code></td><td>Port on 127.0.0.1 that the engine holds open while it runs. A second engine
+for the same environment cannot open it and stops at once (exit code 3). Use a different port per environment
+when environments run at the same time. <code>bots-updatedb</code> uses the same port.</td><td>28081</td>
+<td>eg <code>28091</code></td></tr>
+<tr><td><code>maxruntime</code> <span class="badge orange">changed in 4.0</span></td><td>Minutes a job started
+by the job queue may run. When it runs longer, the job queue logs an error and mails an error report; with
+<code>[jobqueue] killjobsintimeout = True</code> it also stops the job. The engine itself does not use this
+value: a second engine stops at once, it does not wait.</td><td>60</td><td>eg <code>120</code></td></tr>
+<tr><td><code>maxsecondsexit</code> <span class="badge green">new in 4.0</span> <span class="badge
+gray">advanced</span></td><td>When the engine is ready but something it started (a thread of a library or of a
+user script) still runs, the engine waits this many seconds, logs what is still running, removes the database
+lock and ends anyway with its normal exit code.</td><td>30</td><td>seconds</td></tr>
+<tr><td><code>maxfilesizeincoming</code></td><td>Largest incoming file, in bytes, that is translated. A larger
+file gets the error <em>File size of … is too big</em>. An EDIFACT or X12 file with several interchanges is split
+first; the limit is for each part.</td><td>5000000 (5 MB)</td><td>eg <code>20000000</code></td></tr>
+<tr><td><code>maxsecondsperchannel</code></td><td>Seconds an incoming channel may spend fetching files in one
+run; after that it stops and fetches the rest in the next run. The channel field <span class="ui">Max
+seconds</span> overrules it.</td><td>no limit (program); 60 in the installed file</td><td>eg
+<code>120</code></td></tr>
+<tr><td><code>maxconnectiontries</code></td><td>How many times a channel tries to connect before it gives up.
+Incoming channel: this value, or 3 when not set. Outgoing channel: the channel field <span class="ui">Max
+failures</span>; when that is empty this value; when both are empty, one try.</td><td>in: 3; out: 1</td><td>eg
+<code>3</code></td></tr>
+<tr><td><code>globaltimeout</code></td><td>Time-out in seconds for every network connection of the engine
+(ftp, mail, http, database...).</td><td>10</td><td>seconds</td></tr>
+<tr><td><code>ftptimeout</code></td><td>Time-out in seconds of the ftp, ftps, ftpis and sftp connections.</td>
+<td>10</td><td>seconds</td></tr>
+<tr><td><code>max_number_errors</code></td><td>Number of errors Bots collects in an incoming file before it stops
+parsing it and reports them. Some errors stop parsing at once.</td><td>10</td><td>eg <code>20</code></td></tr>
+<tr><td><code>get_checklevel</code></td><td>How much Bots checks the paths that mappings use in
+<code>get()</code>/<code>getloop()</code>. 2: also against the grammar (for developing); 1: type checks; 0: no
+checks (fastest, errors are less clear).</td><td>1</td><td>0, 1, 2</td></tr>
+<tr><td><code>compatibility_mailbag</code> <span class="badge gray">advanced</span></td><td>True: only routes
+with incoming editype <code>mailbag</code> go through the mailbag step (as Bots 2.2). False: also edifact, x12
+and tradacoms, as Bots 3.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>botsreplacechar</code></td><td>Character that replaces a character that is not in the character
+set, when the syntax parameter <code>checkcharsetin</code> or <code>checkcharsetout</code> is
+<code>botsreplace</code>. A space cannot be typed here; leave the line out for a space.</td><td>space</td><td>eg
+<code>?</code></td></tr>
+<tr><td><code>channels_use_testpath</code> <span class="badge green">new in 4.0</span></td><td>For a test
+environment: every channel uses its <span class="ui">Acceptance test path</span> (testpath) as a folder; ftp,
+sftp, database and other remote channels become folders, mail channels mime files. A remote channel without a
+testpath is not run (error). Unlike <code>runacceptancetest</code>, the clock and the counters are not frozen.
+See <a href="#acceptance-testing">Acceptance testing</a>.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>interchangecontrolperpartner</code> <span class="badge orange">changed in 4.0</span></td><td>The
+counter for interchange control references (UNB, ISA). False: one counter per sender. True: one counter per
+sender and receiver. A counter used for the first time continues where the Bots 3 counter was.</td>
+<td>False</td><td>True / False</td></tr>
+<tr><td><code>x12_997_version_as_received</code> <span class="badge green">new in 4.0</span></td><td>Version
+of a 997 that Bots makes itself. False: always grammar <code>997004010</code>, as Bots 3. True: the version in GS08
+of the received group when usersys has that 997 grammar (eg <code>997004060</code>), else
+<code>997004010</code>.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>multiplevaluesasterisk</code></td><td>In the incoming view, a file with several values (eg several
+message types) shows <code>*</code> (True) or the first value (False).</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>limit</code></td><td>Number of lines per page in the report screens (incoming, outgoing, runs...).
+</td><td>30</td><td>eg <code>50</code></td></tr>
+<tr><td><code>adminlimit</code></td><td>Number of lines per page in the configuration lists (routes, channels,
+partners...).</td><td>value of <code>limit</code></td><td>eg <code>100</code></td></tr>
+<tr><td><code>codelists_in_plugin</code> <span class="badge green">new in 4.0</span></td><td>Include the user
+code lists in a configuration index and in the backup plugin.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>django_db</code> <span class="badge green">new in 4.0</span> <span class="badge
+gray">advanced</span></td><td>Which entry of <code>DATABASES</code> in <code>settings.py</code> the engine
+uses.</td><td>default</td><td>a name in <code>DATABASES</code></td></tr>
+<tr><td><code>django_db_connection</code> <span class="badge green">new in 4.0</span> <span class="badge
+gray">advanced</span></td><td>True: the engine uses the database connection of Django instead of its own
+driver connection.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>compatibility_handle_message_errors</code> <span class="badge red">removed</span></td><td>Was for
+mappings of before Bots 3.0. Ignored.</td><td>–</td><td>–</td></tr>
+</table></div>
+
+<h4 id="bots-ini--settings-report">Section [settings]: error reports</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>sendreportiferror</code></td><td>Mail a report to the <code>MANAGERS</code> of
+<code>settings.py</code> after a run with errors, and mail severe problems (a locked or damaged database, a
+job queue that stops, a job over <code>maxruntime</code>). Never during an acceptance test.</td><td>False</td>
+<td>True / False</td></tr>
+<tr><td><code>sendreportifprocesserror</code></td><td>Also mail when the run had only process errors (eg a server
+that did not answer). False: process errors alone do not give a mail. Only counts when
+<code>sendreportiferror</code> is True.</td><td>True</td><td>True / False</td></tr>
+</table></div>
+
+<h4 id="bots-ini--settings-log">Section [settings]: logging of the engine</h4>
+<p>Details and examples: <a href="#logging">Logging</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>log_level</code> <span class="badge green">new in 4.0</span></td><td>Level of the engine logger
+itself. Lines below it are written nowhere, whatever the levels below say. When the line is missing, the lowest
+of <code>log_file_level</code> and <code>log_console_level</code> counts.</td><td>INFO</td><td>DEBUG, INFO,
+START, STARTINFO, WARNING, ERROR, CRITICAL</td></tr>
+<tr><td><code>log_file_level</code></td><td>Level of the log file.</td><td>INFO</td><td>as above</td></tr>
+<tr><td><code>log_console</code></td><td>Also write the log to the screen (the console the engine runs in).</td>
+<td>True</td><td>True / False</td></tr>
+<tr><td><code>log_console_level</code></td><td>Level of the screen log.</td><td>INFO</td><td>as above</td></tr>
+<tr><td><code>log_when</code> <span class="badge green">new in 4.0</span></td><td><code>report</code>: each run has
+its own log file, named after the number of the run (<code>botssys/logging/engine/&lt;number&gt;</code>); the
+web interface shows it with the run. <code>daily</code>: one file <code>engine.log</code>, a new one every
+midnight.</td><td>report</td><td>report, daily</td></tr>
+<tr><td><code>log_file_number</code> <span class="badge orange">changed in 4.0</span></td><td>With
+<code>log_when = daily</code>: how many old daily files are kept. Also the default for the servers (see their
+sections). The Bots 3 value <code>daily</code> is read as <code>log_when = daily</code>.</td><td>30</td><td>eg
+<code>60</code></td></tr>
+<tr><td><code>debug</code></td><td>Error texts of files and processes include the Python traceback (where in the
+code the error was). Useful when you develop mappings.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>readrecorddebug</code></td><td>Log every record read from an incoming file, with its fields
+(level DEBUG; set the log levels to DEBUG too).</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>mappingdebug</code></td><td>Log the result of each <code>get()</code> and <code>put()</code> of
+mappings. See the note in <a href="#logging">Logging</a>.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>ftpdebug</code></td><td>Debug level of ftp, ftps and ftpis channels, and the default debug level of
+sftp channels. Also sets the time-out of ftp connections to <code>ftptimeout</code>.</td><td>0</td><td>0, 1, 2</td></tr>
+<tr><td><code>smtpdebug</code></td><td>Debug level of outgoing mail.</td><td>0</td><td>0, 1</td></tr>
+<tr><td><code>pop3debug</code></td><td>Debug level of pop3 channels.</td><td>0</td><td>0, 1, 2</td></tr>
+<tr><td><code>imap4debug</code></td><td>Debug level of imap4 channels.</td><td>0</td><td>0 to 5</td></tr>
+<tr><td><code>httpdebug</code> <span class="badge green">new in 4.0</span></td><td>Debug level of http and https
+channels.</td><td>0</td><td>0 to 4</td></tr>
+</table></div>
+<p>The field <span class="ui">Debug level</span> of a channel overrules these communication levels for that
+channel. The debug output of ftp, smtp and imap4 is written to the engine log (level COM); that of pop3 is printed
+on the screen; that of sftp goes to the engine log through the logger <code>paramiko</code>.</p>
+
+<h4 id="bots-ini--webserver">Section [webserver]</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>port</code></td><td>Port of the web interface. The web server listens on all network addresses of
+the machine.</td><td>8080</td><td>eg <code>8090</code>, <code>443</code></td></tr>
+<tr><td><code>ssl_certificate</code></td><td>File with the certificate (PEM) for HTTPS. HTTPS is on only when this
+and <code>ssl_private_key</code> are both set. A self-signed certificate works.</td><td>not set (plain
+HTTP)</td><td>path</td></tr>
+<tr><td><code>ssl_private_key</code></td><td>File with the private key (PEM). May be the same file as the
+certificate.</td><td>not set</td><td>path</td></tr>
+<tr><td><code>environment</code></td><td><code>production</code> or <code>development</code> mode of the
+CherryPy web server. In production an error while writing a log line is ignored.</td><td>production</td>
+<td>production, development</td></tr>
+<tr><td><code>name</code> <span class="badge gray">advanced</span></td><td>Server name the web server reports.</td>
+<td>bots-webserver</td><td>text</td></tr>
+<tr><td><code>environment_text</code></td><td>Text next to the logo, eg TEST or PRODUCTION.</td><td>none</td>
+<td>text</td></tr>
+<tr><td><code>environment_text_color</code></td><td>Colour of that text.</td><td>theme colour</td><td><code>Red</code>,
+<code>#f00</code></td></tr>
+<tr><td><code>environment_text_style</code></td><td>CSS for that text; overrules the colour.</td><td>none</td>
+<td><code>color:#000;font-size:2em;</code></td></tr>
+<tr><td><code>about_title</code> <span class="badge green">new in 4.0</span></td><td>Own title in the
+<span class="ui">About</span> screen.</td><td>none</td><td>text</td></tr>
+<tr><td><code>support_url</code> <span class="badge green">new in 4.0</span></td><td>Own support link in the
+<span class="ui">About</span> screen instead of the standard links. Must start with <code>http://</code>,
+<code>https://</code> or <code>mailto:</code>, else it is ignored.</td><td>none</td><td><code>mailto:edi@mycompany.example</code></td></tr>
+<tr><td><code>support_text</code> <span class="badge green">new in 4.0</span></td><td>Text of that link.</td>
+<td>Support</td><td>text</td></tr>
+<tr><td><code>logo_image</code> <span class="badge green">new in 4.0</span></td><td>Own logo (top left). Image file
+png, gif, jpg, jpeg, svg, ico or webp, at most 512 kB. A relative path is relative to the config
+directory.</td><td>logo of Bots</td><td><code>branding/logo.png</code></td></tr>
+<tr><td><code>favicon_image</code> <span class="badge green">new in 4.0</span></td><td>Own browser icon; same
+rules.</td><td>icon of Bots</td><td><code>branding/favicon.ico</code></td></tr>
+<tr><td><code>botslogo</code> <span class="badge gray">advanced</span></td><td>Template used for the logo
+area.</td><td>bots/botslogo.html</td><td>template name</td></tr>
+<tr><td><code>botsmenu</code> <span class="badge gray">advanced</span></td><td>Template used for the menu.</td>
+<td>bots/menu.html</td><td>template name</td></tr>
+<tr><td><code>menu_all_routes</code></td><td>Extra entries under <span class="ui">Run</span> → <span
+class="ui">Run (only new)</span>: <code>notindefaultrun</code> lists the active routes that are not in the
+default run; True lists all active routes; False none.</td><td>none (program); notindefaultrun in the installed
+file</td><td>True, False, notindefaultrun</td></tr>
+<tr><td><code>menu_automaticretrycommunication</code></td><td>Show <span class="ui">Retry failed
+out-communications</span> in the <span class="ui">Run</span> menu.</td><td>False (program); True in the installed
+file</td><td>True / False</td></tr>
+<tr><td><code>menu_cleanup</code></td><td>Show <span class="ui">Run cleanup</span> in the <span
+class="ui">Run</span> menu.</td><td>False (program); True in the installed file</td><td>True / False</td></tr>
+<tr><td><code>menu_changepassword</code> <span class="badge green">new in 4.0</span></td><td>Show <span
+class="ui">Change password</span> in the Home menu (and allow the page).</td><td>True</td><td>True /
+False</td></tr>
+<tr><td><code>max_src_size</code></td><td>Largest Python file (bytes) the source viewer shows.</td>
+<td>5000000</td><td>bytes</td></tr>
+<tr><td><code>admin_nav_sidebar</code> <span class="badge green">new in 4.0</span></td><td>Show the navigation
+side bar in the configuration screens.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>validate_email_address</code> <span class="badge orange">changed in 4.0</span></td><td>True:
+Bots checks mail addresses in partners and channels with its own, less strict check (allows eg X.400 style
+addresses). False: no check. Was <code>use_email_address_validation</code> in Bots 3 (still read).</td>
+<td>True</td><td>True / False</td></tr>
+<tr><td><code>debug</code> <span class="badge gray">advanced</span></td><td>Exactly <code>True</code>: the error page
+(error 500) shows the Python traceback. Not for production.</td><td>False</td><td>True</td></tr>
+<tr><td><code>log_level</code>, <code>log_file_level</code>, <code>log_console</code>,
+<code>log_console_level</code></td><td>Logging of the web server, as in <code>[settings]</code>. File:
+<code>botssys/logging/webserver/webserver.log</code>, a new one every midnight.</td><td>INFO, INFO, True,
+STARTINFO</td><td>see <a href="#logging">Logging</a></td></tr>
+<tr><td><code>log_file_number</code> <span class="badge green">new in 4.0</span></td><td>Number of daily web
+server log files kept.</td><td><code>[settings] log_file_number</code>, else 30</td><td>number</td></tr>
+<tr><td><code>log_cherrypy_access</code> <span class="badge green">new in 4.0</span></td><td>Also log every request
+(access log) in the web server log.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>bots_touchscreen</code> <span class="badge red">removed</span></td><td>Old layout for small touch
+screens; deprecated, the interface is responsive now.</td><td>False</td><td>–</td></tr>
+<tr><td><code>filer_numbered</code> <span class="badge red">removed</span></td><td>In the installed file as a
+comment; the program does not read it.</td><td>–</td><td>–</td></tr>
+</table></div>
+
+<h4 id="bots-ini--acceptance">Section [acceptance]</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>runacceptancetest</code></td><td>Every run is an isolated acceptance test: channels with a testpath
+read and write there, clock and counters are frozen, no archive, no cleanup, no mails. See <a
+href="#acceptance-testing">Acceptance testing</a>.</td><td>False</td><td>True / False</td></tr>
+</table></div>
+
+<h4 id="bots-ini--jobqueue">Section [jobqueue]</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>enabled</code></td><td>Use the job queue. Needed for <code>bots-jobqueueserver</code>,
+<code>bots-job2queue</code> and <code>bots-dirmonitor</code>; the <span class="ui">Run</span> menu then sends its
+runs to the queue.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>port</code></td><td>Port on 127.0.0.1 where the job queue server listens.</td><td>28082</td>
+<td>eg <code>28092</code></td></tr>
+<tr><td><code>authorized_tasks</code></td><td>Programs, besides <code>bots-engine</code>, that the queue may run.
+Separate by spaces, commas or semicolons. Give the program exactly as it will be sent.</td><td>none</td>
+<td><code>/opt/scripts/export_erp.sh</code></td></tr>
+<tr><td><code>killjobsintimeout</code></td><td>Stop a job (and the processes it started) that runs longer than
+<code>[settings] maxruntime</code>. False: the error is logged and mailed, the job runs on.</td><td>False</td>
+<td>True / False</td></tr>
+<tr><td><code>stopwait</code> <span class="badge green">new in 4.0</span></td><td>When the job queue server is
+stopped: seconds it waits for the running job to finish.</td><td>60</td><td>seconds</td></tr>
+<tr><td><code>nr_threads</code> <span class="badge red">removed</span></td><td>Not used: jobs always run one at a
+time. A value other than 1 gives a warning in the log.</td><td>1</td><td>–</td></tr>
+<tr><td><code>lauchfrequency</code> <span class="badge red">removed</span></td><td>Bots 3 setting; the queue now
+starts a job at once.</td><td>–</td><td>–</td></tr>
+<tr><td><code>log_level</code>, <code>log_file_level</code>, <code>log_console</code>,
+<code>log_console_level</code>, <code>log_file_number</code></td><td>Logging of the job queue server
+(<code>botssys/logging/jobqueue/jobqueue.log</code>, daily).</td><td>INFO, INFO, True, STARTINFO, 30</td><td>see
+<a href="#logging">Logging</a></td></tr>
+</table></div>
+
+<h4 id="bots-ini--dirmonitor">Section [dirmonitor] and [dirmonitor1], [dirmonitor2] …</h4>
+<p><code>[dirmonitor]</code> holds the general settings. Each watched folder has a section of its own whose name is
+<code>dirmonitor</code> followed by anything, usually a number. A section without <code>path</code> is
+ignored.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>process_existing</code> (in [dirmonitor])</td><td>At start (and after a reload), start the route
+of each watched folder that already has files in it. Skipped for a route whose incoming channel does not remove
+files.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>trigger_on_modify</code> (in [dirmonitor]) <span class="badge green">new in 4.0</span></td><td>Linux
+only: start the route at every write to a file, as Bots 3 did. Default: once, when the file is closed or moved
+in.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>log_level</code>, <code>log_file_level</code>, <code>log_console</code>,
+<code>log_console_level</code>, <code>log_file_number</code> (in [dirmonitor])</td><td>Logging of the directory
+monitor (<code>botssys/logging/dirmonitor/dirmonitor.log</code>, daily).</td><td>INFO, INFO, True, STARTINFO,
+30</td><td>see <a href="#logging">Logging</a></td></tr>
+<tr><td><code>lauchfrequency</code> <span class="badge red">removed</span></td><td>Bots 3 setting; the monitor
+hands a job over at once.</td><td>–</td><td>–</td></tr>
+<tr><td><code>path</code> (in [dirmonitorN])</td><td>Folder to watch. May contain wildcards
+(<code>*</code>, <code>?</code>, <code>[</code>) in folder names. Use forward slashes, also on Windows.</td>
+<td>none (section ignored)</td><td><code>C:/edi/in</code>, <code>/srv/edi/in</code></td></tr>
+<tr><td><code>filemask</code> (in [dirmonitorN])</td><td>Only files whose name matches start the route.</td>
+<td><code>*</code></td><td><code>*.xml</code></td></tr>
+<tr><td><code>route</code> (in [dirmonitorN])</td><td>Route to run. Empty: a normal run of all routes of the
+default run.</td><td>empty</td><td><code>orders_in</code></td></tr>
+<tr><td><code>recursive</code> (in [dirmonitorN])</td><td>Also watch the sub-folders.</td><td>False</td><td>True /
+False</td></tr>
+</table></div>
+
+<h4 id="bots-ini--custommenus">Section [custommenus]</h4>
+<p>When this section exists, the web interface gets an extra menu. Every line other than <code>menuname</code>
+becomes an entry: the name (shown in title case) and the address it opens. The value <code>---</code> makes a
+divider line. The order of the lines is kept.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>menuname</code></td><td>Name of the menu.</td><td>Custom</td><td><code>menuname = MyCompany</code></td></tr>
+<tr><td><em>any name</em></td><td>A menu entry: the address (relative or full).</td><td>–</td><td><code>orders today
+= /bots/incoming/?all</code></td></tr>
+<tr><td><em>any name</em> = <code>---</code></td><td>A divider line.</td><td>–</td><td><code>divider1 = ---</code></td></tr>
+</table></div>
+
+<h4 id="bots-ini--directories">Section [directories]</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>botssys</code></td><td>Folder for the data of Bots: data files, logs, the SQLite database, static
+files of the web interface. A relative path is relative to the environment directory.</td><td>botssys (a new
+environment gets the full path)</td><td><code>/srv/bots/env/production/botssys</code></td></tr>
+<tr><td><code>usersys</code></td><td>Folder with grammars, mappings and scripts. A relative path is looked for in
+the environment directory first.</td><td>usersys (a new environment gets the full path)</td><td><code>D:/bots/env/production/usersys</code></td></tr>
+</table></div>
+<p>Do not use backslashes or a slash at the end. Bots sets these names itself at start, so a value in
+<code>bots.ini</code> has no effect: <code>botspath</code>, <code>config</code>, <code>config_org</code>,
+<code>botsenv</code>, <code>usersysabs</code>, <code>templatehtml</code>, <code>botssys_org</code>,
+<code>data</code> (<code>botssys/data</code>), <code>logging</code> (<code>botssys/logging</code>),
+<code>users</code> (<code>botssys/.users</code>), and <code>[dirmonitor] trigger</code>
+(<code>botssys/.dirmonitor.trigger</code>).</p>
+
+<h4 id="bots-ini--charsets">Section [charsets]</h4>
+<p>Each line maps the name of a character set used in EDI files to the name of a Python codec. You may add lines.
+The installed file has:</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>unoc</code></td><td>EDIFACT UNOC</td><td><code>latin_1</code></td><td>any Python codec name</td></tr>
+<tr><td><code>unod</code></td><td>EDIFACT UNOD</td><td><code>iso8859_2</code></td><td>–</td></tr>
+<tr><td><code>unoe</code></td><td>EDIFACT UNOE</td><td><code>iso8859_5</code></td><td>–</td></tr>
+<tr><td><code>unof</code></td><td>EDIFACT UNOF</td><td><code>iso8859_7</code></td><td>–</td></tr>
+<tr><td><code>unog</code></td><td>EDIFACT UNOG</td><td><code>iso8859_3</code></td><td>–</td></tr>
+<tr><td><code>unoh</code></td><td>EDIFACT UNOH</td><td><code>iso8859_4</code></td><td>–</td></tr>
+<tr><td><code>unoi</code></td><td>EDIFACT UNOI</td><td><code>iso8859_6</code></td><td>–</td></tr>
+<tr><td><code>unoj</code></td><td>EDIFACT UNOJ</td><td><code>iso8859_8</code></td><td>–</td></tr>
+<tr><td><code>unok</code></td><td>EDIFACT UNOK</td><td><code>iso8859_9</code></td><td>–</td></tr>
+<tr><td><code>unow</code></td><td>EDIFACT UNOW</td><td><code>utf_8</code></td><td>–</td></tr>
+<tr><td><code>unox</code></td><td>EDIFACT UNOX (ISO 2022 code extension)</td><td><code>iso2022_jp</code></td><td>–</td></tr>
+<tr><td><code>unoy</code></td><td>EDIFACT UNOY</td><td><code>utf_8</code></td><td>–</td></tr>
+<tr><td><code>keca</code></td><td>Korean</td><td><code>euc_kr</code></td><td>–</td></tr>
+</table></div>
+<p>UNOA and UNOB are not here: they are codecs in <code>usersys/charsets</code>. The section must exist (it may be
+empty).</p>
+
+<h3 id="bots-ini--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>ValueError: invalid literal for int() with base 10: ''</code> or <code>ValueError: Not a boolean:
+…</code> when a program starts</td><td>A number or true/false setting has no value, or a value Bots cannot
+read (eg <code>True,</code> or <code>ja</code>).</td><td>1. Look at the last line of the error for the value.
+2. Give the setting a valid value, or put <code>#</code> in front of the line.</td></tr>
+<tr><td><code>configparser.NoSectionError: No section: 'charsets'</code> (or <code>'settings'</code>,
+<code>'directories'</code>)</td><td>A section that Bots needs is missing or its header is misspelt.</td><td>1. Compare
+with <code>bots/install/bots.ini</code> of the installed package. 2. Add the header, eg <code>[charsets]</code>,
+even when it stays empty.</td></tr>
+<tr><td>A change has no effect</td><td>The program that uses it was not restarted, the line is still a comment,
+or it is in the wrong section, or you changed the <code>bots.ini</code> of another environment.</td><td>1. Restart
+the web server, job queue server or directory monitor. 2. Check the line has no <code>#</code> and is under the
+right header. 3. Check the path in the <span class="ui">About</span> screen or in the first lines of an engine
+log ("config path").</td></tr>
+<tr><td><code>No entry "…" in section "…" in "bots.ini"</code></td><td>A user script or plugin asks for a setting
+without a default, and the line is missing.</td><td>Add the line to <code>bots.ini</code>, or give a default in
+the script: <code>botsglobal.ini.get('settings', 'name', 'default')</code>.</td></tr>
+<tr><td><code>django_db: 'reporting' not found in DATABASES: default</code></td><td><code>[settings]
+django_db</code> names a database that is not in <code>settings.py</code>.</td><td>Remove the line, or add that
+entry to <code>DATABASES</code>.</td></tr>
+<tr><td><code>Image of bots.ini [webserver] not used: "…"</code> in the web server log</td><td>The logo or
+favicon file does not exist, is larger than 512 kB, or has an extension Bots does not accept.</td><td>1. Check the
+path (relative to the config directory). 2. Use png, gif, jpg, jpeg, svg, ico or webp. 3. Make the file
+smaller.</td></tr>
+<tr><td>The support link in the About screen does not appear</td><td><code>support_url</code> does not start with
+<code>http://</code>, <code>https://</code> or <code>mailto:</code>.</td><td>Write the full address, eg
+<code>https://support.example.com</code>.</td></tr>
+<tr><td><code>bots.ini, [jobqueue] nr_threads is not used: jobs are run one at a time.</code></td><td>The file
+sets <code>nr_threads</code> to a value other than 1.</td><td>Remove the line or set it to 1. Jobs always run one
+at a time.</td></tr>
+</table></div>
+</section>
+
+<section id="settings-py" data-title="settings.py" data-group="Run and maintain">
+<h2>settings.py</h2>
+<p class="lead"><code>settings.py</code> is the second settings file of an environment. It holds the settings of
+Django, the framework under the web interface and the database: which database Bots uses, the time zone, the
+language, the mail server for error reports, and the login sessions. You need it to connect Bots to a database
+server, to get error mails, and to set the time zone.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p><code>bots.ini</code> is about how Bots
+works; <code>settings.py</code> is about where Bots keeps its data and how it talks to the outside world (mail,
+browser sessions). It is a small Python file: you change values between quotes and brackets, and keep the
+rest as it is.</p></div>
+
+<h3 id="settings-py--how">How it works</h3>
+<ol>
+<li><b>Where.</b> <code>settings.py</code> is in the config directory, next to <code>bots.ini</code>. Every program
+of Bots imports it at start. Restart the web server, job queue server and directory monitor after a change; the
+engine reads it at its next run.</li>
+<li><b>It is Python.</b> A typing error (a missing quote or comma) stops every program of Bots with a Python
+<code>SyntaxError</code>. Keep a copy before you change it.</li>
+<li><b>It reads bots.ini.</b> The file reads <code>[directories] botssys</code> from <code>bots.ini</code> to find
+the SQLite database (<code>botssys/sqlitedb/botsdb</code>) and the folder for the static files of the web
+interface (<code>botssys/static</code>).</li>
+<li><b>A new environment gets a new secret key.</b> When Bots makes a new environment (first start, or
+<code>bots-configure</code>), it copies <code>bots/install/settings.py</code> and writes a new random
+<code>SECRET_KEY</code> in it.</li>
+<li><b>Not the file of Bots 3.</b> A <code>settings.py</code> of Bots 3 is refused at start; copy the new template
+and carry your values over (by hand, or with <code>bots-portconfig</code>). <span class="badge orange">changed in
+4.0</span></li>
+</ol>
+
+<h3 id="settings-py--howto-tz">How to set the time zone</h3>
+<ol class="steps">
+<li><b>Look up the name</b> of your time zone in the tz database, eg <code>Europe/Amsterdam</code>,
+<code>America/New_York</code>, <code>Asia/Kolkata</code>.</li>
+<li><b>Open</b> <code>config/settings.py</code> and set <code>TIME_ZONE = 'America/New_York'</code>.</li>
+<li><b>On Windows</b>, use the same time zone as the system clock of the machine.</li>
+<li><b>Keep</b> <code>USE_TZ = False</code>: the engine works with local time.</li>
+<li><b>Restart</b> the web server. The times in <span class="ui">All runs</span> now match your clock.</li>
+</ol>
+
+<h3 id="settings-py--howto-mail">How to get error reports by mail</h3>
+<ol class="steps">
+<li><b>Switch the reports on</b> in <code>bots.ini</code>: <code>[settings] sendreportiferror = True</code>.</li>
+<li><b>Set the receivers</b> in <code>settings.py</code>:
+<pre><code class="language-python">MANAGERS = (
+    ('EDI team', 'edi@mycompany.example'),
+)
+SERVER_EMAIL = 'edi@mycompany.example'     # sender of the reports
+EMAIL_SUBJECT_PREFIX = '[Bots production] '
+</code></pre></li>
+<li><b>Set the mail server</b>. With Django 6.1 or newer (what a new installation gets), in <code>MAILERS</code>,
+the form of the template of this version:
+<pre><code class="language-python">MAILERS = {
+    "default": {
+        "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "OPTIONS": {
+            "host": "mail.example.org",
+            "port": 587,
+            "use_tls": True,
+            "username": "edi@mycompany.example",
+            "password": os.environ.get("BOTS_SMTP_PASSWORD", ""),
+            "timeout": 10,
+        },
+    },
+}
+</code></pre></li>
+<li><b>Or, with Django 4.x to 6.0</b>, set the classic names instead, and remove <code>MAILERS</code> (see the
+warning below):
+<pre><code class="language-python">EMAIL_HOST = 'mail.example.org'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'edi@mycompany.example'
+EMAIL_HOST_PASSWORD = os.environ.get("BOTS_SMTP_PASSWORD", "")
+</code></pre></li>
+<li><b>Restart</b> the web server.</li>
+<li><b>Test</b>: <span class="ui">SysTasks</span> → <span class="ui">Send test report</span>. Expect the message
+<em>Sending test mail succeeded.</em> and a mail with subject "testsubject" at the managers.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>Use exactly one of the two forms.
+Django 6.1 and newer read <code>MAILERS</code>, and refuse to start when <code>settings.py</code> also has one of
+the classic names: every Bots program then stops with <em>Deprecated email settings are not allowed when MAILERS
+is defined: EMAIL_HOST</em>. Django 4.x to 6.0 (Bots allows Django 4 to 6) do not know <code>MAILERS</code>; they
+read <code>EMAIL_HOST</code>, <code>EMAIL_PORT</code>, <code>EMAIL_USE_TLS</code>, <code>EMAIL_USE_SSL</code>,
+<code>EMAIL_HOST_USER</code>, <code>EMAIL_HOST_PASSWORD</code> and <code>EMAIL_TIMEOUT</code>, and use
+<code>localhost</code> port 25 when these are missing. See your version with
+<code>python -c "import django; print(django.get_version())"</code>. Always check with
+<span class="ui">Send test report</span>.</p></div>
+<div class="note tip"><span class="label">Tip</span><p>Django puts <code>[Django] </code> in front of the subject
+of every report unless you set <code>EMAIL_SUBJECT_PREFIX</code>. Use it to say which environment sent the
+mail.</p></div>
+
+<h3 id="settings-py--howto-session">How to change how long users stay logged in</h3>
+<ol class="steps">
+<li><b>Set the idle time</b>: <code>SESSION_COOKIE_AGE = 7200</code> (seconds; 2 hours).</li>
+<li><b>Keep</b> <code>SESSION_SAVE_EVERY_REQUEST = True</code> so the time counts from the last click, not from the
+login.</li>
+<li><b>Choose</b> <code>SESSION_EXPIRE_AT_BROWSER_CLOSE = True</code> (log in again after closing the browser) or
+<code>False</code> (stay logged in until the idle time is over).</li>
+<li><b>Restart</b> the web server. Expired sessions are removed from the database by the daily cleanup of the
+engine.</li>
+</ol>
+
+<h3 id="settings-py--reference">Reference</h3>
+<h4>Set by you</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default (template)</th><th>Values / example</th></tr>
+<tr><td><code>DATABASES</code></td><td>The database of Bots. Bots uses the entry <code>default</code> (or the one in
+<code>bots.ini [settings] django_db</code>). See <a href="#databases">Databases for Bots itself</a>.</td><td>SQLite
+file <code>botssys/sqlitedb/botsdb</code></td><td>see Databases</td></tr>
+<tr><td><code>TIME_ZONE</code></td><td>Time zone of the web interface and, on Linux, of the engine. On Windows it
+must be the time zone of the system.</td><td><code>'Europe/Paris'</code></td><td><code>'America/Chicago'</code></td></tr>
+<tr><td><code>USE_TZ</code></td><td>Keep <code>False</code>: Bots stores local times.</td><td>False</td><td>False</td></tr>
+<tr><td><code>LANGUAGE_CODE</code></td><td>Language of the web interface. Bots has translations for French and
+Dutch; other languages fall back to English.</td><td><code>'en-us'</code></td><td><code>'fr'</code>,
+<code>'nl'</code></td></tr>
+<tr><td><code>USE_I18N</code></td><td>Use the translations.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>MANAGERS</code></td><td>Who gets the error reports: pairs of name and address.</td><td><code>(('name_manager',
+'adress@test.com'),)</code></td><td><code>(('EDI team', 'edi@mycompany.example'),)</code></td></tr>
+<tr><td><code>MAILERS</code></td><td>Mail server for the error reports: <code>host</code>, <code>port</code>,
+<code>use_tls</code>, <code>use_ssl</code>, <code>username</code>, <code>password</code>, <code>timeout</code>. See
+the warning above.</td><td>localhost, port 25, no TLS, no login, timeout 10</td><td>see How to</td></tr>
+<tr><td><code>EMAIL_HOST</code>, <code>EMAIL_PORT</code>, <code>EMAIL_USE_TLS</code>, <code>EMAIL_USE_SSL</code>,
+<code>EMAIL_HOST_USER</code>, <code>EMAIL_HOST_PASSWORD</code>, <code>EMAIL_TIMEOUT</code></td><td>The classic
+Django mail settings (Bots 3 used these). Not in the template.</td><td>not set (Django: localhost, 25)</td><td>see
+How to</td></tr>
+<tr><td><code>SERVER_EMAIL</code></td><td>Sender address of error reports and of mails to partners sent with
+<code>botslib.sendbotsemail()</code>.</td><td><code>&lt;BOTSENV&gt;@&lt;machine name&gt;</code>, eg
+<code>default@edi01</code></td><td><code>'edi@mycompany.example'</code></td></tr>
+<tr><td><code>EMAIL_SUBJECT_PREFIX</code></td><td>Text in front of the subject of error reports.</td><td>commented
+out (Django: <code>'[Django] '</code>)</td><td><code>'[Bots TEST] '</code></td></tr>
+<tr><td><code>SECRET_KEY</code></td><td>Key Django uses to sign sessions and forms. Must be secret and different
+per installation. A new environment gets a random one.</td><td>random (new environment); a fixed known value in
+the template</td><td>long random text</td></tr>
+<tr><td><code>ALLOWED_HOSTS</code></td><td>Host names under which the web interface may be opened.</td><td><code>['*']</code>
+(any)</td><td><code>['edi.example.com', 'localhost']</code></td></tr>
+<tr><td><code>SESSION_EXPIRE_AT_BROWSER_CLOSE</code></td><td>True: log in again after the browser is closed.</td>
+<td>True</td><td>True / False</td></tr>
+<tr><td><code>SESSION_COOKIE_AGE</code></td><td>Seconds without activity before the user must log in again.</td>
+<td>3600</td><td>eg <code>7200</code></td></tr>
+<tr><td><code>SESSION_SAVE_EVERY_REQUEST</code></td><td>True: the age counts from the last request.</td><td>True</td>
+<td>True / False</td></tr>
+<tr><td><code>SESSION_COOKIE_NAME</code></td><td>Name of the login cookie. Contains the environment name, so two
+environments on one machine do not log each other out.</td><td><code>bots_sessionid_&lt;BOTSENV&gt;</code></td>
+<td>text</td></tr>
+<tr><td><code>CSRF_COOKIE_NAME</code></td><td>Name of the form-protection cookie, per environment.</td>
+<td><code>bots_csrftoken_&lt;BOTSENV&gt;</code></td><td>text</td></tr>
+<tr><td><code>DEBUG</code> <span class="badge gray">advanced</span></td><td>Django debug mode: detailed error pages
+with settings and code. Never on a machine others can reach.</td><td>not set (False)</td><td>True / False</td></tr>
+</table></div>
+
+<h4>Useful Django settings that are not in the template</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>SESSION_COOKIE_SECURE</code>, <code>CSRF_COOKIE_SECURE</code></td><td>Send the cookies over HTTPS
+only. Set both when the web interface runs on HTTPS.</td><td>False</td><td>True</td></tr>
+<tr><td><code>CSRF_TRUSTED_ORIGINS</code></td><td>Addresses (with scheme) from which forms may be posted. Needed
+behind a reverse proxy that serves HTTPS.</td><td>empty</td><td><code>['https://edi.example.com']</code></td></tr>
+<tr><td><code>SECURE_PROXY_SSL_HEADER</code></td><td>Tells Django which header of the proxy says the request came
+in over HTTPS.</td><td>not set</td><td><code>('HTTP_X_FORWARDED_PROTO', 'https')</code></td></tr>
+<tr><td><code>AUTH_PASSWORD_VALIDATORS</code></td><td>Rules for new passwords (in the template: not too like the
+user name, at least 8 characters, not a common password, not only digits).</td><td>4 validators</td><td>see
+Django documentation</td></tr>
+</table></div>
+
+<h4>Leave as they are</h4>
+<p>The template also sets these. Bots needs them as they are: <code>BOTS_PATH</code>, <code>BOTSENV</code> (from the
+environment variable <code>BOTSENV</code>, else <code>default</code>), <code>BOTS_CONFIG_DIR</code>,
+<code>BOTSENV_PATH</code>, <code>BOTSSYS</code>, <code>HOSTNAME</code>, <code>STATIC_URL</code> (<code>/static/</code>),
+<code>STATIC_ROOT</code> (<code>botssys/static</code>; the web server copies the static files there at every
+start), <code>ROOT_URLCONF</code> (<code>bots.urls</code>), <code>LOGIN_URL</code>, <code>LOGIN_REDIRECT_URL</code>,
+<code>LOGOUT_URL</code>, <code>SITE_ID</code>, <code>LOCALE_PATHS</code>, <code>FILE_UPLOAD_HANDLERS</code> (plugins are
+written to a temporary file), <code>INSTALLED_APPS</code>, <code>MIDDLEWARE</code> (with the CSRF and clickjacking
+protection), <code>TEMPLATES</code> (with the context processor <code>bots.bots_context.set_context</code>).</p>
+<div class="note info"><span class="label">Note</span><p>A <code>settings.py</code> without <code>MIDDLEWARE</code>
+but with <code>MIDDLEWARE_CLASSES</code> is a file of Bots 3; Bots stops with a message that says so.</p></div>
+
+<h3 id="settings-py--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>"…/settings.py" is a settings.py of bots 3; it can not be used with this version of bots.</code></td>
+<td>The config directory has the old file.</td><td>1. Copy <code>bots/install/settings.py</code> of the installed
+package over it (keep the old one). 2. Set <code>DATABASES</code>, the mail settings and <code>TIME_ZONE</code>
+again, or run <code>bots-portconfig</code>.</td></tr>
+<tr><td><code>SyntaxError</code> or <code>IndentationError</code> pointing at <code>settings.py</code></td><td>A typing
+error in the file.</td><td>1. Go to the line in the message. 2. Check quotes, commas and brackets; lines at the
+top level must start in the first column.</td></tr>
+<tr><td><em>Trying to send test mail, but in bots.ini, section [settings], "sendreportiferror" is not "True".</em></td>
+<td>Reports are off.</td><td>Set <code>sendreportiferror = True</code> in <code>bots.ini</code> and restart the web
+server.</td></tr>
+<tr><td><em>Sending test mail failed.</em></td><td>The mail server refused or could not be reached. The details are
+in the web server log (<em>Sending test mail failed, error: …</em>).</td><td>1. Open <span class="ui">SysTasks</span> →
+<span class="ui">Logs</span> → <span class="ui">Webserver logs</span>. 2. "Connection refused": wrong host or port.
+"Authentication": user or password. "STARTTLS": set <code>use_tls</code>/<code>EMAIL_USE_TLS</code>. 3. Check that the
+mail server is set in the form your Django version reads (see the warning above).</td></tr>
+<tr><td><em>Deprecated email settings are not allowed when MAILERS is defined: EMAIL_HOST</em> (no Bots program
+starts)</td><td><code>settings.py</code> has <code>MAILERS</code> and also a classic <code>EMAIL_…</code> mail server
+setting; Django 6.1 refuses that.</td><td>Keep only <code>MAILERS</code> (Django 6.1 and newer); remove or comment
+out <code>EMAIL_BACKEND</code>, <code>EMAIL_FILE_PATH</code>, <code>EMAIL_HOST</code>, <code>EMAIL_PORT</code>,
+<code>EMAIL_USE_TLS</code>, <code>EMAIL_USE_SSL</code>, <code>EMAIL_SSL_CERTFILE</code>,
+<code>EMAIL_SSL_KEYFILE</code>, <code>EMAIL_HOST_USER</code>, <code>EMAIL_HOST_PASSWORD</code>,
+<code>EMAIL_TIMEOUT</code>. <code>EMAIL_SUBJECT_PREFIX</code> and <code>SERVER_EMAIL</code> may stay.</td></tr>
+<tr><td>Test mail succeeds, but the server rejects the sender</td><td><code>SERVER_EMAIL</code> is still
+<code>default@&lt;machine&gt;</code>.</td><td>Set <code>SERVER_EMAIL</code> to an address the mail server accepts.</td></tr>
+<tr><td>Times in the web interface are one or more hours off</td><td><code>TIME_ZONE</code> is not the time zone of
+the machine.</td><td>Set <code>TIME_ZONE</code> to the zone of the system clock; restart the web server.</td></tr>
+<tr><td><code>Bad Request (400)</code> in the browser</td><td>The host name in the address is not in
+<code>ALLOWED_HOSTS</code>.</td><td>Add the name you type in the browser, eg <code>'edi.example.com'</code>.</td></tr>
+<tr><td>Users of two environments log each other out</td><td>Both use the same <code>SESSION_COOKIE_NAME</code>
+(eg an old template copied twice).</td><td>Give each environment its own <code>SESSION_COOKIE_NAME</code> and
+<code>CSRF_COOKIE_NAME</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="databases" data-title="Databases for Bots itself" data-group="Run and maintain">
+<h2>Databases for Bots itself</h2>
+<p class="lead">Bots keeps its configuration (routes, channels, partners, users) and its history (runs, files,
+counters) in a database. By default this is one SQLite file; for larger volumes or for a company standard you
+can use MySQL/MariaDB, PostgreSQL or Microsoft SQL Server.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Out of the box Bots stores everything in one
+file on disk, and that works for most installations. If you want Bots to use a database server, you install a
+driver, create an empty database, tell <code>settings.py</code> where it is, and run <code>bots-updatedb</code>
+to make the tables.</p></div>
+
+<h3 id="databases--how">How it works</h3>
+<ol>
+<li><b>Two kinds of tables.</b> Django manages the tables of the configuration and the reports
+(<code>routes</code>, <code>channel</code>, <code>partner</code>, <code>partnergroup</code>, <code>translate</code>,
+<code>chanpar</code>, <code>ccode</code>, <code>ccodetrigger</code>, <code>confirmrule</code>, <code>report</code>,
+<code>filereport</code>) plus its own (<code>auth_*</code>, <code>django_*</code>). The engine has four tables of
+its own: <code>ta</code> (every step of every file), <code>mutex</code> (the database lock of a run),
+<code>uniek</code> (counters) and <code>persist</code> (values saved by mappings). Their definitions per database
+are in <code>bots/sql/</code> (<code>ta.mysql.sql</code>, <code>ta.postgresql.sql</code>,
+<code>ta.microsoft.sql</code>, <code>ta.sqlite.sql</code> …).</li>
+<li><b>One command makes them.</b> <code>bots-updatedb</code> applies the Django migrations and creates the engine
+tables from <code>bots/sql</code>. <span class="badge green">new in 4.0</span> (in Bots 3 the engine tables were
+made by hand.)</li>
+<li><b>The web interface</b> uses Django's connection. <b>The engine</b> opens its own connection with the same
+settings: <code>sqlite3</code>, <code>MySQLdb</code> (package <code>mysqlclient</code>), <code>psycopg</code> (or
+<code>psycopg2</code>), or for SQL Server <code>mssql-python</code> or <code>pyodbc</code>.</li>
+<li><b>The same results everywhere.</b> Bots sorts in its own code where the order matters, so routes, envelopes
+and counters come out the same on every database. Tested with PostgreSQL 17, MySQL 8.4, MariaDB 11.4 and SQL
+Server 2022.</li>
+</ol>
+
+<h3 id="databases--drivers">Drivers and versions</h3>
+<div class="table-wrap"><table>
+<tr><th>Database</th><th>Install</th><th><code>ENGINE</code> in settings.py</th><th>Server versions</th></tr>
+<tr><td>SQLite</td><td>nothing (part of Python)</td><td><code>django.db.backends.sqlite3</code></td><td>the SQLite of
+your Python</td></tr>
+<tr><td>MySQL / MariaDB</td><td><code>pip install "bots-ediint[mysql]"</code> (mysqlclient; on Linux it needs the
+MySQL client development package to build)</td><td><code>django.db.backends.mysql</code></td><td>as your Django
+version supports (Django 5.2: MySQL 8.0.11+, MariaDB 10.5+); tested MySQL 8.4, MariaDB 11.4</td></tr>
+<tr><td>PostgreSQL</td><td><code>pip install "bots-ediint[postgresql]"</code> (psycopg 3)</td><td><code>django.db.backends.postgresql</code></td>
+<td>as your Django version supports (Django 5.2: 14+); tested 17</td></tr>
+<tr><td>SQL Server</td><td><code>pip install "bots-ediint[mssql]"</code> (mssql-django 1.6 or newer) plus an ODBC
+driver, eg "ODBC Driver 18 for SQL Server"</td><td><code>mssql</code></td><td>as mssql-django supports; tested
+2022</td></tr>
+</table></div>
+<p>Bots requires Django 4.0 up to (not including) 7.0. Each Django version has its own minimum database versions;
+check the release notes of the Django version you installed (<code>python -m django --version</code>).</p>
+
+<h3 id="databases--howto-pg">How to use PostgreSQL</h3>
+<ol class="steps">
+<li><b>Install the driver</b> in the Python environment of Bots: <code>pip install "bots-ediint[postgresql]"</code>.</li>
+<li><b>Create the user and the database</b> on the server (as the postgres superuser):
+<pre><code class="language-text">CREATE USER bots WITH PASSWORD 'secret-example';
+CREATE DATABASE botsdb OWNER bots ENCODING 'UTF8';
+</code></pre></li>
+<li><b>Set <code>DATABASES</code></b> in <code>config/settings.py</code> (replace the SQLite block):
+<pre><code class="language-python">DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'botsdb',
+        'USER': 'bots',
+        'PASSWORD': 'secret-example',
+        'HOST': 'db.example.com',
+        'PORT': '5432',
+        'OPTIONS': {'client_encoding': 'utf-8'},
+    }
+}
+</code></pre></li>
+<li><b>Check</b>: <code>bots-updatedb --check</code>. Expect <em>This database is: empty (no bots tables).</em> and
+<em>To do: create the tables.</em></li>
+<li><b>Create the tables and a first user</b>: <code>bots-updatedb --createsuperuser</code>. It asks for a user name
+and a password. Expect <em>The database is up to date.</em></li>
+<li><b>Start</b> <code>bots-webserver</code> and log in with that user.</li>
+</ol>
+
+<h3 id="databases--howto-mysql">How to use MySQL or MariaDB</h3>
+<ol class="steps">
+<li><b>Install the driver</b>: <code>pip install "bots-ediint[mysql]"</code>.</li>
+<li><b>Create the database and the user</b>:
+<pre><code class="language-text">CREATE DATABASE botsdb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'bots'@'%' IDENTIFIED BY 'secret-example';
+GRANT ALL PRIVILEGES ON botsdb.* TO 'bots'@'%';
+</code></pre></li>
+<li><b>Set <code>DATABASES</code></b>:
+<pre><code class="language-python">DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'botsdb',
+        'USER': 'bots',
+        'PASSWORD': 'secret-example',
+        'HOST': 'db.example.com',
+        'PORT': '3306',
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': 'SET default_storage_engine=INNODB',
+        },
+    }
+}
+</code></pre></li>
+<li><b>Create the tables</b>: <code>bots-updatedb --createsuperuser</code>.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p><code>PORT</code> must be filled in for MySQL: the
+engine converts it to a number (<code>int('')</code> fails). Use the InnoDB engine: the database lock and the
+counters need transactions.</p></div>
+
+<h3 id="databases--howto-mssql">How to use Microsoft SQL Server</h3>
+<ol class="steps">
+<li><b>Install</b> <code>pip install "bots-ediint[mssql]"</code> and an ODBC driver for SQL Server on the machine
+(or the package <code>mssql-python</code>, which needs no ODBC driver; the engine uses it when it is installed).</li>
+<li><b>Create</b> a database <code>botsdb</code> and a login <code>bots</code> that owns it (SQL Server Management
+Studio or <code>sqlcmd</code>).</li>
+<li><b>Set <code>DATABASES</code></b>:
+<pre><code class="language-python">DATABASES = {
+    'default': {
+        'ENGINE': 'mssql',
+        'NAME': 'botsdb',
+        'USER': 'bots',
+        'PASSWORD': 'secret-example',
+        'HOST': 'db.example.com',
+        'PORT': '1433',
+        'OPTIONS': {
+            'driver': 'ODBC Driver 18 for SQL Server',
+            # for a server with its own (self-signed) certificate:
+            'extra_params': 'TrustServerCertificate=yes',
+        },
+    }
+}
+</code></pre></li>
+<li><b>Create the tables</b>: <code>bots-updatedb --createsuperuser</code>.</li>
+</ol>
+<p>Without <code>USER</code> the engine logs in with the Windows account (<code>Trusted_Connection=yes</code>).
+<code>OPTIONS</code> may also have <code>python_driver</code> to choose the driver: <code>'mssql_python'</code>
+(with an underscore; no ODBC driver needed) or <code>'pyodbc'</code>.</p>
+
+<h3 id="databases--howto-move">How to move from SQLite to a database server</h3>
+<p>Move the configuration with a plugin and start the history fresh:</p>
+<ol class="steps">
+<li><b>Note the counters</b>: <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span>. Write
+down the current numbers (interchange control references and the like). Partners check these numbers.</li>
+<li><b>Make a plugin</b>: <span class="ui">SysTasks</span> → <span class="ui">Plugins</span> → <span class="ui">Make
+plugin</span>. Tick <span class="ui">Database configuration</span>, <span class="ui">User code lists</span> and
+<span class="ui">Script files</span>. Save the zip file.</li>
+<li><b>Stop</b> the scheduler, the job queue server, the directory monitor and the web server.</li>
+<li><b>Set up the server database</b> as described above and run <code>bots-updatedb --createsuperuser</code>.</li>
+<li><b>Start the web server</b>, log in, and read the plugin: <span class="ui">SysTasks</span> → <span
+class="ui">Plugins</span> → <span class="ui">Read plugin</span>.</li>
+<li><b>Set the counters</b> to the noted values in <span class="ui">View/edit counters</span>.</li>
+<li><b>Create the users</b> again (<a href="#web-users">Users and rights</a>); users are not in a plugin.</li>
+<li><b>Keep the SQLite file</b> (<code>botssys/sqlitedb/botsdb</code>) until you are sure; with the old
+<code>settings.py</code> you can look at the old history.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>A plugin can also hold <span class="ui">Database
+transactions</span> (the history and all counters). That plugin can be very large; use it only when you need the
+history in the new database.</p></div>
+
+<h3 id="databases--howto-backup">How to back up the database</h3>
+<ul>
+<li><b>SQLite</b>: stop the engine (no run may be going), then copy <code>botssys/sqlitedb/botsdb</code>. A copy made
+during a run can be damaged.</li>
+<li><b>PostgreSQL</b>: <code>pg_dump -h db.example.com -U bots -F c -f botsdb.dump botsdb</code>.</li>
+<li><b>MySQL/MariaDB</b>: <code>mysqldump -h db.example.com -u bots -p --single-transaction botsdb &gt; botsdb.sql</code>.</li>
+<li><b>SQL Server</b>: <code>BACKUP DATABASE botsdb TO DISK = 'D:\backup\botsdb.bak'</code>.</li>
+</ul>
+<p>Back up the files too; see <a href="#maintenance">Maintenance</a>.</p>
+
+<h3 id="databases--reference">Reference</h3>
+<h4>Keys of DATABASES['default']</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default (template)</th><th>Values / example</th></tr>
+<tr><td><code>ENGINE</code></td><td>Kind of database. Another Django backend works only through Django's connection
+(the engine logs <em>Using unknown/untested Django database engine</em>).</td><td><code>django.db.backends.sqlite3</code></td>
+<td>see the table of drivers</td></tr>
+<tr><td><code>NAME</code></td><td>Name of the database; for SQLite the path of the file.</td><td><code>botssys/sqlitedb/botsdb</code></td><td><code>botsdb</code></td></tr>
+<tr><td><code>USER</code>, <code>PASSWORD</code></td><td>Login on the server. Not used by SQLite.</td><td>empty</td><td><code>bots</code>, <code>secret-example</code></td></tr>
+<tr><td><code>HOST</code>, <code>PORT</code></td><td>Server and port. Not used by SQLite.</td><td>empty</td><td><code>db.example.com</code>, <code>5432</code></td></tr>
+<tr><td><code>OPTIONS</code></td><td>Options for the driver. Django-only keys (<code>isolation_level</code>,
+<code>pool</code>, <code>server_side_binding</code>, <code>assume_role</code>) are not passed to the engine's
+driver.</td><td>SQLite: <code>init_command</code> <code>PRAGMA synchronous=OFF;</code>,
+<code>transaction_mode</code> <code>EXCLUSIVE</code>, <code>timeout</code> 99.0</td><td>MySQL <code>{'charset':
+'utf8mb4'}</code>; PostgreSQL <code>{'sslmode': 'require'}</code></td></tr>
+</table></div>
+
+<h4>bots-updatedb</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>-c&lt;directory&gt;</code></td><td>Config directory of the environment.</td><td>see <a href="#command-line">Command-line tools</a></td><td><code>-c/srv/bots/env/production/config</code></td></tr>
+<tr><td><code>--check</code></td><td>Only report what the database is and what would be done.</td><td>off</td><td>–</td></tr>
+<tr><td><code>--yes-i-have-a-backup</code></td><td>Needed to upgrade a database of Bots 3. Cannot be undone.</td><td>off</td><td>–</td></tr>
+<tr><td><code>--createsuperuser</code></td><td>After the update, ask for a user name and password and create a
+superuser.</td><td>off</td><td>–</td></tr>
+</table></div>
+<p>What it does per kind of database: <b>empty</b> – creates all tables; <b>Bots 3</b> (3.0 – 3.2) – registers the
+existing tables, applies the changes, widens columns of <code>ta</code>, <code>persist</code>, <code>uniek</code>,
+gives users the new "view" rights, switches off certificate checking for existing TLS channels (as Bots 3 did) and
+lists channels with a relative path; <b>Bots 4</b> – applies pending changes; <b>anything else</b> – refuses.
+Exit codes: 0 OK (with <code>--check</code>: nothing to do), 1 with <code>--check</code>: something to do, 2 not
+recognised or no backup confirmed, 3 other error.</p>
+
+<h3 id="databases--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><em>Could not connect to database. Database settings are in bots/config/settings.py. Error: "…"</em>
+(engine log)</td><td>Server not reachable, wrong user/password/name, or the driver is missing (<code>No module named
+'MySQLdb'</code>, <code>'psycopg'</code>, <code>'pyodbc'</code>).</td><td>1. Read the error in quotes. 2. Install
+the extra (<code>[mysql]</code>, <code>[postgresql]</code>, <code>[mssql]</code>). 3. Test the login with the
+client of the database (psql, mysql, sqlcmd) from the Bots machine.</td></tr>
+<tr><td><em>The database does not have the tables of bots-engine. Run "bots-updatedb" to create the tables in a
+new database or to update the database of bots 3.</em></td><td>A new or old database without the tables
+<code>ta</code>, <code>mutex</code>, <code>uniek</code>, <code>persist</code>.</td><td>Run <code>bots-updatedb</code>
+(for a Bots 3 database: make a backup and add <code>--yes-i-have-a-backup</code>).</td></tr>
+<tr><td><em>Could not find SQLite database file: …</em></td><td><code>NAME</code> points to a file that does not
+exist (often a wrong <code>botssys</code> in <code>bots.ini</code>).</td><td>1. Check <code>[directories]
+botssys</code>. 2. Check that <code>botssys/sqlitedb/botsdb</code> exists; copy <code>bots/install/botsdb</code>
+there for a new, empty one.</td></tr>
+<tr><td><em>This database is: not recognised (tables … exist, but not …). Nothing is changed.</em></td><td>The
+database is not empty and is not a Bots 3 or Bots 4 database (eg Bots 2, or another application).</td><td>Use an
+empty database, or upgrade Bots 2 to Bots 3 first.</td></tr>
+<tr><td><em>Upgrading a bots 3 database can not be undone, and bots 3 can not use the database afterwards.</em></td>
+<td>You ran <code>bots-updatedb</code> on a Bots 3 database without confirming a backup.</td><td>Make a backup,
+then run <code>bots-updatedb --yes-i-have-a-backup</code>.</td></tr>
+<tr><td><em>Error: bots-engine is running (or another bots-updatedb). Nothing is changed.</em></td><td>The engine
+lock port of the environment is in use.</td><td>Wait until the run is over, or stop the scheduler and the job
+queue, then try again.</td></tr>
+<tr><td><code>TypeError: 'init_command' is an invalid keyword argument</code> (or <code>transaction_mode</code>)</td>
+<td>An older Django passes all SQLite <code>OPTIONS</code> to <code>sqlite3</code>; these two options need a newer
+Django.</td><td>Upgrade Django, or remove these two lines from <code>OPTIONS</code> (the engine sets the same
+itself).</td></tr>
+<tr><td><code>ValueError: invalid literal for int() with base 10: ''</code> at <em>Could not connect to
+database</em> with MySQL</td><td><code>PORT</code> is empty.</td><td>Set <code>'PORT': '3306'</code>.</td></tr>
+<tr><td><em>No ODBC driver for SQL Server is installed (eg "ODBC Driver 18 for SQL Server").</em></td><td>pyodbc is
+used, but no Microsoft ODBC driver is on the machine.</td><td>Install the ODBC driver, or install
+<code>mssql-python</code>.</td></tr>
+<tr><td><em>!Bots database is locked! … Bots will do an automatic crash recovery now.</em></td><td>A run ended
+without removing its lock (power loss, the process was killed).</td><td>Nothing: the engine recovers in the same
+run. See <a href="#maintenance">Maintenance</a> if it happens often.</td></tr>
+</table></div>
+</section>
+
+<section id="command-line" data-title="Command-line tools" data-group="Run and maintain">
+<h2>Command-line tools</h2>
+<p class="lead">Bots is a set of programs you start from a command prompt, a scheduler or a service manager. This
+page lists every program that the Bots package installs, with every option, its exit codes and examples for
+Windows and Linux.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>The web interface is for looking and
+configuring. The real work is done by small programs: <code>bots-engine</code> translates and sends,
+<code>bots-webserver</code> shows the web interface, and a few helpers queue jobs, watch folders, check grammars
+and move old installations over. You type their names in a terminal, with options behind them.</p></div>
+
+<h3 id="command-line--how">How it works</h3>
+<ol>
+<li><b>Where the programs are.</b> <code>pip</code> installs them in the <code>Scripts</code> folder (Windows,
+eg <code>C:\bots4\Scripts\bots-engine.exe</code>) or the <code>bin</code> folder (Linux, eg
+<code>/opt/bots4/bin/bots-engine</code>) of the Python environment where you installed Bots. Activate that
+environment, or use the full path.</li>
+<li><b>Which environment.</b> Every program that works on an environment takes <code>-c&lt;config
+directory&gt;</code>, written without a space: <code>-cC:\bots\env\production\config</code> or
+<code>-c/srv/bots/env/production/config</code>. Without <code>-c</code>, Bots uses the environment variable
+<code>BOTS_CONFIG_DIR</code>; without that, <code>~/.bots/env/&lt;BOTSENV&gt;/config</code>, where
+<code>BOTSENV</code> is an environment variable (default <code>default</code>). That last environment is created
+the first time it is needed. The help texts still say "default: config"; this is what the program does.</li>
+<li><b>One environment per process.</b> Each program works on one environment. To work on two environments, start
+the program twice, each with its own <code>-c</code>.</li>
+<li><b>Help.</b> <code>-h</code>, <code>--help</code>, <code>?</code> or <code>/?</code> prints the usage text. For
+most programs an unknown option starting with <code>-</code> also prints the usage text and does nothing.</li>
+</ol>
+
+<h3 id="command-line--howto">How to run the engine by hand</h3>
+<ol class="steps">
+<li><b>Open a terminal</b> (Windows: Command Prompt or PowerShell; Linux: a shell) as the user that runs
+Bots.</li>
+<li><b>Run a normal run</b> for the environment:
+<pre><code class="language-powershell">C:\bots4\Scripts\bots-engine.exe -cC:\bots\env\production\config
+</code></pre>
+<pre><code class="language-bash">/opt/bots4/bin/bots-engine -c/srv/bots/env/production/config
+</code></pre></li>
+<li><b>Read the result.</b> The log is shown on the screen. The last lines say how many files were received,
+had errors and were sent. The run also appears in <span class="ui">All runs</span>.</li>
+<li><b>Check the exit code</b> when a script runs the engine: Windows <code>echo %ERRORLEVEL%</code> (cmd) or
+<code>$LASTEXITCODE</code> (PowerShell); Linux <code>echo $?</code>. 0 is OK, 2 means errors in the run.</li>
+</ol>
+
+<h3 id="command-line--howto-routes">How to run one route, or resend</h3>
+<ul>
+<li>Only the routes <code>orders_in</code> and <code>invoices_out</code>: <code>bots-engine orders_in
+invoices_out</code>. Named routes run even when they are marked "not in default run"; they must be active.</li>
+<li>Files you marked for resend in <span class="ui">Outgoing</span>: <code>bots-engine --resend</code>.</li>
+<li>Files you marked for rereceive in <span class="ui">Incoming</span>: <code>bots-engine --rereceive</code>.</li>
+<li>Retry outgoing files whose sending failed: <code>bots-engine --automaticretrycommunication</code>. The very
+first time this runs it only notes the moment and sends nothing, so that old files are not sent.</li>
+<li>Only the cleanup: <code>bots-engine --cleanup</code>. With <code>--new</code> also: <code>bots-engine --new
+--cleanup</code>.</li>
+<li>Several run types at once: <code>bots-engine --automaticretrycommunication --resend --rereceive --new</code>.
+They always run in this order, one second apart.</li>
+</ul>
+
+<h3 id="command-line--reference">Reference</h3>
+<h4 id="command-line--engine">bots-engine</h4>
+<p>Receives, translates and sends. Usage: <code>bots-engine [run-options] [-c&lt;directory&gt;]
+[routes]</code>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>--new</code></td><td>Receive and process new files: all active routes that are in the default run
+(or the routes on the command line).</td><td>used when no run option is given</td><td><code>bots-engine
+--new</code></td></tr>
+<tr><td><code>--resend</code></td><td>Send again the outgoing files a user marked for resend. Uses all active
+routes.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--rereceive</code></td><td>Process again the incoming files a user marked for rereceive.</td>
+<td>–</td><td>–</td></tr>
+<tr><td><code>--automaticretrycommunication</code></td><td>Send again the files whose outgoing communication
+failed since the last retry run.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--cleanup</code></td><td>Do the full cleanup now, whatever <code>whencleanup</code> says. Alone, it
+runs no routes.</td><td>–</td><td>–</td></tr>
+<tr><td><code>-c&lt;directory&gt;</code></td><td>Config directory.</td><td>see How it works</td><td><code>-c/srv/bots/env/test/config</code></td></tr>
+<tr><td><em>routes</em></td><td>Names of routes to run, separated by spaces. Without names: all active routes
+(for <code>--new</code>: those in the default run), in alphabetical order.</td><td>all</td><td><code>orders_in
+asn_out</code></td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th>Exit code</th><th>Meaning</th></tr>
+<tr><td>0</td><td>OK, no errors (also after <code>--help</code>).</td></tr>
+<tr><td>1</td><td>System error: no connection to the database, damaged database, error in the command line, an
+unexpected error.</td></tr>
+<tr><td>2</td><td>The run went through, but there were file errors or process errors (the same as when an error
+report is mailed).</td></tr>
+<tr><td>3</td><td>Nothing done: another engine runs for this environment (its lock port is in use), or the
+database has no engine tables.</td></tr>
+</table></div>
+
+<h4 id="command-line--webserver">bots-webserver</h4>
+<p>Serves the web interface (CherryPy). Usage: <code>bots-webserver [-c&lt;directory&gt;]</code>. Any other argument
+prints the usage. Port and HTTPS come from <code>bots.ini [webserver]</code>. At every start it copies the static
+files to <code>STATIC_ROOT</code>. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd> or by stopping the service.</p>
+
+<h4 id="command-line--jobqueueserver">bots-jobqueueserver</h4>
+<p>Runs the jobs of the job queue, one at a time. Usage: <code>bots-jobqueueserver [-c&lt;directory&gt;]</code>.
+Needs <code>[jobqueue] enabled = True</code>, else it prints <em>Error: bots jobqueue is not enabled in …/bots.ini</em>
+and ends with code 1. Listens on 127.0.0.1, port <code>[jobqueue] port</code>. Stop with
+<kbd>Ctrl</kbd>+<kbd>C</kbd> or SIGTERM: it lets the running job finish (at most <code>stopwait</code> seconds) and
+logs the jobs that were waiting. Exit code 0 after a normal stop, 1 when a job was still running or after 10
+jobs in a row that could not start.</p>
+
+<h4 id="command-line--job2queue">bots-job2queue</h4>
+<p>Puts a job in the queue. Usage: <code>bots-job2queue [-c&lt;directory&gt;] [-p&lt;priority&gt;] job
+[job-parameters]</code>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>-c&lt;directory&gt;</code></td><td>Before the job: the environment of job2queue (which queue port).
+After the job: also passed to the job. Use it after the job, so both use the same environment.</td><td>see How it
+works</td><td><code>bots-job2queue bots-engine -c/srv/bots/env/production/config</code></td></tr>
+<tr><td><code>-p&lt;priority&gt;</code></td><td>Priority, before the job. 1 runs first, 9 last; same priority:
+first in, first out.</td><td>5</td><td><code>-p1</code></td></tr>
+<tr><td><em>job</em></td><td><code>bots-engine</code> (by name, or the full path where this Bots installed it), or
+a program in <code>[jobqueue] authorized_tasks</code>.</td><td>required</td><td><code>bots-engine</code></td></tr>
+<tr><td><em>job-parameters</em></td><td>Passed to the job.</td><td>–</td><td><code>--new orders_in</code></td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th>Exit code</th><th>Meaning (the text it prints)</th></tr>
+<tr><td>0</td><td><em>OK, job added to queue.</em> (also when an equal job was waiting and only got another
+priority)</td></tr>
+<tr><td>1</td><td><em>Error, job not added to queue. Can not contact jobqueue-server !</em>; also: job queue not
+enabled, bad <code>-c</code> or <code>-p</code>.</td></tr>
+<tr><td>2</td><td><em>Error, no task specified.</em></td></tr>
+<tr><td>3</td><td><em>Error, invalid task !</em> (not bots-engine, not in authorized_tasks)</td></tr>
+<tr><td>4</td><td><em>Duplicate, job already in queue, not added.</em></td></tr>
+<tr><td>5</td><td><em>Error, priority is not a number.</em></td></tr>
+<tr><td>6</td><td><em>Error, job not added to queue. The jobqueue-server is stopping or has stopped after errors !</em></td></tr>
+</table></div>
+
+<h4 id="command-line--dirmonitor">bots-dirmonitor</h4>
+<p>Watches folders and queues a run when a file arrives. Usage: <code>bots-dirmonitor [-c&lt;directory&gt;]
+[--reload]</code>. Needs the job queue enabled and <code>bots-jobqueueserver</code> running (else it ends with
+code 1). <code>--reload</code> asks a running monitor of the same environment to read its folders again (after a
+change in <code>bots.ini</code> or in routes) and ends with code 0. Windows needs <code>pywin32</code>, Linux
+<code>pyinotify</code> (both installed with Bots). See <a href="#scheduling">Scheduling runs</a>.</p>
+
+<h4 id="command-line--grammarcheck">bots-grammarcheck</h4>
+<p>Checks a grammar with the same checks as a translation. Usage: <code>bots-grammarcheck [-c&lt;directory&gt;]
+&lt;editype&gt; &lt;messagetype&gt;</code> or <code>bots-grammarcheck [-c&lt;directory&gt;] &lt;path to
+grammar&gt;</code>. With a path, the editype is the name of the folder and the message type the file name; the
+grammar is then read from <code>usersys/grammars/&lt;editype&gt;/</code> of the environment, not from the path.
+Prints <em>OK - no error found in grammar</em> (exit 0) or <em>Found error in grammar:</em> and the error (exit 1).
+Example: <code>bots-grammarcheck -c/srv/bots/env/test/config x12 850004010</code>.</p>
+
+<h4 id="command-line--xml2botsgrammar">bots-xml2botsgrammar</h4>
+<p>Makes a grammar from a sample xml file. Usage: <code>bots-xml2botsgrammar [-c&lt;directory&gt;] [-a]
+&lt;xml_file&gt; &lt;grammar_file&gt;</code>. <code>-a</code> makes every xml element a record (default: elements
+with only text become fields). Example: <code>bots-xml2botsgrammar orders_sample.xml
+usersys/grammars/xml/orders_erp.py</code>. Check the result and set the field lengths.</p>
+
+<h4 id="command-line--updatedb">bots-updatedb</h4>
+<p>Creates or upgrades the database. Options <code>-c</code>, <code>--check</code>,
+<code>--yes-i-have-a-backup</code>, <code>--createsuperuser</code>; exit codes 0, 1, 2, 3. See <a
+href="#databases">Databases for Bots itself</a>. <span class="badge green">new in 4.0</span></p>
+
+<h4 id="command-line--configure">bots-configure</h4>
+<p>Creates an environment (config, botssys, usersys) and prints its paths. Usage: <code>bots-configure
+[botsenv=&lt;name&gt;] [botsenv_path=&lt;directory&gt;] [-c&lt;directory&gt; | configdir=&lt;directory&gt;]
+[-y]</code>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>botsenv=&lt;name&gt;</code></td><td>Environment <code>~/.bots/env/&lt;name&gt;</code>.</td><td><code>BOTSENV</code> or <code>default</code></td><td><code>botsenv=test</code></td></tr>
+<tr><td><code>botsenv_path=&lt;directory&gt;</code></td><td>Environment in this folder (config, botssys, usersys in it).</td><td><code>~/.bots/env/&lt;botsenv&gt;</code></td><td><code>botsenv_path=/srv/bots/env/test</code></td></tr>
+<tr><td><code>-c&lt;directory&gt;</code>, <code>configdir=&lt;directory&gt;</code></td><td>Config folder to create.</td><td><code>&lt;botsenv_path&gt;/config</code></td><td>–</td></tr>
+<tr><td><code>-y</code>, <code>--yes</code></td><td>Do not ask for confirmation.</td><td>asks</td><td>–</td></tr>
+</table></div>
+<p>A new environment gets a copy of <code>bots.ini</code> and <code>settings.py</code> (with a new
+<code>SECRET_KEY</code>), the empty SQLite database (one superuser, <code>bots</code>) and the example usersys.
+An existing config folder is not changed; the command then only prints the information.</p>
+
+<h4 id="command-line--engine2">bots-engine2</h4>
+<p><span class="badge gray">advanced</span> An experiment: an engine that does not use the database for its
+configuration. Its input folder, file names and translation are fixed in the program
+(<code>botssys/infile/edifact_xml/edifact</code> to <code>botssys/outfile</code>). Usage: <code>bots-engine2
+[-c&lt;directory&gt;]</code>; exit codes as <code>bots-engine</code>. Not for production.</p>
+
+<h4 id="command-line--plugoutindex">bots-plugoutindex</h4>
+<p>Writes the configuration of the database (routes, channels, partners, translations, confirm rules and, with
+<code>codelists_in_plugin</code>, code lists) to <code>usersys/index.json</code>. Useful for version control and
+for comparing test and production. Usage: <code>bots-plugoutindex [-c&lt;directory&gt;]</code>. The same as <span
+class="ui">SysTasks</span> → <span class="ui">Configuration</span> → <span class="ui">Make configuration
+index</span>.</p>
+
+<h4 id="command-line--index2json">bots-index2json</h4>
+<p>Converts a plugin index of Bots 2/3 (<code>botsindex.py</code>, Python) to the JSON form. Usage:
+<code>bots-index2json [-c&lt;directory&gt;] &lt;index.py&gt; &lt;index.json&gt;</code>. The Python file is read, not
+run.</p>
+
+<h4 id="command-line--port">bots-portusersys, bots-checkusersys, bots-portconfig, bots-portenv</h4>
+<p>Tools to move a Bots 3 installation; see also <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>. <span
+class="badge green">new in 4.0</span></p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>bots-portusersys &lt;source&gt; &lt;destination&gt;</code></td><td>Converts user scripts of Bots 3
+(Python 2) to Python 3. Source: a usersys folder, a folder with grammars, or a zip (plugin). The destination
+must not exist or be empty. The source is not changed. Needs <code>fissix</code> (<code>[port]</code>
+extra).</td><td>–</td><td><code>bots-portusersys D:/old/usersys D:/new/usersys</code></td></tr>
+<tr><td><code>--target=&lt;directory&gt;</code></td><td>Where the result will go when the source is only a part of a
+usersys (for imports of files next to it).</td><td>–</td><td><code>--target=usersys/grammars/edifact</code></td></tr>
+<tr><td><code>--json=&lt;file&gt;</code></td><td>Write all results as JSON.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--review=&lt;file&gt;</code></td><td>File for the lines to review.</td><td><code>&lt;destination&gt;.review.txt</code></td><td>–</td></tr>
+<tr><td>exit codes</td><td>0 OK; 1 files that are not valid Python 3; 2 error in the arguments.</td><td>–</td><td>–</td></tr>
+<tr><td><code>bots-checkusersys [-c&lt;directory&gt;]</code></td><td>Compiles every Python file of the usersys of the
+environment, reads every grammar, imports every script.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--processes=&lt;number&gt;</code></td><td>Check with more processes.</td><td>1</td><td><code>--processes=4</code></td></tr>
+<tr><td><code>--json=&lt;file&gt;</code></td><td>Write the results as JSON.</td><td>–</td><td>–</td></tr>
+<tr><td>exit codes</td><td>0 no errors; 1 errors found.</td><td>–</td><td>–</td></tr>
+<tr><td><code>bots-portconfig &lt;old config&gt; &lt;new config&gt; [--write]</code></td><td>Carries <code>bots.ini</code>
+and the mail, time zone, session and secret key settings of <code>settings.py</code> from Bots 3 into the new
+environment. Without <code>--write</code> it only reports. Exit 0 OK, 1 error or wrong arguments.</td><td>report
+only</td><td>–</td></tr>
+<tr><td><code>bots-portenv --bots3=&lt;dir&gt; [--number=N] &lt;new environment&gt;</code></td><td>Does all steps:
+converts usersys, copies and upgrades the SQLite database, carries the configuration over, checks usersys.
+Bots 3 is only read.</td><td>–</td><td><code>bots-portenv --bots3=/opt/bots/bots /srv/bots/env/production</code></td></tr>
+<tr><td><code>--usersys=</code>, <code>--config=</code>, <code>--database=</code></td><td>Give the three places
+yourself instead of <code>--bots3</code>.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--no-database</code></td><td>Do not copy a database (Bots 3 used MySQL or PostgreSQL).</td><td>–</td><td>–</td></tr>
+<tr><td><code>--bots3-dir-on-server=&lt;dir&gt;</code></td><td>File channels with a relative path get the full path
+of the folder Bots 3 used.</td><td>–</td><td><code>--bots3-dir-on-server=/home/edi/bots</code></td></tr>
+<tr><td><code>--local-folders</code></td><td>For a test environment: folders of file channels inside the new
+environment, a testpath for every other channel, and <code>channels_use_testpath = True</code>.</td><td>–</td><td>–</td></tr>
+<tr><td><code>--processes=&lt;n&gt;</code></td><td>Processes for the usersys check.</td><td>1</td><td>–</td></tr>
+<tr><td>exit codes</td><td>0 all done, nothing to look at; 1 done, with things to look at; 2 not done.</td><td>–</td><td>–</td></tr>
+</table></div>
+
+<h3 id="command-line--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>'bots-engine' is not recognized as an internal or external command</code> /
+<code>bots-engine: command not found</code></td><td>The <code>Scripts</code> or <code>bin</code> folder of the Python
+environment of Bots is not in the PATH.</td><td>Activate the environment, or use the full path, eg
+<code>C:\bots4\Scripts\bots-engine.exe</code>.</td></tr>
+<tr><td>The engine prints its usage text and does nothing</td><td>An option is misspelt (eg
+<code>--rereceve</code>) or there is a space after <code>-c</code>.</td><td>Write the option as in the reference;
+write <code>-c</code> and the folder together: <code>-c/srv/bots/env/test/config</code>.</td></tr>
+<tr><td><em>Error: configuration directory indicated, but no directory name.</em></td><td><code>-c</code> was given
+without a folder, or with a space after it.</td><td>Remove the space.</td></tr>
+<tr><td><code>bots-engine does not run: another bots-engine is running for this environment (port 28081 is in
+use).</code> (exit 3)</td><td>A run of this environment is still going, or another program uses that port, or
+two environments share the same <code>[settings] port</code>.</td><td>1. Wait for the run to end. 2. Give every
+environment its own port. 3. Use the job queue so runs wait instead of failing.</td></tr>
+<tr><td><em>In initilisation: path to configuration does not exists: "…"</em></td><td>The folder after
+<code>-c</code> (or in <code>BOTS_CONFIG_DIR</code>) does not exist or has no <code>settings.py</code>.</td><td>Check
+the path; it is the <code>config</code> folder, not the environment folder.</td></tr>
+<tr><td>The engine works on the wrong environment (an empty one in <code>~/.bots/env/default</code>)</td><td>No
+<code>-c</code> and no <code>BOTS_CONFIG_DIR</code>: the default environment of the user that runs the command is
+used (and created).</td><td>Always give <code>-c</code> in schedulers and services, or set
+<code>BOTS_CONFIG_DIR</code> for that user.</td></tr>
+<tr><td><em>There is no (active) route "orders_in".</em></td><td>The route name on the command line is misspelt
+or the route is not active.</td><td>Check the name in <span class="ui">Configuration</span> → <span
+class="ui">Routes</span> and tick <span class="ui">Active</span>.</td></tr>
+<tr><td><em>Error: bots jobqueue is not enabled in …/bots.ini</em></td><td><code>bots-job2queue</code>,
+<code>bots-jobqueueserver</code> or <code>bots-dirmonitor</code> was started, but the queue is off.</td><td>Set
+<code>[jobqueue] enabled = True</code> and restart the web server.</td></tr>
+<tr><td><em>Error: both editype and messagetype, or a file path, are required.</em></td><td><code>bots-grammarcheck</code>
+needs two names or a path.</td><td><code>bots-grammarcheck x12 850004010</code>.</td></tr>
+<tr><td><em>Warning: python library "fissix" is not installed: files with python 2 syntax are not converted.</em></td>
+<td>The <code>[port]</code> extra is missing.</td><td><code>pip install "bots-ediint[port]"</code>, then run
+again into an empty destination.</td></tr>
+</table></div>
+</section>
+
+<section id="scheduling" data-title="Scheduling runs" data-group="Run and maintain">
+<h2>Scheduling runs</h2>
+<p class="lead">The engine runs when something starts it. This page shows how to start it
+regularly with cron or the Windows Task Scheduler, how the job queue makes runs wait for each other, and how the
+directory monitor starts a route as soon as a file arrives.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>You decide when Bots looks for new files: every
+few minutes, every hour, or the moment a file lands in a folder. The operating system's scheduler starts
+Bots at those times. If runs could overlap, put them in the job queue: it lines them up and starts the next one
+when the previous one is done.</p></div>
+
+<h3 id="scheduling--how">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="A scheduler, the Run menu or the directory monitor sends a job to the job queue server, which starts bots-engine one job at a time">
+<defs><marker id="arrow-scheduling-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Something asks</text><text class="small" x="120" y="86" text-anchor="middle">cron, Task Scheduler, Run menu, dirmonitor</text>
+<path class="arrow" d="M234,70 L276,70" marker-end="url(#arrow-scheduling-1)"/>
+<rect class="box mid" x="280" y="30" width="200" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Job queue</text><text class="small" x="380" y="86" text-anchor="middle">priority 1 first, then oldest</text>
+<path class="arrow" d="M484,70 L526,70" marker-end="url(#arrow-scheduling-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. bots-engine</text><text class="small" x="640" y="86" text-anchor="middle">one run at a time</text>
+</svg></div>
+<ol>
+<li><b>Without the job queue</b> the scheduler starts <code>bots-engine</code> directly. When a run is still going,
+the new engine cannot get the lock port (<code>[settings] port</code>) and stops at once with exit code 3: that run
+is skipped, not delayed. The next scheduled run picks up the files.</li>
+<li><b>With the job queue</b> (<code>[jobqueue] enabled = True</code> and <code>bots-jobqueueserver</code> running),
+the scheduler starts <code>bots-job2queue bots-engine …</code>. The job queue server keeps a list of jobs and starts
+the next one when the previous one has ended. Priority 1 runs first, 9 last; with the same priority, the oldest
+job first. A job equal to one that is waiting is not added twice (only its priority is updated). The
+<span class="ui">Run</span> menu of the web interface also uses the queue, with priority 5.</li>
+<li><b>The directory monitor</b> (<code>bots-dirmonitor</code>) watches folders. When a file arrives it waits until
+no new events come for 2 seconds, then sends one job per route to the queue. It needs the job queue.</li>
+<li><b>The database lock.</b> Besides the port, each run sets a lock row in the database (table <code>mutex</code>).
+If a run ends abnormally, the next run finds the lock, logs <em>!Bots database is locked!</em>, mails it (when
+reports are on) and first does a crash recovery of the broken run.</li>
+</ol>
+
+<h3 id="scheduling--howto-cron">How to schedule with cron (Linux)</h3>
+<ol class="steps">
+<li><b>Log in as the user that runs Bots</b> and open its crontab: <code>crontab -e</code>.</li>
+<li><b>Add the lines</b> (full paths; cron has a short PATH):
+<pre><code class="language-bash"># every 5 minutes: new files
+*/5 * * * * /opt/bots4/bin/bots-engine --new -c/srv/bots/env/production/config &gt;/dev/null 2&gt;&amp;1
+# every hour at :30: retry failed sending
+30 * * * * /opt/bots4/bin/bots-engine --automaticretrycommunication -c/srv/bots/env/production/config &gt;/dev/null 2&gt;&amp;1
+# a route that is not in the default run, every day at 06:00
+0 6 * * * /opt/bots4/bin/bots-engine invoices_out -c/srv/bots/env/production/config &gt;/dev/null 2&gt;&amp;1
+</code></pre></li>
+<li><b>Save.</b> The output goes to the log files of Bots, so it is discarded here.</li>
+<li><b>Check</b> after a few minutes in <span class="ui">All runs</span> that runs appear.</li>
+</ol>
+<p>With the job queue, put <code>/opt/bots4/bin/bots-job2queue -p1</code> in front:
+<code>*/5 * * * * /opt/bots4/bin/bots-job2queue -p1 bots-engine --new -c/srv/bots/env/production/config</code>.</p>
+
+<h3 id="scheduling--howto-windows">How to schedule with the Windows Task Scheduler</h3>
+<ol class="steps">
+<li><b>Open</b> Task Scheduler → <span class="ui">Create Task</span>.</li>
+<li><b>General</b>: name <code>Bots production new</code>; choose the user that runs Bots; tick <span
+class="ui">Run whether user is logged on or not</span>.</li>
+<li><b>Triggers</b> → <span class="ui">New</span>: daily, <span class="ui">Repeat task every</span> 5 minutes for
+<span class="ui">Indefinitely</span>.</li>
+<li><b>Actions</b> → <span class="ui">New</span>: program <code>C:\bots4\Scripts\bots-engine.exe</code>, arguments
+<code>--new -cC:\bots\env\production\config</code>.</li>
+<li><b>Settings</b>: <span class="ui">If the task is already running</span>: <span class="ui">Do not start a new
+instance</span>.</li>
+<li><b>Save</b> and give the password. Check <span class="ui">All runs</span> after a few minutes.</li>
+</ol>
+<p>The same from a command prompt (as administrator):</p>
+<pre><code class="language-powershell">schtasks /Create /TN "Bots production new" /SC MINUTE /MO 5 /RU edisvc /RP * ^
+  /TR "C:\bots4\Scripts\bots-engine.exe --new -cC:\bots\env\production\config"
+</code></pre>
+
+<h3 id="scheduling--howto-queue">How to use the job queue</h3>
+<ol class="steps">
+<li><b>Switch it on</b> in <code>bots.ini</code>: <code>[jobqueue] enabled = True</code>. Restart the web
+server.</li>
+<li><b>Start the server</b>: <code>bots-jobqueueserver -c/srv/bots/env/production/config</code>. Expect in its log
+<em>Listening xmlrpc request on port: "28082".</em> and <em>bots-engine is run from: …</em>. In production run it as
+a service (see below).</li>
+<li><b>Send jobs</b> from the scheduler:
+<pre><code class="language-bash">bots-job2queue -p1 bots-engine --new -c/srv/bots/env/production/config
+bots-job2queue -p7 bots-engine --automaticretrycommunication -c/srv/bots/env/production/config
+</code></pre>
+Expect <em>OK, job added to queue.</em></li>
+<li><b>Check</b> <span class="ui">SysTasks</span> → <span class="ui">Logs</span> → <span class="ui">Jobqueue
+logs</span>: <em>Starting job 1: …</em> and <em>Finished job 1, elapsed time: …, exit code 0</em>.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Give the frequent "new" run priority 1 and slow,
+less urgent routes a higher number. When the machine is busy, the urgent runs go first.</p></div>
+
+<h3 id="scheduling--howto-dirmonitor">How to start a route when a file arrives</h3>
+<ol class="steps">
+<li><b>Set up and start the job queue</b> (above).</li>
+<li><b>Choose the folder.</b> Either tick <span class="ui">Dirmonitor</span> in the route (the folder and file name
+of its incoming file channel are watched), or add a section to <code>bots.ini</code>:
+<pre><code class="language-ini">[dirmonitor1]
+path = /srv/edi/in
+filemask = *.csv
+route = orders_in
+recursive = False
+</code></pre></li>
+<li><b>Start the monitor</b>: <code>bots-dirmonitor -c/srv/bots/env/production/config</code>. Its log shows
+<em>Watched path added for route "orders_in": /srv/edi/in/*.csv</em> and <em>Started.</em></li>
+<li><b>Drop a test file</b> in the folder. Expect <em>Sending job to queue: "bots-engine -c… orders_in".</em> in the
+monitor log, then the run in <span class="ui">All runs</span>.</li>
+<li><b>After a change</b> of the folders: <code>bots-dirmonitor -c… --reload</code>. Changing the path or file name
+of a monitored channel, or the Dirmonitor tick of a route, in the web interface reloads it by itself.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>The monitor sees local folders only. For files on
+an ftp or sftp server, schedule the route instead. Keep a scheduled run as well: a file that arrives while the
+monitor is stopped is only seen at its next start (with <code>process_existing = True</code>).</p></div>
+
+<h3 id="scheduling--howto-service">How to run the servers as services</h3>
+<p><code>bots-webserver</code>, <code>bots-jobqueueserver</code> and <code>bots-dirmonitor</code> keep running; start
+them when the machine starts. <code>bots-engine</code> is never a service: it is started per run.</p>
+<p><b>Linux (systemd)</b>, file <code>/etc/systemd/system/bots-jobqueue@.service</code>:</p>
+<pre><code class="language-ini">[Unit]
+Description=Bots job queue server (%i)
+After=network.target
+
+[Service]
+User=edi
+ExecStart=/opt/bots4/bin/bots-jobqueueserver -c/srv/bots/env/%i/config
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+<p>Then <code>systemctl enable --now bots-jobqueue@production</code>. Make the same for
+<code>bots-webserver</code> and <code>bots-dirmonitor</code> (with <code>After=bots-jobqueue@%i.service</code>). Stop
+with <code>systemctl stop</code>: the job queue lets the running job finish.</p>
+<p><b>Windows</b>: use a service wrapper (such as NSSM) or a Task Scheduler task with the trigger <span
+class="ui">At startup</span>, program <code>C:\bots4\Scripts\bots-jobqueueserver.exe</code>, arguments
+<code>-cC:\bots\env\production\config</code>, and in <span class="ui">Settings</span> no time limit.</p>
+
+<h3 id="scheduling--howto-several">How to run several environments</h3>
+<ol class="steps">
+<li><b>Give each environment its own ports</b> in its <code>bots.ini</code>: <code>[settings] port</code>,
+<code>[webserver] port</code>, <code>[jobqueue] port</code>.</li>
+<li><b>Schedule each environment</b> with its own <code>-c</code>. Runs of different environments may run at the
+same time.</li>
+<li><b>Start one job queue server and one directory monitor per environment</b>, each with its own
+<code>-c</code>.</li>
+</ol>
+
+<h3 id="scheduling--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[settings] port</code></td><td>Lock port of the engine: one run per environment.</td><td>28081</td><td>number</td></tr>
+<tr><td><code>[settings] maxruntime</code></td><td>Minutes before a queued job is reported (and with
+<code>killjobsintimeout</code> stopped).</td><td>60</td><td>minutes</td></tr>
+<tr><td><code>[jobqueue] enabled</code>, <code>port</code>, <code>authorized_tasks</code>,
+<code>killjobsintimeout</code>, <code>stopwait</code></td><td>Job queue; see <a href="#bots-ini--jobqueue">bots.ini
+[jobqueue]</a>.</td><td>False, 28082, –, False, 60</td><td>–</td></tr>
+<tr><td><code>[dirmonitor] process_existing</code>, <code>trigger_on_modify</code>; <code>[dirmonitorN]</code>
+<code>path</code>, <code>filemask</code>, <code>route</code>, <code>recursive</code></td><td>Directory monitor; see <a
+href="#bots-ini--dirmonitor">bots.ini [dirmonitor]</a>.</td><td>True, False; –, *, –, False</td><td>–</td></tr>
+<tr><td>Route field <span class="ui">Dirmonitor</span></td><td>Watch the folder of the incoming file channel of this
+route (with the channel's file name as mask, not recursive).</td><td>off</td><td>tick</td></tr>
+<tr><td>Route field <span class="ui">Not in default run</span></td><td>The route does not run in a normal run; run
+it by name.</td><td>off</td><td>tick</td></tr>
+<tr><td>Priority (<code>-p</code>)</td><td>Order in the queue.</td><td>5</td><td>1 (first) – 9</td></tr>
+</table></div>
+
+<h3 id="scheduling--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>Runs are missing; the scheduler shows result 3</td><td>The previous run was still going; the new engine
+stopped (exit code 3).</td><td>Use the job queue, or schedule less often, or find why runs take long (big files,
+slow servers: <code>maxsecondsperchannel</code>).</td></tr>
+<tr><td><em>Error, job not added to queue. Can not contact jobqueue-server !</em></td><td><code>bots-jobqueueserver</code>
+is not running, or uses another port (another <code>-c</code>).</td><td>Start the job queue server with the same
+<code>-c</code>; check <code>[jobqueue] port</code>.</td></tr>
+<tr><td><em>Error, invalid task !</em> / <em>Invalid task received: […]</em> in the job queue log</td><td>The job is
+not <code>bots-engine</code> and not in <code>authorized_tasks</code>, or a path to another bots-engine than the one
+of this installation.</td><td>Send <code>bots-engine</code> by name, or add the program to <code>[jobqueue]
+authorized_tasks</code> exactly as you send it.</td></tr>
+<tr><td><em>Duplicate, job already in queue, not added.</em></td><td>The same job is still waiting.</td><td>Nothing to
+do: one run will pick up all files.</td></tr>
+<tr><td><em>Job 12 exceeded maxruntime of 60 minutes</em></td><td>A run took longer than <code>maxruntime</code>.</td>
+<td>Raise <code>maxruntime</code>, or set <code>killjobsintimeout = True</code>, and look in the engine log for the
+step that hangs.</td></tr>
+<tr><td><em>More than 10 consecutive errors in the bots-jobqueueserver, shutting down now</em></td><td>Ten jobs in a
+row could not be started (program not found, no rights).</td><td>Read the <em>Error starting job</em> lines before
+it, fix the program path, restart the job queue server.</td></tr>
+<tr><td><em>No directory to monitor found.</em></td><td>No <code>[dirmonitorN]</code> section with a
+<code>path</code> and no active route with <span class="ui">Dirmonitor</span> ticked.</td><td>Add a section or tick
+the route; then <code>--reload</code>.</td></tr>
+<tr><td><em>Directory to watch for route "orders_in" does not exist: …</em></td><td>The folder is missing (Windows)
+or misspelt.</td><td>Create the folder or correct <code>path</code>; reload.</td></tr>
+<tr><td><em>Several routes to run for same watched path/filemask: "…" != "…"</em></td><td>Two sections or routes watch
+the same folder with the same mask.</td><td>Give them different masks or folders; only the first is used.</td></tr>
+<tr><td><em>Skip processing (not removed) files from file channel : …</em></td><td>At start the monitor does not run a
+route whose channel leaves files in place (they would be read again and again).</td><td>Tick <span
+class="ui">Remove</span> in the channel, or accept this.</td></tr>
+<tr><td><em>Dependency failure: bots directory monitoring requires python library "pyinotify" on linux.</em></td>
+<td>A Python environment without <code>pyinotify</code> (or without <code>pywin32</code> on Windows).</td><td>Install
+it in the environment of Bots: <code>pip install pyinotify</code> or <code>pip install pywin32</code>.</td></tr>
+<tr><td><em>Trying to run "bots-engine", but another instance of "bots-engine" is running. Please try again
+later.</em> (web interface)</td><td>A run is going and the job queue is off.</td><td>Wait, or switch the job queue
+on so the menu queues runs.</td></tr>
+</table></div>
+</section>
+
+<section id="acceptance-testing" data-title="Acceptance testing" data-group="Run and maintain">
+<h2>Acceptance testing</h2>
+<p class="lead">An acceptance test runs your routes on test files without touching your partners: files are read
+from and written to local folders, and the clock and the counters are frozen so every test run gives the same
+output. Use it to check a change before it goes to production, and to prove that existing flows still work.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>You give each channel a "practice folder".
+In test mode Bots reads from and writes to those folders instead of the real servers, and pretends it is always
+the same date and time. Then the output of today's test can be compared, byte for byte, with the output you
+know is right.</p></div>
+
+<h3 id="acceptance-testing--how">How it works</h3>
+<p>When <code>bots.ini [acceptance] runacceptancetest = True</code>, every run of the engine is a test run.
+Compared with a normal run:</p>
+<div class="table-wrap"><table>
+<tr><th>What</th><th>In a test run</th></tr>
+<tr><td>Channel with an <span class="ui">Acceptance test path</span> (testpath)</td><td>Its path becomes the
+testpath; <span class="ui">remove</span> is off (test files stay). ftp, ftps, ftpis, sftp, http(s), database,
+communicationscript and other types become a <code>file</code> channel; smtp, smtps, smtpstarttls, pop3, pop3s,
+pop3apop, imap4, imap4s become <code>mimefile</code>.</td></tr>
+<tr><td>Channel <b>without</b> testpath</td><td>Unchanged: it connects to the real server.</td></tr>
+<tr><td>Date and time</td><td>Frozen at 2013-01-23 01:23:45 for <code>transform.strftime()</code>,
+<code>botslib.strftime()</code>, <code>{datetime}</code> in outgoing file names, and the date of mails.</td></tr>
+<tr><td>Counters (<code>unique()</code>: interchange references, file name counters)</td><td>Start at 1 in every
+run; the counters in the database do not change.</td></tr>
+<tr><td>Mail</td><td>Fixed Message-ID and subject <code>12345678</code>.</td></tr>
+<tr><td>Deferred outgoing channels</td><td>Sent in the same run.</td></tr>
+<tr><td>Archive, cleanup, error mails</td><td>None.</td></tr>
+<tr><td>Report of the run</td><td>Marked as acceptance test (column in <span class="ui">All runs</span>).</td></tr>
+<tr><td>Script <code>usersys/routescripts/bots_acceptancetest.py</code></td><td>Its function <code>pretest</code>
+runs before the run, <code>posttest</code> after it (both optional).</td></tr>
+</table></div>
+<p><code>[settings] channels_use_testpath = True</code> <span class="badge green">new in 4.0</span> is the lighter
+variant for a test environment: channels use their testpath (a remote channel without testpath is <b>not</b>
+run), but the clock and the counters are real, and archive, cleanup and mails work as normal.</p>
+
+<h3 id="acceptance-testing--howto-setup">How to set up a test environment</h3>
+<ol class="steps">
+<li><b>Make a separate environment</b> (see <a href="#environments">Environments</a>): its own config, botssys,
+usersys and ports. Copy usersys and read a plugin of production, or use <code>bots-portenv --local-folders</code>
+for an environment that comes from Bots 3.</li>
+<li><b>Give every channel a testpath</b>: <span class="ui">Configuration</span> → <span class="ui">Channels</span> →
+open the channel → <span class="ui">Acceptance test path</span>, eg <code>botssys/infile/orders</code> for
+<code>partnera_sftp_in</code> and <code>botssys/outfile/invoices</code> for <code>partnera_sftp_out</code>.
+Relative paths are relative to the environment folder.</li>
+<li><b>Put test files</b> in the incoming test folders: one or more X12 850 files of PartnerA in
+<code>botssys/infile/orders/</code>.</li>
+<li><b>Put the expected results</b> in a folder of their own, eg <code>botssys/infile/outfile/</code>, made from a
+run you checked by hand.</li>
+<li><b>Switch the test mode on</b>: <code>[acceptance] runacceptancetest = True</code> in <code>bots.ini</code> of
+the test environment.</li>
+</ol>
+<div class="note stop"><span class="label">Stop</span><p>A channel without a testpath still connects to the real
+server in a test run, and sends real files. Give every remote channel a testpath before you switch the mode on,
+or use <code>channels_use_testpath</code>, which refuses such channels.</p></div>
+
+<h3 id="acceptance-testing--howto-run">How to run a test and compare the results</h3>
+<ol class="steps">
+<li><b>Write the check script</b> <code>usersys/routescripts/bots_acceptancetest.py</code>:
+<pre><code class="language-python">import filecmp
+import os
+import shutil
+
+from bots import botsglobal
+
+
+def _botssys(*parts):
+    return os.path.join(botsglobal.ini.get('directories', 'botssys'), *parts)
+
+
+def pretest(routestorun):
+    """before the run: empty the output folder"""
+    shutil.rmtree(_botssys('outfile'), ignore_errors=True)
+    os.makedirs(_botssys('outfile'))
+
+
+def posttest(routestorun):
+    """after the run: compare output with the expected files"""
+    result = filecmp.dircmp(_botssys('outfile'), _botssys('infile', 'outfile'))
+    print('different:', result.diff_files)
+    print('missing:', result.right_only)
+    print('unexpected:', result.left_only)
+</code></pre>
+Both functions may also be left out. They receive the routes given on the command line (an empty list for a
+normal run).</li>
+<li><b>Run the engine from a terminal</b>: <code>bots-engine -c/srv/bots/env/test/config</code>. The log says
+<em>This run is an acceptance test - as indicated in option "runacceptancetest" in bots.ini.</em></li>
+<li><b>Read the comparison</b> on the screen (the output of <code>posttest</code> is printed there, not in the web
+interface).</li>
+<li><b>Look at the run</b> in <span class="ui">All runs</span>, <span class="ui">Incoming</span> and <span
+class="ui">Outgoing</span> as usual.</li>
+<li><b>Remove the test runs</b>: <span class="ui">SysTasks</span> → <span class="ui">Configuration</span> → <span
+class="ui">Bulk delete</span>; tick only <span class="ui">Delete transactions in acceptance testing</span> and
+<b>untick</b> <span class="ui">Delete transactions</span>.</li>
+<li><b>Switch the mode off</b> (<code>runacceptancetest = False</code>) when the environment is used for normal work
+again.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>In <span class="ui">Bulk delete</span> both
+<span class="ui">Delete transactions in acceptance testing</span> and <span class="ui">Delete transactions</span> are
+ticked when the page opens. With both ticked, Bots deletes <b>all</b> runs and files, not only the test runs.</p></div>
+<div class="note tip"><span class="label">Tip</span><p>In mappings, use <code>transform.strftime()</code> instead of
+<code>time.strftime()</code> for dates; then the dates are frozen in test runs too, and the comparison stays
+exact. A communication script that does something special should check
+<code>botsglobal.ini.getboolean('acceptance', 'runacceptancetest', False)</code>.</p></div>
+
+<h3 id="acceptance-testing--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[acceptance] runacceptancetest</code></td><td>Every run is an isolated acceptance test (see the
+table above).</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>[settings] channels_use_testpath</code> <span class="badge green">new in 4.0</span></td><td>All
+channels use their testpath; remote channels without one are not run. Clock and counters are real.</td>
+<td>False</td><td>True / False</td></tr>
+<tr><td>Channel field <span class="ui">Acceptance test path</span></td><td>Folder used instead of the real
+location in test mode.</td><td>empty</td><td><code>botssys/infile/orders</code></td></tr>
+<tr><td><code>usersys/routescripts/bots_acceptancetest.py</code></td><td>Optional script with
+<code>pretest(routestorun)</code> and <code>posttest(routestorun)</code>.</td><td>none</td><td>see How to</td></tr>
+<tr><td><span class="ui">Bulk delete</span> → <span class="ui">Delete transactions in acceptance
+testing</span></td><td>Deletes the runs, reports, file traces and data files of test runs.</td><td>ticked</td><td>–</td></tr>
+<tr><td><code>bots-portenv --local-folders</code></td><td>Makes a test environment from Bots 3 with local folders and
+<code>channels_use_testpath = True</code>.</td><td>–</td><td>–</td></tr>
+</table></div>
+
+<h3 id="acceptance-testing--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><em>In acceptance test there is no script file "bots_acceptancetest.py" to check the results of the
+acceptance test.</em></td><td>Information only: there is no check script.</td><td>Add
+<code>usersys/routescripts/bots_acceptancetest.py</code> if you want automatic checks.</td></tr>
+<tr><td><em>Channel "partnera_sftp_out" (type sftp) is not run: bots.ini [settings] channels_use_testpath is set and
+the channel has no testpath.</em></td><td><code>channels_use_testpath</code> is on and this remote channel has no
+testpath.</td><td>Give the channel an <span class="ui">Acceptance test path</span>.</td></tr>
+<tr><td>A test run sent files to a partner</td><td>That channel had no testpath; with
+<code>runacceptancetest</code> it kept its real type.</td><td>1. Tell the partner. 2. Give every remote channel a
+testpath, or use <code>channels_use_testpath</code>.</td></tr>
+<tr><td>Output differs at every run (dates, numbers)</td><td>A mapping uses <code>time.strftime()</code> or
+<code>datetime.now()</code>, or a counter of its own.</td><td>Use <code>transform.strftime()</code> and
+<code>transform.unique()</code>.</td></tr>
+<tr><td>Test files disappear from the test folder</td><td>The run was not a test run (<code>runacceptancetest</code>
+is False, or another environment's <code>bots.ini</code> was used), so <span class="ui">remove</span> was
+active.</td><td>Check the first log lines: the "config path" and the acceptance test message.</td></tr>
+<tr><td>Nothing of <code>posttest</code> appears in the web interface</td><td>The script runs after the report is
+made; its output goes to the screen.</td><td>Run the engine from a terminal, or write the results to a file in the
+script.</td></tr>
+<tr><td>All runs are gone after <span class="ui">Bulk delete</span></td><td><span class="ui">Delete
+transactions</span> was ticked as well.</td><td>Restore the database from a backup if you need the history; next
+time untick it.</td></tr>
+</table></div>
+</section>
+
+<section id="logging" data-title="Logging" data-group="Run and maintain">
+<h2>Logging</h2>
+<p class="lead">Every program of Bots writes what it does to a log file: the engine per run, the web server, the job
+queue and the directory monitor per day. The log is where you look when the screens of the web interface do not
+explain a problem, or when a program does not start.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A log is a diary that Bots keeps while it works:
+one line per step, with the time and how important it is. Normally it notes only the main steps. When you hunt a
+problem, you turn the detail up, run again, read, and turn it down.</p></div>
+
+<h3 id="logging--how">How it works</h3>
+<ol>
+<li><b>Where.</b> All logs are under <code>botssys/logging/</code>, one folder per program:
+<div class="table-wrap"><table>
+<tr><th>Program</th><th>File(s)</th><th>New file</th></tr>
+<tr><td><code>bots-engine</code></td><td><code>engine/&lt;run number&gt;</code> (log_when = report) or
+<code>engine/engine.log</code>, <code>engine.log.2026-10-14</code> … (log_when = daily)</td><td>per run, or at
+midnight</td></tr>
+<tr><td><code>bots-webserver</code> (and the actions of the web interface, such as reading a plugin)</td><td><code>webserver/webserver.log</code></td><td>at midnight</td></tr>
+<tr><td><code>bots-jobqueueserver</code> (with the output of the jobs)</td><td><code>jobqueue/jobqueue.log</code></td><td>at midnight</td></tr>
+<tr><td><code>bots-dirmonitor</code></td><td><code>dirmonitor/dirmonitor.log</code></td><td>at midnight</td></tr>
+<tr><td><code>bots-grammarcheck</code>, <code>bots-xml2botsgrammar</code></td><td><code>grammarcheck/</code>,
+<code>xml2botsgrammar/</code></td><td>–</td></tr>
+<tr><td><code>bots-plugoutindex</code>, <code>bots-index2json</code></td><td><code>plugmanager/plugmanager.log</code></td><td>at midnight</td></tr>
+</table></div></li>
+<li><b>A line</b> reads: date and time, level, logger name, message. For example:
+<pre><code class="language-text">2026.10.15 08:00:01 INFO      [bots.engine] Connected to database.
+2026.10.15 08:00:01 START     [bots.engine] Running route: orders_in 1
+2026.10.15 08:00:02 START     [bots.engine] Start communication channel in: partnera_sftp_in (sftp)
+2026.10.15 08:00:04 DONE      [bots.engine] Finished communication channel in: partnera_sftp_in (sftp)
+</code></pre></li>
+<li><b>Levels</b>, from most to least detail: DEBUG (10), STDOUT (11), STDERR (12), INFO (20), COM (25), DONE (26),
+START (27), STARTINFO (28), WARNING (30), ERROR (40), CRITICAL (50). A handler writes the lines at its level and
+above. STDOUT and STDERR are output of jobs of the job queue; COM is debug output of communication.</li>
+<li><b>Three levels per program.</b> <code>log_file_level</code> filters the file, <code>log_console_level</code>
+the screen, and <code>log_level</code> the logger itself (a line below <code>log_level</code> goes nowhere). So to
+see DEBUG lines in the file, set both <code>log_level</code> and <code>log_file_level</code> to DEBUG.</li>
+<li><b>Engine log per run</b> (<code>log_when = report</code>, the default). During a run the engine writes
+<code>engine/engine.log</code>; at the end it renames it to the number of the run. The log starts with a block
+"[Bots Environment]" with the versions and paths in use. The cleanup removes it together with the report of the
+run.</li>
+<li><b>Errors of files</b> are in the database (shown in <span class="ui">Incoming</span>, <span
+class="ui">Outgoing</span>, <span class="ui">Process errors</span>), not as ERROR lines in the log. Their Python
+traceback is logged at level DEBUG. <span class="badge orange">changed in 4.0</span></li>
+</ol>
+
+<h3 id="logging--howto-read">How to read a log in the web interface</h3>
+<ol class="steps">
+<li><b>Open the log of a run</b>: <span class="ui">All runs</span> → the menu at the start of the row → <span
+class="ui">View log</span> (shown to staff users; also in <span class="ui">Incoming</span> and <span
+class="ui">Outgoing</span>). Or <span class="ui">SysTasks</span> → <span class="ui">Logs</span> → <span class="ui">Engine logs</span> (the 25 latest when
+logs are per run).</li>
+<li><b>Open a server log</b>: <span class="ui">SysTasks</span> → <span class="ui">Logs</span> → <span
+class="ui">Dirmonitor logs</span>, <span class="ui">Jobqueue logs</span> or <span class="ui">Webserver logs</span>
+(the last only when the CherryPy web server of Bots is used).</li>
+<li><b>Choose another file</b> in the list; <span class="ui">Download</span> saves the file shown.</li>
+<li><b>Read from the bottom up</b>: find the first ERROR or CRITICAL line, then read the lines just before it to
+see what Bots was doing.</li>
+</ol>
+
+<h3 id="logging--howto-debug">How to get more detail (debug mode)</h3>
+<ol class="steps">
+<li><b>Set in</b> <code>bots.ini [settings]</code>:
+<pre><code class="language-ini">log_level = DEBUG
+log_file_level = DEBUG
+debug = True
+readrecorddebug = True      ; every record read, with its fields
+</code></pre></li>
+<li><b>For a channel</b>, set its <span class="ui">Debug level</span> (eg 2 for ftp, 4 for http) instead of the
+global <code>ftpdebug</code>/<code>httpdebug</code>.</li>
+<li><b>Run only the route</b> you investigate: <code>bots-engine orders_in -c…</code>.</li>
+<li><b>Read the log of that run.</b> With <code>debug = True</code> the error texts in the web interface also
+show where in the code the error happened.</li>
+<li><b>Set everything back</b> to INFO and False: debug logs grow fast and may contain the content of business
+documents.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>In this version the lines of <code>mappingdebug</code>
+are written to the logger <code>engine.map</code>, which has no log file of its own; you may not find them in the
+engine log. To follow a mapping, use <code>inn.root.display()</code> / <code>out.root.display()</code> or
+<code>print()</code> in the mapping and run the engine in a terminal.</p></div>
+
+<h3 id="logging--howto-daily">How to switch to one log file per day</h3>
+<ol class="steps">
+<li><b>Set</b> <code>[settings] log_when = daily</code> and <code>log_file_number = 60</code> (days kept).</li>
+<li><b>Expect</b> <code>botssys/logging/engine/engine.log</code>, renamed with the date at midnight. The
+"[Bots Environment]" block is not written in this mode, and runs have no log link of their own.</li>
+</ol>
+
+<h3 id="logging--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>log_level</code> <span class="badge green">new in 4.0</span></td><td>Level of the logger (per
+section: <code>[settings]</code> = engine, <code>[webserver]</code>, <code>[jobqueue]</code>,
+<code>[dirmonitor]</code>). Missing: the lowest of the two handler levels.</td><td>INFO</td><td>DEBUG … CRITICAL,
+also START, STARTINFO</td></tr>
+<tr><td><code>log_file_level</code></td><td>Level of the log file.</td><td>INFO</td><td>as above</td></tr>
+<tr><td><code>log_console</code></td><td>Also log to the screen.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>log_console_level</code></td><td>Level of the screen log.</td><td>engine INFO; servers STARTINFO</td><td>as above</td></tr>
+<tr><td><code>log_when</code> <span class="badge green">new in 4.0</span> ([settings])</td><td>Engine log per run
+or per day.</td><td>report</td><td>report, daily</td></tr>
+<tr><td><code>log_file_number</code></td><td>Number of old daily files kept. In a server section it overrules the
+value of <code>[settings]</code> for that server.</td><td>30</td><td>number</td></tr>
+<tr><td><code>log_cherrypy_access</code> <span class="badge green">new in 4.0</span> ([webserver])</td><td>Log every
+request of the web server.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>debug</code> ([settings])</td><td>Tracebacks in error texts.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>readrecorddebug</code></td><td>Log the records and fields read (DEBUG).</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>mappingdebug</code></td><td>Log <code>get()</code>/<code>put()</code> of mappings (see the warning).</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>ftpdebug</code>, <code>smtpdebug</code>, <code>pop3debug</code>, <code>imap4debug</code>,
+<code>httpdebug</code></td><td>Communication debug levels; see <a href="#bots-ini--settings-log">bots.ini</a>.</td><td>0</td><td>–</td></tr>
+<tr><td>Channel field <span class="ui">Debug level</span></td><td>Debug level of one channel; overrules the global
+value.</td><td>empty</td><td>0 – 5</td></tr>
+</table></div>
+
+<h3 id="logging--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>No DEBUG lines in the log although <code>log_file_level = DEBUG</code></td><td><code>log_level</code> is
+INFO and filters them first.</td><td>Set <code>log_level = DEBUG</code> too.</td></tr>
+<tr><td><em>No such file.</em> in the log viewer</td><td>The log of that run was removed by the cleanup (old run,
+or a run that received nothing), or logs are daily.</td><td>Use the daily file, or raise <code>maxdays</code> /
+<code>hoursrunwithoutresultiskept</code>.</td></tr>
+<tr><td>A program does not start and there is no log</td><td>It stopped before logging was set up (wrong
+<code>-c</code>, error in <code>bots.ini</code> or <code>settings.py</code>).</td><td>Start it in a terminal; the
+error is printed there.</td></tr>
+<tr><td><code>bots-engine does not run: another bots-engine is running …</code> only on the screen</td><td>A second
+engine does not log (the log belongs to the running one).</td><td>Look at the exit code (3) in the scheduler; see <a
+href="#scheduling">Scheduling runs</a>.</td></tr>
+<tr><td>The log folder grows without end</td><td><code>log_when</code> has another value than report or daily, so
+<code>engine.log</code> is appended to for ever; or debug levels were left on.</td><td>Set <code>log_when</code> to
+report or daily, levels back to INFO.</td></tr>
+<tr><td><em>Error occured when reading log …</em> in the log viewer</td><td>The file is not UTF-8 or is locked.</td>
+<td>Download it, or open it on the server.</td></tr>
+<tr><td><code>PermissionError</code> on <code>botssys/logging/…</code> at start</td><td>The program runs as another
+user than the one that owns the folder (eg a service account and an admin).</td><td>Run all programs of an
+environment as one user, or give that user write rights on <code>botssys</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="maintenance" data-title="Maintenance" data-group="Run and maintain">
+<h2>Maintenance</h2>
+<p class="lead">Bots cleans up after itself: old runs, data files, archives and log files are removed after a set
+number of days. This page explains that cleanup, what you should back up, how to move Bots to another machine and
+how to upgrade to a newer version.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Every file Bots handles leaves copies and notes
+behind. Once a day Bots throws away what is older than the limits you set, so the disk and the database do not
+fill up. Your part is to make backups, and to follow a few steps when you move or upgrade.</p></div>
+
+<h3 id="maintenance--how">How the cleanup works</h3>
+<p><b>After every run</b> (not in acceptance tests):</p>
+<ol>
+<li>A "new" run that received nothing and had no process error has its step records (<code>ta</code>) deleted at
+once; its report is deleted when it is older than <code>hoursrunwithoutresultiskept</code> hours (runs of the last
+25 hours are checked), together with its engine log file.</li>
+</ol>
+<p><b>The full cleanup</b> runs at the end of the first run of the day (<code>whencleanup = daily</code>), or when
+the engine is started with <code>--cleanup</code> (also from <span class="ui">Run</span> → <span class="ui">Run
+cleanup</span> when <code>menu_cleanup</code> is on). In this order:</p>
+<ol>
+<li><b>Data files</b>: files in <code>botssys/data/</code> older than <code>maxdays</code>; empty folders there are
+removed.</li>
+<li><b>Archives</b>: in every channel with an <span class="ui">Archive path</span>, day folders and day zip files
+older than <code>maxdaysarchive</code> days (or the channel's <span class="ui">Max days archive</span>). Only
+entries named by date directly in the archive path are removed.</li>
+<li><b>Sessions</b>: expired logins of the web interface.</li>
+<li><b>Persist</b>: values saved by mappings older than <code>maxdayspersist</code> days.</li>
+<li><b>History</b>: reports, file reports and step records older than <code>maxdays</code> days (the most recent
+run older than that is kept), with the engine log files of those runs; in parts of 1000.</li>
+<li><b>SQLite</b>: <code>VACUUM</code> to give the space back.</li>
+<li><b>Your exit</b>: the function <code>postcleanup(whencleanup)</code> in
+<code>usersys/routescripts/botsengine.py</code>, if it exists.</li>
+</ol>
+<p>Errors in the cleanup are logged (<em>Cleanup error.</em>) and do not change the result of the run. The cleanup
+does not touch <code>botssys/infile</code>, <code>botssys/outfile</code>, <code>botssys/backup</code> and the folders
+of file channels. Daily log files are removed by the logging itself: it keeps <code>log_file_number</code> old
+files.</p>
+
+<h3 id="maintenance--howto-cleanup">How to run the cleanup by hand</h3>
+<ol class="steps">
+<li><b>From a terminal</b>: <code>bots-engine --cleanup -c/srv/bots/env/production/config</code>. Expect in the log
+<em>Cleanup files</em>, <em>Cleanup database</em>, <em>Done full cleanup.</em></li>
+<li><b>Or from the web interface</b>: set <code>[webserver] menu_cleanup = True</code>, restart the web server, then
+<span class="ui">Run</span> → <span class="ui">Run cleanup</span>.</li>
+<li><b>To clean only at night</b>: set <code>whencleanup = never</code> and schedule <code>bots-engine
+--cleanup</code> at 02:00.</li>
+</ol>
+
+<h3 id="maintenance--howto-backup">How to back up</h3>
+<div class="table-wrap"><table>
+<tr><th>What</th><th>Where</th><th>Why</th></tr>
+<tr><td>Configuration files</td><td><code>config/bots.ini</code>, <code>config/settings.py</code></td><td>Settings,
+database login, secret key.</td></tr>
+<tr><td>User scripts</td><td><code>usersys/</code></td><td>Grammars, mappings, scripts: your work.</td></tr>
+<tr><td>Database</td><td><code>botssys/sqlitedb/botsdb</code>, or a dump of the server database</td><td>Routes,
+channels, partners, users, counters, history. See <a href="#databases--howto-backup">Databases</a>.</td></tr>
+<tr><td>Data files</td><td><code>botssys/data/</code></td><td>Needed to view, resend or rereceive files of the last
+<code>maxdays</code> days.</td></tr>
+<tr><td>Archives</td><td>the <span class="ui">Archive path</span> of channels</td><td>Long-term copies of what was
+received and sent.</td></tr>
+<tr><td>Keys and certificates</td><td>files named in channels and in <code>[webserver]</code></td><td>Without them
+connections fail.</td></tr>
+<tr><td>Scheduler and service definitions</td><td>crontab, Task Scheduler, systemd units</td><td>To start Bots the
+same way after a restore.</td></tr>
+</table></div>
+<ol class="steps">
+<li><b>Stop the runs</b> (or wait for a moment without a run) when you copy an SQLite database.</li>
+<li><b>Copy</b> the items above to another machine or storage.</li>
+<li><b>Also make a backup plugin</b> before large changes: <span class="ui">SysTasks</span> → <span
+class="ui">Plugins</span> → <span class="ui">Make backup plugin</span>. It contains the configuration, the code
+lists, usersys and the character sets, and is written to
+<code>botssys/backup/backup_plugin_&lt;date and time&gt;.zip</code>. Bots makes one by itself before it reads a
+plugin and before a bulk delete of configuration, code lists or user scripts.</li>
+</ol>
+
+<h3 id="maintenance--howto-move">How to move Bots to another machine</h3>
+<ol class="steps">
+<li><b>Install</b> the same version of Bots with the same extras on the new machine (<a
+href="#install-windows">Windows</a>, <a href="#install-linux">Linux</a>).</li>
+<li><b>Stop</b> scheduler, job queue server, directory monitor and web server on the old machine.</li>
+<li><b>Copy the environment folder</b> (config, usersys, botssys) and, for a server database, make sure the new
+machine can reach it.</li>
+<li><b>Correct paths</b>: <code>[directories] botssys</code> and <code>usersys</code> in <code>bots.ini</code> when
+they are absolute; paths of file channels, archive paths, key and certificate files in channels.</li>
+<li><b>Check the database</b>: <code>bots-updatedb --check -c…</code>; expect <em>The database is up to date.</em></li>
+<li><b>Check usersys</b>: <code>bots-checkusersys -c…</code>; expect no errors.</li>
+<li><b>Test</b> without partners first: set <code>channels_use_testpath = True</code> and give remote channels a
+testpath, or switch off the routes; run once; then set it back.</li>
+<li><b>Set up</b> the scheduler and the services, and open the firewall for the web port.</li>
+</ol>
+
+<h3 id="maintenance--howto-upgrade">How to upgrade to a newer version of Bots</h3>
+<ol class="steps">
+<li><b>Read</b> <code>CHANGELOG.rst</code> of the new version.</li>
+<li><b>Stop</b> the scheduler and the servers; wait until no run is going.</li>
+<li><b>Back up</b> (see above).</li>
+<li><b>Upgrade</b> in the Python environment of Bots: <code>pip install --upgrade "bots-ediint[bots3]"</code> (with
+the extras you use).</li>
+<li><b>Update the database</b>: <code>bots-updatedb --check -c…</code>, then <code>bots-updatedb -c…</code>. Expect
+<em>The database is up to date.</em></li>
+<li><b>Compare</b> your <code>bots.ini</code> with <code>bots/install/bots.ini</code> of the new package for new
+settings (they have defaults, so this is optional).</li>
+<li><b>Check usersys</b>: <code>bots-checkusersys -c…</code>.</li>
+<li><b>Start</b> the web server (it copies the new static files), the job queue server and the directory monitor;
+start the scheduler; watch the first runs.</li>
+</ol>
+<p>For Bots 3 installations, follow <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</p>
+
+<h3 id="maintenance--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>maxdays</code></td><td>Days of history and data files.</td><td>30</td><td>days</td></tr>
+<tr><td><code>maxdaysarchive</code></td><td>Days of channel archives.</td><td>180</td><td>days</td></tr>
+<tr><td>Channel <span class="ui">Max days archive</span></td><td>Overrules <code>maxdaysarchive</code> for one
+channel.</td><td>empty</td><td>days</td></tr>
+<tr><td><code>maxdayspersist</code></td><td>Days of persist values.</td><td>30</td><td>days</td></tr>
+<tr><td><code>hoursrunwithoutresultiskept</code></td><td>Hours of empty "new" runs.</td><td>1 (program), 24 (installed
+file)</td><td>hours</td></tr>
+<tr><td><code>whencleanup</code></td><td>When the full cleanup runs.</td><td>daily</td><td>daily, always, never</td></tr>
+<tr><td><code>archivezip</code>, <code>archiveexternalname</code></td><td>Form of the archive.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>log_file_number</code></td><td>Days of daily logs.</td><td>30</td><td>number</td></tr>
+<tr><td><code>bots-engine --cleanup</code></td><td>Full cleanup now.</td><td>–</td><td>–</td></tr>
+<tr><td><span class="ui">SysTasks</span> → <span class="ui">Configuration</span> → <span class="ui">Bulk
+delete</span></td><td>Deletes by hand: transactions (all runs and files), acceptance-test transactions, files in
+<code>botssys/outfile</code> or <code>botssys/infile</code>, user code lists, user scripts, configuration.</td><td>–</td><td>–</td></tr>
+<tr><td><span class="ui">Make backup plugin</span></td><td>Configuration backup in <code>botssys/backup</code>.</td><td>–</td><td>–</td></tr>
+</table></div>
+<p>The number of runs kept depends on <code>maxdays</code> and <code>hoursrunwithoutresultiskept</code>.</p>
+
+<h3 id="maintenance--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>The database or <code>botssys/data</code> keeps growing</td><td>The cleanup does not run:
+<code>whencleanup = never</code> without a scheduled <code>--cleanup</code>, or the engine never runs on some days, or
+it runs in acceptance-test mode.</td><td>1. Run <code>bots-engine --cleanup</code>. 2. Check <code>whencleanup</code>.
+3. Look for <em>Cleanup error.</em> in the engine log.</td></tr>
+<tr><td><em>Cleanup could not remove file</em> / <em>Cleanup could not remove directory</em></td><td>A file is open
+(virus scanner, editor) or the user has no rights.</td><td>Close the program, fix the rights; the next cleanup tries
+again.</td></tr>
+<tr><td>Old archive folders are not removed</td><td>They are not named by date (<code>YYYYMMDD</code>) directly under
+the archive path (eg a communication script made another layout), or the channel has a large <span class="ui">Max
+days archive</span>.</td><td>Keep the archive layout of Bots, or clean that folder yourself.</td></tr>
+<tr><td><em>!Bots database is locked! … Bots will do an automatic crash recovery now.</em></td><td>The previous run
+ended abnormally.</td><td>Nothing; if it happens often, look for what kills the engine (time limits of the
+scheduler, out of memory, shutdowns).</td></tr>
+<tr><td><em>!Bots database is locked! Bots did an integrity check on the database, but database was not OK. Manual
+action is needed!</em></td><td>The SQLite file is damaged.</td><td>1. Stop everything. 2. Restore the last backup of
+<code>botssys/sqlitedb/botsdb</code>, or repair it with the <code>sqlite3</code> tool (<code>.recover</code>). 3. Run
+again.</td></tr>
+<tr><td><em>bots-engine is ready, but something is still running after 30 seconds; bots-engine ends now.</em></td>
+<td>A library or user script left a thread running.</td><td>The log shows the thread and where it was; fix the
+script (close connections), or raise <code>maxsecondsexit</code>.</td></tr>
+<tr><td>Resend of an old file fails: the file is not there</td><td>The data file was removed after
+<code>maxdays</code>.</td><td>Take the file from the archive, or raise <code>maxdays</code>.</td></tr>
+<tr><td>After an upgrade: <em>The database does not have the tables of bots-engine …</em> or errors about missing
+columns</td><td><code>bots-updatedb</code> was not run.</td><td>Run <code>bots-updatedb</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="security" data-title="Security" data-group="Run and maintain">
+<h2>Security</h2>
+<p class="lead">Bots handles business documents and holds the passwords of your partners' servers. This page
+lists what to protect and how: user accounts, HTTPS for the web interface, running behind a reverse proxy, file
+rights, the secrets in channels, and checking the identity of the servers Bots connects to.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Three things matter: only the right people
+can log in, nobody can listen in on the connections, and the files on the server (with passwords and orders in
+them) can only be read by Bots and its administrators.</p></div>
+
+<h3 id="security--how">How it works</h3>
+<ol>
+<li><b>Login.</b> Every page of the web interface except the login page needs a logged-in user. What a user may see
+and change depends on the rights of the user and its groups; some pages (plugins, bulk delete, test mail, users)
+are for superusers only; running the engine needs the right "change mutex". See <a href="#web-users">Users and
+rights</a>.</li>
+<li><b>Sessions</b> end after <code>SESSION_COOKIE_AGE</code> seconds without activity and, by default, when the
+browser closes.</li>
+<li><b>Protection in the pages</b>: forms carry a CSRF token; the pages may not be shown inside a frame of another
+site; values from files and the database are escaped; an incoming HTML file is shown in a sandbox without scripts;
+the log viewer only opens files in the log folder and the source viewer only <code>.py</code> files in usersys.</li>
+<li><b>Internal ports</b>: the engine lock port and the job queue listen on 127.0.0.1 only; the job queue only runs
+<code>bots-engine</code> and the programs in <code>authorized_tasks</code>.</li>
+<li><b>The web server</b> listens on all network addresses of the machine, on <code>[webserver] port</code>. Without
+<code>ssl_certificate</code>/<code>ssl_private_key</code> it uses plain HTTP: passwords cross the network
+readable.</li>
+<li><b>Secrets</b>: channel passwords are stored as plain text in the database (shown as <code>********</code> in
+lists). The database password and <code>SECRET_KEY</code> are in <code>settings.py</code>.</li>
+</ol>
+
+<h3 id="security--howto-users">How to secure the accounts</h3>
+<ol class="steps">
+<li><b>Change the password of the standard superuser</b> <code>bots</code> at the first login (Home → <span
+class="ui">Change password</span>), or create your own superuser <code>admin</code> and deactivate
+<code>bots</code>.</li>
+<li><b>Give each person an own account</b>: <code>operator</code> with rights to view and to run, <code>viewer</code>
+with view rights only. Make only administrators superuser.</li>
+<li><b>Keep the password rules</b> of <code>AUTH_PASSWORD_VALIDATORS</code> in <code>settings.py</code>.</li>
+<li><b>Deactivate</b> accounts of people who leave.</li>
+</ol>
+
+<h3 id="security--howto-https">How to switch on HTTPS</h3>
+<ol class="steps">
+<li><b>Get a certificate</b> for the name users type (eg <code>edi.example.com</code>), in PEM form: a certificate
+file (with the intermediate certificates after it) and a private key file. A self-signed certificate works but
+browsers warn.</li>
+<li><b>Store the files</b> where only the Bots account can read the key, eg <code>/srv/bots/certs/</code>.</li>
+<li><b>Set</b> in <code>bots.ini</code>:
+<pre><code class="language-ini">[webserver]
+port = 8443
+ssl_certificate = /srv/bots/certs/edi.example.com.pem
+ssl_private_key = /srv/bots/certs/edi.example.com.key
+</code></pre></li>
+<li><b>Set</b> in <code>settings.py</code>: <code>SESSION_COOKIE_SECURE = True</code>, <code>CSRF_COOKIE_SECURE =
+True</code>, <code>ALLOWED_HOSTS = ['edi.example.com']</code>.</li>
+<li><b>Restart</b> the web server. Its log says <em>using ssl (https).</em> Open
+<code>https://edi.example.com:8443</code>.</li>
+</ol>
+
+<h3 id="security--howto-proxy">How to run behind a reverse proxy</h3>
+<ol class="steps">
+<li><b>Keep Bots on HTTP</b> on its port, and let the proxy (nginx, Apache, IIS) handle HTTPS. Serve Bots at the
+root of a host name (<code>https://edi.example.com/</code>): its pages use <code>/bots/…</code>,
+<code>/admin/…</code> and <code>/static/…</code>.</li>
+<li><b>Block the Bots port</b> for other machines with the firewall: the Bots web server listens on all addresses
+of the machine.</li>
+<li><b>Configure the proxy</b>, eg nginx:
+<pre><code class="language-text">server {
+    listen 443 ssl;
+    server_name edi.example.com;
+    ssl_certificate     /etc/ssl/edi.example.com.pem;
+    ssl_certificate_key /etc/ssl/edi.example.com.key;
+    client_max_body_size 50m;              # plugins are uploaded
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+</code></pre></li>
+<li><b>Tell Django</b> in <code>settings.py</code>:
+<pre><code class="language-python">ALLOWED_HOSTS = ['edi.example.com']
+CSRF_TRUSTED_ORIGINS = ['https://edi.example.com']
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+</code></pre></li>
+<li><b>Restart</b> the web server and log in through the proxy.</li>
+</ol>
+
+<h3 id="security--howto-files">How to protect the files</h3>
+<ol class="steps">
+<li><b>Run all programs</b> of an environment under one dedicated account (eg <code>edi</code>), not as root or
+Administrator.</li>
+<li><b>Restrict the config folder</b> to that account and the administrators: <code>chmod 700
+/srv/bots/env/production/config</code> (Linux) or remove "Users" from its permissions (Windows).</li>
+<li><b>Restrict</b> <code>botssys</code> (business documents, the SQLite database, logs) and the key files the same
+way: <code>chmod 600 /srv/bots/keys/*</code>.</li>
+<li><b>Keep secrets out of files where you can</b>: in <code>settings.py</code>, read passwords from environment
+variables, eg <code>'PASSWORD': os.environ.get('BOTS_DB_PASSWORD', '')</code>, set for the service.</li>
+<li><b>Treat plugins and configuration indexes as secret</b>: they contain the channels with their passwords.</li>
+</ol>
+
+<h3 id="security--howto-sftp">How to check the host key of an SFTP server</h3>
+<p>By itself Bots accepts any host key of an SFTP server, as Bots 3 did. To check it, give the channel a
+communication script with a <code>hostkey</code> function.</p>
+<ol class="steps">
+<li><b>Get the key</b> of the server and check its fingerprint with the partner: <code>ssh-keyscan
+sftp.example.net &gt;&gt; /srv/bots/keys/known_hosts</code>.</li>
+<li><b>Write</b> <code>usersys/communicationscripts/partnera_sftp_out.py</code> (the name of the channel):
+<pre><code class="language-python">import paramiko
+
+
+def hostkey(channeldict):
+    """the key the server must have"""
+    keys = paramiko.hostkeys.HostKeys('/srv/bots/keys/known_hosts')
+    return keys.lookup(channeldict['host'])['ssh-ed25519']
+</code></pre></li>
+<li><b>Run</b> the route. A server with another key is refused with <code>Bad host key from server</code>.</li>
+</ol>
+<p>For login with a key instead of a password, set the channel field <span class="ui">Private key file</span>; the
+<span class="ui">password</span> field is then the passphrase of the key. RSA, ECDSA and Ed25519 keys work.</p>
+
+<h3 id="security--howto-tls">How to check certificates of TLS channels</h3>
+<ol class="steps">
+<li><b>Leave</b> <span class="ui">Verify server certificate</span> ticked (the default for new channels of type
+pop3s, imap4s, smtps, smtpstarttls, ftps, ftpis, https). <span class="badge green">new in 4.0</span></li>
+<li><b>For a server with a private CA or a self-signed certificate</b>, put the CA certificate (or the server
+certificate) in a PEM file and set <span class="ui">CA certificate file</span> to its path.</li>
+<li><b>For a client certificate</b>, set <span class="ui">Certificate chain file</span> and <span
+class="ui">Private key file</span>; this works together with a CA certificate file.</li>
+<li><b>Channels from a Bots 3 database</b> have the tick off (Bots 3 never checked); <code>bots-updatedb</code> lists
+them. Switch it on per channel when the server has a valid certificate.</li>
+</ol>
+
+<h3 id="security--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[webserver] ssl_certificate</code>, <code>ssl_private_key</code></td><td>HTTPS for the web
+interface.</td><td>not set (HTTP)</td><td>paths to PEM files</td></tr>
+<tr><td><code>[webserver] port</code></td><td>Port of the web interface (all addresses).</td><td>8080</td><td>number</td></tr>
+<tr><td><code>[webserver] menu_changepassword</code></td><td>Users can change their own password.</td><td>True</td><td>True / False</td></tr>
+<tr><td><code>[webserver] debug</code>, <code>DEBUG</code></td><td>Show internals on error pages; keep off.</td><td>False</td><td>–</td></tr>
+<tr><td><code>[jobqueue] authorized_tasks</code></td><td>Programs the job queue may run besides bots-engine.</td><td>none</td><td>paths</td></tr>
+<tr><td><code>SECRET_KEY</code></td><td>Signs sessions; secret and unique.</td><td>random per environment</td><td>–</td></tr>
+<tr><td><code>ALLOWED_HOSTS</code></td><td>Accepted host names.</td><td><code>['*']</code></td><td><code>['edi.example.com']</code></td></tr>
+<tr><td><code>SESSION_COOKIE_AGE</code>, <code>SESSION_EXPIRE_AT_BROWSER_CLOSE</code>,
+<code>SESSION_SAVE_EVERY_REQUEST</code></td><td>Session length.</td><td>3600, True, True</td><td>–</td></tr>
+<tr><td><code>SESSION_COOKIE_SECURE</code>, <code>CSRF_COOKIE_SECURE</code>, <code>CSRF_TRUSTED_ORIGINS</code>,
+<code>SECURE_PROXY_SSL_HEADER</code></td><td>HTTPS and proxy settings of Django.</td><td>not set</td><td>see How to</td></tr>
+<tr><td><code>AUTH_PASSWORD_VALIDATORS</code></td><td>Password rules.</td><td>4 rules</td><td>–</td></tr>
+<tr><td>Channel <span class="ui">Verify server certificate</span> <span class="badge green">new in 4.0</span></td>
+<td>Check the TLS certificate of the server.</td><td>ticked (new channels)</td><td>–</td></tr>
+<tr><td>Channel <span class="ui">CA certificate file</span> <span class="badge green">new in 4.0</span></td><td>PEM
+with the CA (or self-signed server) certificate.</td><td>system CAs</td><td>path</td></tr>
+<tr><td>Channel <span class="ui">Certificate chain file</span>, <span class="ui">Private key file</span></td><td>Client
+certificate (TLS) or SSH key (sftp).</td><td>empty</td><td>paths</td></tr>
+<tr><td>Communication script <code>hostkey(channeldict)</code></td><td>Host key an SFTP server must have.</td><td>none
+(any key)</td><td>see How to</td></tr>
+</table></div>
+
+<h3 id="security--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Forbidden (403)</code> "CSRF verification failed" when you save or log in through a proxy</td><td>Django
+sees another scheme or host than the browser sent (Origin check).</td><td>Set <code>CSRF_TRUSTED_ORIGINS</code> and
+<code>SECURE_PROXY_SSL_HEADER</code>, and pass <code>Host</code> and <code>X-Forwarded-Proto</code> in the proxy.</td></tr>
+<tr><td>Logged out right after logging in, on HTTPS-only sites</td><td>Cookie flags or names clash, or the browser
+blocks cookies of the address.</td><td>Use one host name; with <code>SESSION_COOKIE_SECURE = True</code> always use
+https.</td></tr>
+<tr><td>The browser shows <code>ERR_SSL_PROTOCOL_ERROR</code> / <code>ssl_error_rx_record_too_long</code></td><td>The
+browser speaks HTTPS to a web server that runs plain HTTP (or the reverse).</td><td>Check the log line <em>using ssl
+(https).</em> or <em>using plain http (no ssl).</em> and use the matching address.</td></tr>
+<tr><td>The web server does not start after setting HTTPS: <code>FileNotFoundError</code> or <code>[SSL]
+PEM lib</code></td><td>Path wrong, or key and certificate do not match, or the key has a passphrase.</td><td>Check the
+paths; use a key without passphrase readable by the Bots account.</td></tr>
+<tr><td><code>[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate</code> in a
+channel</td><td><span class="ui">Verify server certificate</span> is on and the server's certificate is not from
+a known CA.</td><td>Set <span class="ui">CA certificate file</span> to the CA or server certificate; untick the check
+only if you accept the risk.</td></tr>
+<tr><td><code>Bad host key from server</code> (sftp)</td><td>The key of the server differs from the one your
+<code>hostkey</code> script returns.</td><td>Ask the partner whether the key changed; update
+<code>known_hosts</code> only after checking the fingerprint.</td></tr>
+<tr><td><code>TypeError: 'NoneType' object is not subscriptable</code> in a <code>hostkey</code> script</td><td>The
+host is not in <code>known_hosts</code> (lookup returns None).</td><td>Add the key with <code>ssh-keyscan</code>; the
+name must be the <span class="ui">host</span> of the channel.</td></tr>
+<tr><td>Users can open <code>/bots/logfiler</code> or <code>/bots/srcfiler</code> although the menu does not show
+them</td><td>These viewers need only a login, not superuser rights.</td><td>Give accounts only to people who may
+read logs and scripts; do not put secrets in user scripts.</td></tr>
+</table></div>
+</section>

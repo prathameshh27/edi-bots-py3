@@ -1,0 +1,175 @@
+{
+ "errors": [
+  "KeyError: 'BOTSIDnr'"
+ ],
+ "files": [
+  [
+   "53.xml",
+   1
+  ],
+  [
+   "54.xml",
+   1
+  ],
+  [
+   "55.xml",
+   1
+  ],
+  [
+   "56.xml",
+   1
+  ],
+  [
+   "57.xml",
+   1
+  ],
+  [
+   "58.xml",
+   1
+  ],
+  [
+   "59.xml",
+   1
+  ],
+  [
+   "60.xml",
+   1
+  ],
+  [
+   "61.xml",
+   1
+  ],
+  [
+   "62.xml",
+   1
+  ],
+  [
+   "63.xml",
+   1
+  ],
+  [
+   "64.xml",
+   1
+  ],
+  [
+   "65.xml",
+   1
+  ],
+  [
+   "66.xml",
+   1
+  ],
+  [
+   "67.xml",
+   1
+  ],
+  [
+   "68.xml",
+   1
+  ],
+  [
+   "69.xml",
+   1
+  ],
+  [
+   "70.xml",
+   1
+  ],
+  [
+   "71.xml",
+   1
+  ],
+  [
+   "72.xml",
+   1
+  ],
+  [
+   "73.xml",
+   1
+  ],
+  [
+   "74.xml",
+   1
+  ],
+  [
+   "75.xml",
+   1
+  ],
+  [
+   "76.xml",
+   1
+  ],
+  [
+   "77.xml",
+   1
+  ],
+  [
+   "78.xml",
+   1
+  ],
+  [
+   "orders01.edi",
+   3
+  ],
+  [
+   "orders02.edi",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "edifactorder2xml/xml/1.xml": "c8fcb5401e241497f738ab5974a73812216a8a1fc7208322775a1021be5795db",
+  "edifactorder2xml/xml/10.xml": "af17b3fdc11426d1daf37e8dd54fad01e5bec6b8c6e828ea5b7e9003d7668c35",
+  "edifactorder2xml/xml/11.xml": "892c0754ab2d5c5961c0a386e44f68476807150b1890127ea531cf43e829e752",
+  "edifactorder2xml/xml/12.xml": "2f261bb07ed37d8a567399efab408171a4667deecea6a3f2baeacfcc1a9b128e",
+  "edifactorder2xml/xml/13.xml": "53aef1920d4600fdca9e3f5c99c3868aeca579c25fcbed8a1e8bfebad09809bc",
+  "edifactorder2xml/xml/14.xml": "dd14c07a80663b4854e17f573351056e501df66eaca1544ef583952a59b9a34d",
+  "edifactorder2xml/xml/15.xml": "8d532cb8540c4fdada3d1e9c225cc30a1b808bf02cd02f2a4723b1ee6216ed06",
+  "edifactorder2xml/xml/16.xml": "a33250f81e4be4114f824d208a1373b2d820d3f8ba6ee9f30a76872870b5f8e7",
+  "edifactorder2xml/xml/17.xml": "db0a551790e7a978a9fe1c99ba2650a3b0eec54d9b5e42afad1ea2485b3f573e",
+  "edifactorder2xml/xml/18.xml": "f4127bb03a582a30acf0e194d432d4a886775ad77801d4f1eed65d4264246ed7",
+  "edifactorder2xml/xml/19.xml": "c3ce5f5ecb5d61a5f7e7ec4c86581e865b7969ec21b76cb087398e819fccf376",
+  "edifactorder2xml/xml/2.xml": "138375520ee6b713af6098659798cca01fd996884cc2031cef5cf51d7a9b0047",
+  "edifactorder2xml/xml/20.xml": "a85baff4d1f6f56378258153ff9ca756e7fc811451b135af5778017586b6d851",
+  "edifactorder2xml/xml/21.xml": "ed8de75989456e784f79662ecdfb9a5435424822a0c166c5c93420b273f6f80b",
+  "edifactorder2xml/xml/22.xml": "d4ba2a11d0ff187e6788cef72e5c77e330465ff939b3d2ea0ab15cff68c4d452",
+  "edifactorder2xml/xml/23.xml": "ddbc02fe7b18e5e1036110407b97c41968456613b13f5476b255d67e469082ae",
+  "edifactorder2xml/xml/24.xml": "285c0ff93f9596920c86bc10371bdee25a62b9d1746d3833125d24fda9e14971",
+  "edifactorder2xml/xml/25.xml": "f96cb472c0310391380dfcae21a708a37479286c179bf9fd63d19013668bcc04",
+  "edifactorder2xml/xml/26.xml": "cd0035ab71b7ad7b8e9f58a5dc9761eedc704e86803e0d2b83e7fa88f67c8f10",
+  "edifactorder2xml/xml/3.xml": "123e54acb7a67e4e985a129ddb58a76bb09758176bc4bdceec0657951e3e95c9",
+  "edifactorder2xml/xml/4.xml": "2e21337d65aa3a2995ebef4672524621ab3c37edd5565acaf55b0fb432060875",
+  "edifactorder2xml/xml/5.xml": "87fdfd27f5fce363e3146faedd8dd72741a48976e7ab6b7c506d6b035c845ab6",
+  "edifactorder2xml/xml/6.xml": "411cb5cc308dc8f46716b82db506e439693c81b891416b7406fb0364cb1d86f4",
+  "edifactorder2xml/xml/7.xml": "05c4ca4711863db54f417b8559a6e5c3ad2afa49f46f52e9addee74f20cc7d63",
+  "edifactorder2xml/xml/8.xml": "2294accee4b6f47a1acc62f65d77cfaefe4ab91d5678f0f0377715aafd9580e3",
+  "edifactorder2xml/xml/9.xml": "13d0f8c55bfb8bc02e4babede60f9d3c33b1846e910bf20e89b7436b8e8f9dde"
+ },
+ "plugin": "demo_one-on-one_edifactorder2xml_20111209",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 52617,
+  "lastdone": 2,
+  "lasterror": 26,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 28,
+  "processerrors": 0,
+  "send": 26,
+  "status": true
+ },
+ "routes": [
+  [
+   "edifactorder2xml",
+   9999,
+   true,
+   false
+  ],
+  [
+   "xml2edifactorder",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

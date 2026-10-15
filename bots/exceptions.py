@@ -4,6 +4,7 @@ Bots Exception classes
 # pylint: disable=missing-class-docstring, broad-exception-caught
 
 import collections
+import sys
 import traceback
 
 from . import botsglobal
@@ -44,12 +45,25 @@ def txtexc(limit=0):
     Errortext should be valid unicode.
     """
     terug = safe_unicode(traceback.format_exc(limit=None))
-    botsglobal.logger.error(terug)
+    if botsglobal.logger is not None:
+        # logger is not set yet when an error occurs during start-up; never mask the original error.
+        # level debug: these are errors that are handled (reported for the file, in the database);
+        # the traceback is for who is looking for the cause.
+        botsglobal.logger.debug(terug)
     if limit is None or botsglobal.ini and botsglobal.ini.getboolean("settings", "debug", False):
+        # with the traceback (debug); the error lines as in bots 3: 'MessageError: ...', not
+        # 'bots.exceptions.MessageError: ...' (python 3 names the module of an exception in a traceback)
+        for module in ("bots.exceptions.", "bots.botslib."):
+            terug = terug.replace("\n" + module, "\n")
         return terug
-    terug = safe_unicode(traceback.format_exc(limit=limit))
-    terug = terug.replace("Traceback (most recent call last):\n", "")
-    terug = terug.replace("bots.botslib.", "")
+    # the error itself, as in bots 3: 'InMessageError: [S51] ...'. Not the errors that led to it
+    # ('The above exception was the direct cause of ...'): these are in the traceback, see debug.
+    exctype, exc = sys.exc_info()[:2]
+    if exctype is None:
+        return ""
+    terug = safe_unicode("".join(traceback.format_exception_only(exctype, exc)))
+    for module in ("bots.exceptions.", "bots.botslib."):
+        terug = terug.replace(module, "")
     return terug
 
 
@@ -86,9 +100,13 @@ class BotsError(Exception):
             # this is already unicode
             return self.exc % (self.xxx)
         except Exception:
-            print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX11")
             # errors in self.exc; non supported format codes. Don't think this happen...
             return self.exc
+
+    @property
+    def msg(self):
+        """bots 3.x name of the message attribute; kept for user scripts that read err.msg."""
+        return self.exc
 
 
 class BotsConfigError(BotsError):
@@ -196,6 +214,10 @@ class ParsePassthroughException(BotsError):
 
 class DummyException(BotsError):
     """sometimes it is simplest to raise an error, and catch it rightaway. Like a goto ;-)"""
+
+
+# bots 3.x name of DummyException; kept for user scripts.
+GotoException = DummyException
 
 
 class KillWholeFileException(BotsError):

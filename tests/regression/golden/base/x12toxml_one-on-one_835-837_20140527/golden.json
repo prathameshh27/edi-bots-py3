@@ -1,0 +1,65 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "835_01.x12",
+   3
+  ],
+  [
+   "837_01.x12",
+   3
+  ],
+  [
+   "837_02.x12",
+   3
+  ],
+  [
+   "x12_one2one_23.xmlnocheck",
+   3
+  ],
+  [
+   "x12_one2one_24.xmlnocheck",
+   3
+  ],
+  [
+   "x12_one2one_25.xmlnocheck",
+   3
+  ]
+ ],
+ "index_version": "3.2.0rc2",
+ "outfiles": {
+  "x12_2_xml/x12_one2one_1.xmlnocheck": "98e1774844c43fb759133138719bf1a3b589dba8df88a9056c5e76172f6dbdd8",
+  "x12_2_xml/x12_one2one_2.xmlnocheck": "02e0f344bd465586edc114ecf013d85fefcc360c7f35e32f336227e11efe280e",
+  "x12_2_xml/x12_one2one_3.xmlnocheck": "abf2036330b178f5846160ec52056adcee0e6ed6450b33b0fb6b39a9d8338109",
+  "xml_2_x12/835005010_1.x12": "6f309f61ff220a2c59aeedb296b1a55ccaaae772f0381acd95b6b03897a39022",
+  "xml_2_x12/837005010X222A1_3.x12": "cf9369b63c788aa516455ef258202c4e31f6dcc253c5a03606ba6b0faaff6204",
+  "xml_2_x12/837005010X222_2.x12": "bda041a2b205b9a429c43c778bfed054093045a2191af0442576050fd47c90d1"
+ },
+ "plugin": "x12toxml_one-on-one_835-837_20140527",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 51582,
+  "lastdone": 6,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 6,
+  "processerrors": 0,
+  "send": 6,
+  "status": false
+ },
+ "routes": [
+  [
+   "x12_2_xml",
+   1,
+   true,
+   false
+  ],
+  [
+   "xml_2_x12",
+   1,
+   true,
+   false
+  ]
+ ]
+}

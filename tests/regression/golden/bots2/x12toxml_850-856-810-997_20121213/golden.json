@@ -1,0 +1,163 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "850-004010-01.x12",
+   3
+  ],
+  [
+   "850-004010-02.x12",
+   3
+  ],
+  [
+   "850-004010-04.x12",
+   3
+  ],
+  [
+   "850-004010-05.x12",
+   3
+  ],
+  [
+   "850-004010-06.x12",
+   3
+  ],
+  [
+   "850-004010-07.x12",
+   3
+  ],
+  [
+   "850-004010-10.x12",
+   3
+  ],
+  [
+   "850-004010-11.x12",
+   3
+  ],
+  [
+   "850-004010-12.x12",
+   3
+  ],
+  [
+   "850-004010-18.x12",
+   3
+  ],
+  [
+   "850-004010.13.x12",
+   3
+  ],
+  [
+   "850-004010.14.x12",
+   3
+  ],
+  [
+   "850-004010.17.x12",
+   3
+  ],
+  [
+   "850-004010VICS-01.x12",
+   3
+  ],
+  [
+   "850-004010VICS-02.x12",
+   3
+  ],
+  [
+   "850-02.x12",
+   3
+  ],
+  [
+   "850_01.x12",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "x12_demo/inbound_850/850_1.xml": "8e07389f543810778afcc73266e77dae6076caa553d872f6908ef12e92f09700",
+  "x12_demo/inbound_850/850_10.xml": "6e42e059971872f338957388fc45d07bac6862c66feafee20c362974828b0c76",
+  "x12_demo/inbound_850/850_11.xml": "261515f6b0504bea90587c273ae52ad850a645b858c785e2b719fe35d0f5d157",
+  "x12_demo/inbound_850/850_12.xml": "9bd2a36b235e6df134af7f8235d2afeccfbe478fbff5d08030230935ac4a25b3",
+  "x12_demo/inbound_850/850_13.xml": "1fac35c97e346b1a31a5e04ec49a26cf33c8f593bf40a035af7767564217b8c9",
+  "x12_demo/inbound_850/850_14.xml": "1b22e846b48a391936c9cbed643bcad24d738abd0646a25b6916cd4c5e4c6cbc",
+  "x12_demo/inbound_850/850_15.xml": "a12f14039f3f7f6136f197a3b19f114c24c601180f53e46254d7fe76e469d03a",
+  "x12_demo/inbound_850/850_16.xml": "47c813c7ba039ade3aa2dc925ef0620aa6d15a4231dc6449417b23980c16ae2c",
+  "x12_demo/inbound_850/850_17.xml": "568a693bc6acd48554dc6aecd8c3b33cd1c9547b6b5fb2e47ed69d291f0c0974",
+  "x12_demo/inbound_850/850_18.xml": "c3c0d408b5c0a8e6f5326c4e38690e8b39a2d9c70acf78ff0dae9dd1110f88f0",
+  "x12_demo/inbound_850/850_19.xml": "b6346ccb101239f41b63e1bdc7048807a822f53ab08223029744e43f35a5c997",
+  "x12_demo/inbound_850/850_2.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_20.xml": "6eafbf850760a7a170ed86a0bf855339623b20c3a0409c0e6edfb860f4052343",
+  "x12_demo/inbound_850/850_21.xml": "047be507598fe0c2c38b3bdda3984ec1bf4361de0134d9365013c8dd2e9421aa",
+  "x12_demo/inbound_850/850_22.xml": "97d686f30976f42800974b5bda96899c7eeb3f79757e6f14f7b7b3c4f32809bb",
+  "x12_demo/inbound_850/850_23.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_24.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_25.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_26.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_27.xml": "76fc143d71bfba6a14b4f08fa9882180a963166de0ba2efda78f07bc359af7b4",
+  "x12_demo/inbound_850/850_28.xml": "8dcf44457602b0766f56e2e3ea1895402250f24fea9e12cdc557133025e044dd",
+  "x12_demo/inbound_850/850_29.xml": "c84b3a1b890daf1f2be2ddba22a205b655a901c307c42bc096b16247bf453ca7",
+  "x12_demo/inbound_850/850_3.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_30.xml": "1fdfb8b6980ff423d681cd9e6105bda982dbf6358bb8552d52d799999544c104",
+  "x12_demo/inbound_850/850_31.xml": "d7be7767771fa172cb66eec7ac904b59b10d9a8056ec01dc3aab1b16c09484e8",
+  "x12_demo/inbound_850/850_32.xml": "e7c20ea0b069b871d4ae920e606d08af62d8e2b649e4ddfe209e77116ea6a8de",
+  "x12_demo/inbound_850/850_33.xml": "cd801eeaf88fc271dd3a20e499d8203a037986dfd9b3836731fff7643bb28c08",
+  "x12_demo/inbound_850/850_34.xml": "4783a941df5071469402d7d48d6ea3e3aa18e5908aa6579c24e4014b73d3a858",
+  "x12_demo/inbound_850/850_35.xml": "2aaef015d78cb64aea1e7bb60813a7cef106a651c61f060116febcbc153dfb06",
+  "x12_demo/inbound_850/850_36.xml": "22b88851005230654a2d031121d80bdb887bcd93520a899bc4f53a62225c36e7",
+  "x12_demo/inbound_850/850_4.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_5.xml": "cafe229d43ebb831f42e936c3380a1f0528d8bcbe79c389b101958426afebfe9",
+  "x12_demo/inbound_850/850_6.xml": "4b45b287636fa81a816a3e49c9b58ce6abcd9f40fe19a4f66dde884892e863ce",
+  "x12_demo/inbound_850/850_7.xml": "6e42e059971872f338957388fc45d07bac6862c66feafee20c362974828b0c76",
+  "x12_demo/inbound_850/850_8.xml": "261515f6b0504bea90587c273ae52ad850a645b858c785e2b719fe35d0f5d157",
+  "x12_demo/inbound_850/850_9.xml": "ccc1ed16bb45f61383c90cd2851c1749b029209e7977c13ddc8458aae2278832"
+ },
+ "plugin": "x12toxml_850-856-810-997_20121213",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 68935,
+  "lastdone": 17,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 17,
+  "processerrors": 0,
+  "send": 36,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound",
+   1,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   100,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   1000,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   1010,
+   true,
+   false
+  ],
+  [
+   "outbound_asn",
+   1,
+   false,
+   false
+  ],
+  [
+   "outbound_invoice",
+   1,
+   false,
+   false
+  ]
+ ]
+}

@@ -482,7 +482,7 @@ class Node:
             terug = terug[-1] + terug[:-1]
         try:
             return decimal.Decimal(terug)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, decimal.InvalidOperation):
             return decimal.Decimal('0')
 
     def put(self, *mpaths, **kwargs) -> bool:
@@ -548,7 +548,7 @@ class Node:
                 raise MappingFormatError(_("Must be dicts in tuple: put(%(mpath)s)"), {"mpath": mpaths})
             if "BOTSID" not in part:
                 raise MappingFormatError(_('Section without "BOTSID": put(%(mpath)s)'), {"mpath": mpaths})
-            for key, value in part.iteritems():
+            for key, value in part.items():
                 if value is None:
                     botsglobal.logmap.debug('"None" in put %(mpaths)s.', {"mpaths": str(mpaths)})
                     return False
@@ -652,14 +652,15 @@ class Node:
           case 1 old: inn.sort({'BOTSID':'UNH'},{'BOTSID':'LIN','C212.7140':None})    -> sorts the LIN segments by article number.
           case 1 new: inn.sort(sortfrom=({'BOTSID':'UNH'},),compare=({'BOTSID':'LIN','C212.7140':None},))    -> sorts the LIN segments by article number.
           case 2 old: inn.sort({'BOTSID':'envelope'},{'BOTSID':'message'},{'BOTSID':'lines'},{'BOTSID':'line','gtin':None}) -> sorts lines by GTIN
-          case 2 new: inn.sort(sortfrom=({'BOTSID':'envelope'},{'BOTSID':'message'},{'BOTSID':'lines'}),compare=({'BOTSID':'line','gtin':None})) -> sorts lines by GTIN
-          case 3 new: inn.sort(sortfrom=({'BOTSID':'UNH'}),compare=({'BOTSID':'LIN'},{'BOTSID':'PIA','C186.6063':'SA','C186.6060':None}))    -> sorts the LIN segments according to supplier article number.
+          case 2 new: inn.sort(sortfrom=({'BOTSID':'envelope'},{'BOTSID':'message'},{'BOTSID':'lines'}),compare=({'BOTSID':'line','gtin':None},)) -> sorts lines by GTIN
+          case 3 new: inn.sort(sortfrom=({'BOTSID':'UNH'},),compare=({'BOTSID':'LIN'},{'BOTSID':'PIA','C186.6063':'SA','C186.6060':None}))    -> sorts the LIN segments according to supplier article number.
           version <= 3.2 only had mpaths as parameters; this had some limitations (eg no sorting on nested segments)
           extended this in order to be upward compatible. mpath was split in sortfrom node and compare key
           Case 3 can not be done with old parameter.
           also new functionality via **kwargs:
           - reverse - reverse sort as reverse in python's sort
-          - sort_if_none: value to use in sorting if if comparekey is not there (eg 'AAAAAAA' is sorted first...).
+          - sort_if_none: value to use in sorting if comparekey is not there.
+                          Default: nodes without the comparekey come first (as in bots 3.x).
           - sort_decimal: numerical sort
         """
         # pylint: disable=too-many-branches
@@ -669,7 +670,7 @@ class Node:
         comparekey = kwargs.get('compare', mpaths[-1:])
         reverse = kwargs.get('reverse', False)
         sort_decimal = kwargs.get('sort_decimal', False)
-        sort_if_none = kwargs.get('sort_if_none', 'AAAAAAAAAAA')
+        sort_if_none = kwargs.get('sort_if_none')
 
         if Node.checklevel:
             self._mpath_sanity_check(sortfrom)
@@ -712,11 +713,17 @@ class Node:
         try:
             for n in self.getloop(*sortfrom):
                 if sort_decimal:
-                    n.children.sort(
-                        key=lambda s: s.getdecimal(*comparekey) or sort_if_none, reverse=reverse)
+                    # getdecimal gives 0 if comparekey is not there or not numeric
+                    def sortkey(node, default=decimal.Decimal(sort_if_none or 0)):
+                        return node.getdecimal(*comparekey) if node.get(*comparekey) else default
                 else:
-                    n.children.sort(
-                        key=lambda s: s.get(*comparekey) or sort_if_none, reverse=reverse)
+                    def sortkey(node):
+                        value = node.get(*comparekey)
+                        if value:
+                            return (1, value)
+                        # no value: first (python 2 sorted None before any string), or as sort_if_none
+                        return (0, '') if sort_if_none is None else (1, sort_if_none)
+                n.children.sort(key=sortkey, reverse=reverse)
         finally:
             Node.checklevel = remember_checklevel
 

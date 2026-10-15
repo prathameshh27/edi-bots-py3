@@ -1,0 +1,1772 @@
+<section id="grammars" data-title="Grammars" data-group="Grammars and mappings">
+<h2>Grammars</h2>
+<p class="lead">A grammar is a small Python file that describes one kind of EDI file or message: which records it has, in which order, and which fields each record has. Bots needs a grammar to read an incoming file and to write an outgoing file. You need this page as soon as you translate anything.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A grammar is the "form layout" of a document. It tells Bots: "an order starts with a header line, then has one or more item lines; the header has an order number of at most 35 characters and a date". With that layout Bots can take a file apart into named pieces, check it, and put a new file together.</p></div>
+
+<h3 id="grammars--how">How it works</h3>
+<p>Bots never works on the raw text of an EDI file. It works on a <b>tree of records</b> (a <a href="#glossary">node tree</a>). The grammar is the bridge between the file and the tree:</p>
+
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="An incoming file is read with the grammar into a tree; the mapping makes a new tree; that tree is written with the outgoing grammar.">
+<defs><marker id="arrow-grammars-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="170" height="80" rx="10"/><text x="95" y="64" text-anchor="middle" font-weight="600">1. Read</text><text class="small" x="95" y="86" text-anchor="middle">file + incoming grammar</text>
+<path class="arrow" d="M184,70 L206,70" marker-end="url(#arrow-grammars-1)"/>
+<rect class="box mid" x="210" y="30" width="160" height="80" rx="10"/><text x="290" y="64" text-anchor="middle" font-weight="600">2. Check</text><text class="small" x="290" y="86" text-anchor="middle">records, fields, formats</text>
+<path class="arrow" d="M374,70 L396,70" marker-end="url(#arrow-grammars-1)"/>
+<rect class="box mid" x="400" y="30" width="160" height="80" rx="10"/><text x="480" y="64" text-anchor="middle" font-weight="600">3. Map</text><text class="small" x="480" y="86" text-anchor="middle">mapping script</text>
+<path class="arrow" d="M564,70 L586,70" marker-end="url(#arrow-grammars-1)"/>
+<rect class="box out" x="590" y="30" width="160" height="80" rx="10"/><text x="670" y="64" text-anchor="middle" font-weight="600">4. Write</text><text class="small" x="670" y="86" text-anchor="middle">outgoing grammar</text>
+</svg></div>
+
+<ol>
+<li><b>Read.</b> Bots reads the incoming file with the grammar of the incoming <a href="#glossary">editype</a> and message type. It cuts the file into records and fields (this is called lexing and parsing) and builds the tree.</li>
+<li><b>Check.</b> Bots checks the tree against the grammar: are mandatory records and fields there, do records occur not too often, do numbers and dates have the right format and length. Errors are reported for the file.</li>
+<li><b>Split.</b> If the grammar says how (<code>nextmessage</code>), the file is split into messages; each message goes to the mapping on its own.</li>
+<li><b>Map.</b> Your <a href="#mappings">mapping script</a> reads the incoming tree and fills an outgoing tree.</li>
+<li><b>Write.</b> Bots checks the outgoing tree against the grammar of the outgoing message type, puts the records in the order of that grammar, formats the fields and writes the file. An <a href="#envelopes">envelope</a> is added later, also with a grammar.</li>
+</ol>
+
+<h4>Where grammar files live</h4>
+<p>Grammars are Python files in the <code>usersys</code> folder of your <a href="#environments">environment</a>:</p>
+<pre><code class="language-text">usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py
+
+usersys/grammars/x12/850004010.py          editype x12, message type 850004010
+usersys/grammars/edifact/ORDERSD96AUNEAN008.py
+usersys/grammars/csv/orders_erp.py         editype csv, message type orders_erp
+usersys/partners/x12/PARTNERA.py           partner-specific syntax (only a syntax dict)</code></pre>
+<p>The folder name is the editype, the file name (without <code>.py</code>) is the message type. Every folder needs an <code>__init__.py</code> (an empty file); the folders for all editypes come with Bots. Bots 4.0 itself ships no message grammars: you get them from a <a href="#plugins">plugin</a> (the plugins on the Bots website contain grammars for many EDIFACT, X12 and other messages), from a colleague, or you write them.</p>
+<div class="note info"><span class="label">Note</span><p>A grammar may be in a sub-folder, for example <code>usersys/grammars/csv/erp/orders_erp.py</code>. Its message type is then <code>erp.orders_erp</code> (folder and name joined with a dot). Put an empty <code>__init__.py</code> in the sub-folder too. <span class="badge green">new in 4.0</span> the web interface lists grammars in sub-folders.</p></div>
+
+<h4>The parts of a grammar file</h4>
+<p>A grammar file is ordinary Python. Bots looks for these names in it:</p>
+<div class="table-wrap"><table>
+<tr><th>Name in the file</th><th>Type</th><th>What it is</th><th>Required</th></tr>
+<tr><td><code>syntax</code></td><td>dict</td><td>Settings for the file format: separators, character set, envelope, and many more. See <a href="#grammar-syntax">Grammar syntax options</a>.</td><td>No (defaults per editype apply)</td></tr>
+<tr><td><code>structure</code></td><td>list with one dict</td><td>The order and nesting of the records, how often each may occur. See <a href="#grammar-records">Records, fields and structure</a>.</td><td>Yes, unless the editype has no structure (<code>xmlnocheck</code>, <code>jsonnocheck</code>, <code>templatehtml</code>)</td></tr>
+<tr><td><code>recorddefs</code></td><td>dict</td><td>For every record: its fields, mandatory or not, length and format.</td><td>Yes, unless the editype has no structure</td></tr>
+<tr><td><code>nextmessage</code></td><td>tuple of dicts</td><td>Where a new message starts, so Bots can split a file into messages (mostly in envelope grammars).</td><td>No</td></tr>
+<tr><td><code>nextmessage2</code></td><td>tuple of dicts</td><td>A second split path; used by EDIFACT for messages inside a functional group (UNB-UNG-UNH). Only together with <code>nextmessage</code>.</td><td>No</td></tr>
+<tr><td><code>nextmessageblock</code></td><td>dict, tuple, list or function</td><td>For csv and fixed files with one record type: consecutive lines with the same value in this field form one message. Not together with <code>nextmessage</code>.</td><td>No</td></tr>
+<tr><td><code>getmessagetype</code></td><td>function</td><td><span class="badge gray">advanced</span> In an envelope grammar: called when the message type found by <code>SUBTRANSLATION</code> has no grammar; it can return another message type to use.</td><td>No</td></tr>
+<tr><td><code>mailbagsearch</code>, <code>extra_character_entity</code></td><td>list, dict</td><td>Only in <code>usersys/grammars/xml/mailbag.py</code>: how to recognise the message type of an XML file. See <a href="#editype-xml-json">XML and JSON</a>.</td><td>Only for that file</td></tr>
+</table></div>
+<p>Most grammars start with <code>from bots.botsconfig import *</code>. That line gives you the names <code>ID</code>, <code>MIN</code>, <code>MAX</code>, <code>LEVEL</code>, <code>QUERIES</code> and <code>SUBTRANSLATION</code> that you use in <code>structure</code>.</p>
+
+<h4>A complete small grammar</h4>
+<p>This csv grammar describes a file with order headers (<code>HEA</code>) and order lines (<code>LIN</code>), separated by commas:</p>
+<pre><code class="language-python"># usersys/grammars/csv/orders_erp.py
+from bots.botsconfig import *
+
+syntax = {
+    'field_sep': ',',
+    'quote_char': '"',
+    'forcequote': 0,
+    'charset': 'utf-8',
+}
+
+structure = [
+    {ID: 'HEA', MIN: 1, MAX: 9999, LEVEL: [
+        {ID: 'LIN', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'HEA': [
+        ['BOTSID', 'M', 3, 'A'],
+        ['ORDERNUMBER', 'M', 35, 'AN'],
+        ['ORDERDATE', 'M', 8, 'D'],
+        ['BUYER', 'C', 13, 'AN'],
+    ],
+    'LIN': [
+        ['BOTSID', 'M', 3, 'A'],
+        ['LINENUMBER', 'M', 6, 'N'],
+        ['ARTICLE', 'M', 14, 'AN'],
+        ['QUANTITY', 'M', 10, 'R'],
+    ],
+}</code></pre>
+<p>A matching file:</p>
+<pre><code class="language-text">"HEA","PO-1001","20260115","5412345000013"
+"LIN","1","8712345678906","12"
+"LIN","2","8712345678913","4.5"</code></pre>
+
+<h4 id="grammars--reuse">Using parts of other grammars (imports)</h4>
+<p>Many message types share records. For example all EDIFACT D96A messages use the same segment definitions. Instead of copying, put the shared part in one file and import it. In Bots 4.0 (Python 3) the import of a file next to the grammar is written with a dot:</p>
+<pre><code class="language-python"># usersys/grammars/edifact/ORDERSD96AUNEAN008.py
+from bots.botsconfig import *
+from .recordsD96AUN import recorddefs      # shared segment definitions
+from .edifactsyntax3 import syntax         # optional: shared syntax
+
+structure = [
+    {ID: 'UNH', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BGM', MIN: 1, MAX: 1},
+        {ID: 'DTM', MIN: 1, MAX: 35},
+        {ID: 'UNT', MIN: 1, MAX: 1},
+    ]},
+]</code></pre>
+<p>A file that only holds shared parts (like <code>recordsD96AUN.py</code>) is not a grammar on its own; it has no <code>structure</code>. Bots 3 grammars wrote <code>from recordsD96AUN import recorddefs</code> without the dot; that does not work in Python 3. The tool <code>bots-portusersys</code> converts such imports for you (see <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>).</p>
+<div class="note warn"><span class="label">Watch out</span><p>Bots changes <code>structure</code> and <code>recorddefs</code> in memory when it reads them (it adds internal keys). Two grammars that import the same <code>recorddefs</code> share that changed object. This is normal and works, but do not change the imported objects yourself in a grammar file.</p></div>
+
+<h4 id="grammars--find">How Bots finds the grammar</h4>
+<ol>
+<li><b>Incoming.</b> The editype and message type come from the route (fields <span class="ui">Fromeditype</span> / <span class="ui">Frommessagetype</span>) or, for EDIFACT, X12 and TRADACOMS, from the <a href="#preprocessing">mailbag</a> step, which sets message type <code>edifact</code>, <code>x12</code> or <code>tradacoms</code>. Bots imports <code>usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py</code>.</li>
+<li><b>Envelope grammar.</b> For EDIFACT, X12 and TRADACOMS the first grammar read is the <b>envelope grammar</b> (<code>edifact.py</code>, <code>x12.py</code>, <code>tradacoms.py</code>). It describes the envelope (UNB…UNZ, ISA…IEA, STX…END). One record in it has <code>SUBTRANSLATION</code>: there Bots reads the real message type from the file (for example <code>ORDERSD96AUNEAN008</code> from the UNH segment, or <code>850</code> plus the version <code>004010</code> from ST and GS) and continues with that grammar.</li>
+<li><b>Syntax is combined.</b> The syntax that is used is built in layers: the defaults of the editype, then the <code>syntax</code> of the envelope grammar (named in <code>syntax['envelope']</code>), then the <code>syntax</code> of the message grammar. Details: <a href="#grammar-syntax">Grammar syntax options</a>.</li>
+<li><b>Outgoing.</b> The translation (<span class="ui">Configuration</span> → <span class="ui">Translations</span>) or the mapping gives the outgoing editype and message type. Bots reads that grammar when it writes the file, and also looks for a <b>partner-specific syntax</b>: <code>usersys/partners/&lt;editype&gt;/&lt;frompartner&gt;.py</code> and then <code>usersys/partners/&lt;editype&gt;/&lt;topartner&gt;.py</code>. Values in these files overrule the grammar (the topartner file wins over the frompartner file). A partner file contains only a <code>syntax</code> dict. It is used for outgoing files and their envelopes, not for reading.</li>
+</ol>
+<pre><code class="language-python"># usersys/partners/x12/PARTNERA.py   -- only for files sent to (or from) PARTNERA
+syntax = {
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+    'field_sep': '|',
+    'merge': False,
+}</code></pre>
+<p>In the web interface, where a message type is shown (for example in <span class="ui">Configuration</span> → <span class="ui">Translations</span> and in the reports), it is a link with a Python icon: move the mouse over it or click it to see the source of the grammar.</p>
+
+<h3 id="grammars--howto-add">How to add a grammar</h3>
+<ol class="steps">
+<li><b>Choose the editype and a message type name.</b> For a csv file from your ERP system for example editype <code>csv</code>, message type <code>orders_erp</code>.</li>
+<li><b>Create the file</b> <code>usersys/grammars/csv/orders_erp.py</code> with a text editor. Save it as UTF-8.</li>
+<li><b>Write <code>syntax</code>, <code>structure</code> and <code>recorddefs</code></b> as in the example above.</li>
+<li><b>Check the grammar</b> with <code>bots-grammarcheck</code> (next task). Expected result: <code>OK - no error found in grammar</code>.</li>
+<li><b>Use it</b> in a route (incoming) or a translation (<span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>; the message type field offers the grammars it finds).</li>
+</ol>
+
+<h3 id="grammars--howto-check">How to check a grammar (bots-grammarcheck)</h3>
+<p><code>bots-grammarcheck</code> reads a grammar with exactly the checks Bots uses in a translation. It does not need a file to translate.</p>
+<ol class="steps">
+<li><b>Open a command prompt</b> (Windows) or a terminal (Linux) where Bots is installed (activate the virtual environment if you use one).</li>
+<li><b>Run the check</b> with the editype and message type, and the config folder of your environment with <code>-c</code>:
+<pre><code class="language-powershell">bots-grammarcheck -cC:\edi\config x12 850004010</code></pre>
+<pre><code class="language-bash">bots-grammarcheck -c/srv/edi/config x12 850004010</code></pre>
+You can also give the path of the grammar file instead of editype and message type; Bots then takes the editype from the folder name and the message type from the file name, but still reads the grammar from the usersys of the environment:
+<pre><code class="language-bash">bots-grammarcheck -c/srv/edi/config /srv/edi/usersys/grammars/x12/850004010.py</code></pre></li>
+<li><b>Read the result.</b> <code>OK - no error found in grammar</code> (exit code 0) or <code>Found error in grammar: </code> followed by the error (exit code 1).</li>
+</ol>
+<p>To check all grammars, mappings and scripts of an environment at once, use <code>bots-checkusersys -c&lt;config&gt;</code> (options <code>--processes=&lt;number&gt;</code> and <code>--json=&lt;file&gt;</code>). It compiles every Python file, reads every grammar with the checks of a translation and imports every script; exit code 1 if anything failed. <span class="badge green">new in 4.0</span></p>
+
+<h3 id="grammars--howto-xml">How to make an XML grammar from a sample file (bots-xml2botsgrammar)</h3>
+<p>Writing an XML grammar by hand is a lot of work. <code>bots-xml2botsgrammar</code> makes a first version from a sample XML file.</p>
+<ol class="steps">
+<li><b>Get a complete sample.</b> Use an XML file in which every element and attribute you will ever need is present (a "completely filled" file). Elements that are not in the sample are not in the grammar.</li>
+<li><b>Run the tool</b>:
+<pre><code class="language-bash">bots-xml2botsgrammar -c/srv/edi/config botssys/infile/orders/sample.xml usersys/grammars/xml/orders_partnera.py</code></pre>
+Add <code>-a</code> to make every XML element a record (by default an element without child elements becomes a field of its parent).</li>
+<li><b>Expect</b> the message <code>grammar file is written: …</code>. The new file has <code>structure</code> and <code>recorddefs</code>; every record has <code>MIN: 0, MAX: 99999</code>; every field is conditional (<code>'C'</code>), length 256, format <code>'AN'</code>; <code>BOTSID</code> and <code>BOTSCONTENT</code> are mandatory; attributes are fields named <code>element__attribute</code>.</li>
+<li><b>Edit the result.</b> Set real <code>MIN</code>/<code>MAX</code> values (the root record <code>MIN: 1, MAX: 1</code>), mark mandatory fields <code>'M'</code>, set lengths and formats, add a <code>syntax</code> dict if needed.</li>
+<li><b>Check</b> it with <code>bots-grammarcheck … xml orders_partnera</code>.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>The tool does not write namespaces into the grammar; an XML file with namespaces gives tags in the form <code>{uri}name</code>. See <a href="#editype-xml-json">XML and JSON</a> for namespaces.</p></div>
+
+<h3 id="grammars--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>usersys/grammars/&lt;editype&gt;/</code></td><td>Folder of the grammars of one editype.</td><td>folders for all editypes exist</td><td><code>csv</code>, <code>edifact</code>, <code>excel</code>, <code>fixed</code>, <code>idoc</code>, <code>json</code>, <code>jsonnocheck</code>, <code>templatehtml</code>, <code>tradacoms</code>, <code>xml</code>, <code>xmlnocheck</code>, <code>x12</code></td></tr>
+<tr><td><code>usersys/partners/&lt;editype&gt;/&lt;partnerid&gt;.py</code></td><td>Partner-specific syntax for outgoing files and envelopes. Only <code>syntax</code> is read.</td><td>none</td><td><code>usersys/partners/edifact/PARTNERB.py</code></td></tr>
+<tr><td><code>syntax</code></td><td>Format settings.</td><td><code>{}</code> (defaults of the editype)</td><td>see <a href="#grammar-syntax">Grammar syntax options</a></td></tr>
+<tr><td><code>structure</code></td><td>Record order and nesting.</td><td>none</td><td>see <a href="#grammar-records">Records, fields and structure</a></td></tr>
+<tr><td><code>recorddefs</code></td><td>Fields of each record.</td><td>none</td><td>see <a href="#grammar-records">Records, fields and structure</a></td></tr>
+<tr><td><code>nextmessage</code></td><td>Split path for messages.</td><td>none (no split)</td><td><code>({'BOTSID': 'ISA'}, {'BOTSID': 'GS'}, {'BOTSID': 'ST'})</code></td></tr>
+<tr><td><code>nextmessage2</code> <span class="badge gray">advanced</span></td><td>Second split path, used after <code>nextmessage</code>.</td><td>none</td><td><code>({'BOTSID': 'UNB'}, {'BOTSID': 'UNG'}, {'BOTSID': 'UNH'})</code></td></tr>
+<tr><td><code>nextmessageblock</code></td><td>Split csv/fixed by the value of a field.</td><td>none</td><td><code>({'BOTSID': 'LIN', 'ORDERNUMBER': None})</code></td></tr>
+<tr><td><code>getmessagetype(editype, messagetype)</code> <span class="badge gray">advanced</span></td><td>User exit in an envelope grammar: returns a message type to use when no grammar is found for the one in the file.</td><td>none</td><td>return <code>'ORDERSD96AUNEAN008'</code></td></tr>
+<tr><td><code>bots-grammarcheck -c&lt;config&gt; &lt;editype&gt; &lt;messagetype&gt;</code></td><td>Checks one grammar.</td><td><code>-c</code>: <code>config</code></td><td>exit code 0 = OK, 1 = error</td></tr>
+<tr><td><code>bots-checkusersys -c&lt;config&gt; [--processes=N] [--json=file]</code> <span class="badge green">new in 4.0</span></td><td>Checks all grammars and scripts of an environment.</td><td>1 process</td><td>exit code 0 = OK, 1 = errors</td></tr>
+<tr><td><code>bots-xml2botsgrammar -c&lt;config&gt; [-a] &lt;xml_file&gt; &lt;grammar_file&gt;</code></td><td>Makes an XML grammar from a sample file.</td><td>fields for leaf elements</td><td><code>-a</code>: all elements as records</td></tr>
+<tr><td><code>[settings] max_number_errors</code> in <code>bots.ini</code></td><td>Maximum number of errors reported for one file.</td><td><code>10</code></td><td>see <a href="#bots-ini">bots.ini</a></td></tr>
+<tr><td><code>[settings] readrecorddebug</code> in <code>bots.ini</code></td><td>Logs every record and field that is read (level DEBUG).</td><td><code>False</code></td><td><code>True</code> while developing a grammar</td></tr>
+</table></div>
+
+<h3 id="grammars--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>No import of module ".../usersys/grammars/csv/orders_erp": No module named ...</code></td><td>Bots cannot find the grammar file: wrong folder, wrong file name, wrong message type in the route or translation, or a missing <code>__init__.py</code> in a sub-folder.</td><td>Check that the file is <code>usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py</code> exactly (case matters on Linux). Check the message type in the route/translation. Run <code>bots-grammarcheck</code>.</td></tr>
+<tr><td><code>Error in import of module "...": ...</code></td><td>The grammar file has a Python error (syntax error, wrong import, a name that does not exist).</td><td>Run <code>bots-grammarcheck</code>; it shows the Python error and the line. For Bots 3 grammars: imports of a file next to it need a dot (<code>from .records import recorddefs</code>); run <code>bots-portusersys</code>.</td></tr>
+<tr><td><code>Grammar "...": no structure, is required.</code> / <code>no recorddefs, is required.</code></td><td>The file has no <code>structure</code> or <code>recorddefs</code>, or you gave the name of a file with only shared parts (like <code>recordsD96AUN</code>).</td><td>Add the missing part, or import it. Use the real message grammar as message type.</td></tr>
+<tr><td><code>Read grammar for editype "..." messagetype "...", but editype is unknown.</code></td><td>The editype has no grammar handling (for example <code>raw</code>, <code>db</code>, <code>mailbag</code>, a typo).</td><td>Use one of the editypes in the reference table above. <code>raw</code> and <code>db</code> need no grammar.</td></tr>
+<tr><td><code>Grammar "...": syntax is not a dict{}.</code></td><td><code>syntax</code> is written as something else, for example a list or a set (<code>{'charset', 'utf-8'}</code> with a comma instead of a colon).</td><td>Write <code>syntax = {'key': value, ...}</code>.</td></tr>
+<tr><td><code>Grammar "...": recorddefs has error that is already reported in this run.</code></td><td>Several grammars import the same <code>recorddefs</code>; the first one reported the real error.</td><td>Look for the first grammar error of the run (or run <code>bots-grammarcheck</code>), fix that one.</td></tr>
+<tr><td>A partner-specific syntax has no effect on incoming files.</td><td>Partner syntax files are only read for outgoing files and envelopes.</td><td>For incoming files put the setting in the grammar (or in the envelope grammar). Incoming separators of EDIFACT and X12 are taken from the file itself.</td></tr>
+<tr><td><code>Grammar "...", in structure: structure must have exactlty one root record.</code></td><td><code>structure</code> has two or more records at the top level, or is empty.</td><td>Put one record at the top (for csv often the header record) and the others in its <code>LEVEL</code>.</td></tr>
+<tr><td><code>Grammar "...": in this xml grammar merge is "True" but no (user) enveloping is specified. This will lead to invalid xml files</code></td><td>An XML grammar sets <code>merge: True</code> without an <code>envelope</code>.</td><td>Set <code>'merge': False</code>, or write an envelope script and set <code>'envelope'</code> to its name.</td></tr>
+</table></div>
+</section>
+
+<section id="grammar-syntax" data-title="Grammar syntax options" data-group="Grammars and mappings">
+<h2>Grammar syntax options</h2>
+<p class="lead">The <code>syntax</code> dict of a grammar holds the settings of the file format: separators, character set, envelope values, how to write XML or JSON, and more. This page lists every option Bots 4.0 reads, with its default for each editype. Look up an option here when you write a grammar or a partner-specific syntax.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>The structure of a grammar says <b>what</b> is in a file; the syntax says <b>how it is written down</b>: which character separates two fields, which ends a line, which alphabet is used. Every editype has sensible defaults, so a grammar only lists the settings that differ.</p></div>
+
+<h3 id="grammar-syntax--how">How it works</h3>
+<p>Bots builds the syntax that is used for a file from several layers. A later layer overrules an earlier one:</p>
+<ol>
+<li><b>Defaults of the editype</b> (the tables below; in the program: <code>defaultsyntax</code> of the editype class in <code>bots/grammar.py</code>).</li>
+<li><b>The envelope grammar</b>: the grammar named in <code>syntax['envelope']</code> (for example <code>usersys/grammars/x12/x12.py</code>), if that file exists. Its <code>syntax</code> is used for all messages of that editype.</li>
+<li><b>The message grammar</b>: the <code>syntax</code> of the grammar itself.</li>
+<li><b>Outgoing only: partner-specific syntax</b>: <code>usersys/partners/&lt;editype&gt;/&lt;frompartner&gt;.py</code>, then <code>usersys/partners/&lt;editype&gt;/&lt;topartner&gt;.py</code>.</li>
+<li><b>Values already in the transaction.</b> A value that is already set and not empty is not overwritten by the grammar. Outgoing: a value your mapping put in <code>out.ta_info</code> (for example <code>out.ta_info['charset'] = 'iso-8859-1'</code>) wins. Incoming: a character set that came with the file (for example from the mail header of an attachment) wins over the grammar.</li>
+<li><b>Incoming EDIFACT and X12</b>: separators, character set (EDIFACT) and version are read from the file itself (UNA/UNB, ISA). The grammar values are only a fallback.</li>
+</ol>
+<p>So a setting that is the same for all your X12 messages goes into the envelope grammar <code>x12.py</code>; a setting for one message type into that grammar; a setting for one partner into a partner file.</p>
+<div class="note info"><span class="label">Note</span><p>A mapping can change syntax for the message it writes by setting <code>out.ta_info[...]</code>. See <a href="#mappings">Mappings</a>. <span class="badge gray">advanced</span> Values in the dict <code>out.syntax</code> overrule everything for writing that message.</p></div>
+
+<h3 id="grammar-syntax--howto">How to change a syntax option</h3>
+<ol class="steps">
+<li><b>Find the option</b> in the tables below and decide on which layer it belongs (all messages of the editype, one message type, one partner).</li>
+<li><b>Open the file</b>: the envelope grammar (for example <code>usersys/grammars/edifact/edifact.py</code>), the message grammar, or create <code>usersys/partners/&lt;editype&gt;/&lt;partnerid&gt;.py</code>.</li>
+<li><b>Add the key</b> to the <code>syntax</code> dict, for example <code>'merge': False,</code>. Keys are case-sensitive and written exactly as in the tables.</li>
+<li><b>Check</b> the grammar with <code>bots-grammarcheck</code> (see <a href="#grammars--howto-check">Grammars</a>) and run a test file. Open the result in <span class="ui">Outgoing</span> and look at the file.</li>
+</ol>
+<pre><code class="language-python"># usersys/partners/edifact/PARTNERB.py -- outgoing EDIFACT for PartnerB
+syntax = {
+    'merge': False,            # one interchange per message
+    'forceUNA': True,          # always write UNA
+    'UNB.S002.0007': 'ZZ',     # qualifier of the sender in UNB
+    'UNB.S003.0007': 'ZZ',     # qualifier of the receiver in UNB
+}</code></pre>
+
+<h3 id="grammar-syntax--matrix">Separators and main defaults per editype</h3>
+<p>The most used defaults side by side. <code>''</code> means empty (not used). <code>'\r\n'</code> is carriage return + line feed. <code>excel</code> has the same defaults as <code>csv</code>; <code>xmlnocheck</code> as <code>xml</code> and <code>jsonnocheck</code> as <code>json</code>, except where noted.</p>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>csv / excel</th><th>fixed</th><th>idoc</th><th>edifact</th><th>x12</th><th>tradacoms</th><th>xml</th><th>json</th><th>templatehtml</th></tr>
+<tr><td><code>field_sep</code></td><td><code>':'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'+'</code></td><td><code>'*'</code></td><td><code>'+'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>sfield_sep</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>':'</code></td><td><code>'&gt;'</code></td><td><code>':'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>record_sep</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>"'"</code></td><td><code>'~'</code></td><td><code>"'"</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>record_tag_sep</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'='</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>reserve</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'*'</code></td><td><code>'^'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>escape</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'?'</code></td><td><code>''</code></td><td><code>'?'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>quote_char</code></td><td><code>"'"</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>skip_char</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>add_crlfafterrecord_sep</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>'\r\n'</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td></tr>
+<tr><td><code>charset</code></td><td><code>'utf-8'</code></td><td><code>'us-ascii'</code></td><td><code>'us-ascii'</code></td><td><code>'UNOA'</code></td><td><code>'us-ascii'</code></td><td><code>'us-ascii'</code></td><td><code>'utf-8'</code></td><td><code>'utf-8'</code></td><td><code>'utf-8'</code></td></tr>
+<tr><td><code>envelope</code></td><td><code>''</code></td><td><code>''</code></td><td><code>''</code></td><td><code>'edifact'</code></td><td><code>'x12'</code></td><td><code>'tradacoms'</code></td><td><code>''</code></td><td><code>'json'</code></td><td><code>'templatehtml'</code></td></tr>
+<tr><td><code>merge</code></td><td><code>True</code></td><td><code>True</code></td><td><code>False</code></td><td><code>True</code></td><td><code>True</code></td><td><code>False</code></td><td><code>False</code></td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>contenttype</code></td><td><code>'text/csv'</code></td><td><code>'text/plain'</code></td><td><code>'text/plain'</code></td><td><code>'application/EDIFACT'</code></td><td><code>'application/X12'</code></td><td><code>'application/text'</code></td><td><code>'text/xml'</code></td><td><code>'application/json'</code></td><td><code>'text/html'</code></td></tr>
+<tr><td><code>checkunknownentities</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code> (xmlnocheck <code>False</code>)</td><td><code>True</code> (jsonnocheck <code>False</code>)</td><td><code>True</code></td></tr>
+<tr><td><code>has_structure</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code></td><td><code>True</code> (xmlnocheck <code>False</code>)</td><td><code>True</code> (jsonnocheck <code>False</code>)</td><td><code>False</code></td></tr>
+</table></div>
+<p>The same for all editypes: <code>decimaal</code> <code>'.'</code>, <code>triad</code> <code>''</code>, <code>checkcharsetin</code> and <code>checkcharsetout</code> <code>'strict'</code>.</p>
+
+<h3 id="grammar-syntax--ref">Reference</h3>
+<p>In the column "Default per editype", editypes that are not named do not use the option (some have it as a placeholder without effect). "Not set" means the option is in no default list; Bots then uses the value given in brackets.</p>
+
+<h4 id="grammar-syntax--sep">Separators, quoting and escape</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>field_sep</code></td><td>Character between two fields (data elements). Reading: every character in this string ends a field.</td><td>csv/excel <code>':'</code>; edifact <code>'+'</code>; x12 <code>'*'</code>; tradacoms <code>'+'</code>; others <code>''</code></td><td><code>','</code>, <code>';'</code>, <code>'\t'</code> (tab), <code>'|'</code></td></tr>
+<tr><td><code>sfield_sep</code></td><td>Character between the parts of a composite field (sub-elements).</td><td>edifact <code>':'</code>; x12 <code>'&gt;'</code>; tradacoms <code>':'</code>; others <code>''</code></td><td>x12: <code>'&gt;'</code> or <code>':'</code></td></tr>
+<tr><td><code>record_sep</code></td><td>Character(s) that end a record (segment). Reading: each character of the string ends a record (so <code>'\r\n'</code> accepts CR, LF or both). Writing: written as it is after each record.</td><td>csv/excel, fixed, idoc <code>'\r\n'</code>; edifact <code>"'"</code>; x12 <code>'~'</code>; tradacoms <code>"'"</code>; xml, json, templatehtml <code>''</code></td><td><code>'\n'</code> for Linux line ends</td></tr>
+<tr><td><code>record_tag_sep</code></td><td>Character between the record tag and the first field (TRADACOMS: <code>MHD=</code>). When empty, <code>field_sep</code> is used.</td><td>tradacoms <code>'='</code>; others <code>''</code></td><td><code>'='</code></td></tr>
+<tr><td><code>reserve</code></td><td>Repetition separator: between repeats of a repeating field. EDIFACT: only for syntax version 4 and later; X12: only for ISA version <code>00403</code> and later (it is then ISA11).</td><td>edifact <code>'*'</code>; x12 <code>'^'</code>; others <code>''</code></td><td><code>'^'</code>, <code>'*'</code></td></tr>
+<tr><td><code>escape</code></td><td>Escape (release) character: the character after it is data, not a separator. Writing EDIFACT/TRADACOMS: separators in the data get this character in front. csv: the next character is data.</td><td>edifact <code>'?'</code>; tradacoms <code>'?'</code>; others <code>''</code></td><td><code>'?'</code>, <code>'\\'</code></td></tr>
+<tr><td><code>quote_char</code></td><td>csv: quote character around a field value. Two quote characters inside a quoted value are one quote character in the data.</td><td>csv/excel <code>"'"</code>; others <code>''</code></td><td><code>'"'</code>; <code>''</code> for no quoting</td></tr>
+<tr><td><code>forcequote</code></td><td>csv, writing (only when <code>quote_char</code> is set): when to put quotes around a value.</td><td>csv/excel <code>1</code>; others <code>0</code></td><td><code>0</code> only when needed (value has a field separator, quote or record separator); <code>1</code> always; <code>2</code> only fields with format <code>A</code>, <code>AN</code>, <code>AR</code></td></tr>
+<tr><td><code>skip_char</code></td><td>Reading: characters that are thrown away wherever they appear (outside quotes). For EDIFACT/X12 files that are cut into lines of 80 characters. X12: if the segment terminator is CR or LF it is removed from this string automatically.</td><td>edifact, x12, tradacoms <code>'\r\n'</code>; others <code>''</code></td><td><code>'\r\n'</code></td></tr>
+<tr><td><code>add_crlfafterrecord_sep</code></td><td>Writing: extra characters after each record separator, to have one segment per line.</td><td>edifact, x12, tradacoms <code>'\r\n'</code>; others <code>''</code></td><td><code>''</code> for one long line; <code>'\n'</code></td></tr>
+<tr><td><code>replacechar</code></td><td>X12, writing: X12 has no escape character. A separator in the data is replaced by this character. Empty: writing fails with error [F51].</td><td>x12 <code>''</code></td><td><code>' '</code>, <code>'-'</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--charset">Character set and checks</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>charset</code></td><td>Character set (encoding) to read and write the file. EDIFACT incoming: taken from UNB (S001.0001) of the file; outgoing: also written in UNB. You can use Python encoding names, the EDIFACT sets <code>UNOA</code>/<code>UNOB</code> (files in <code>usersys/charsets/</code>) and the aliases of <code>bots.ini</code> section <code>[charsets]</code> (<code>unoc</code> = latin_1, <code>unow</code> = utf_8, and more).</td><td>csv/excel, xml, json, templatehtml <code>'utf-8'</code>; fixed, idoc, x12, tradacoms <code>'us-ascii'</code>; edifact <code>'UNOA'</code></td><td><code>'utf-8'</code>, <code>'iso-8859-1'</code>, <code>'cp1252'</code>, <code>'UNOC'</code></td></tr>
+<tr><td><code>checkcharsetin</code></td><td>Reading: what to do with a byte that is not valid in the character set.</td><td>all <code>'strict'</code></td><td><code>'strict'</code> error; <code>'ignore'</code> drop the character; <code>'botsreplace'</code> replace it by <code>botsreplacechar</code> of <code>bots.ini</code> (default a space)</td></tr>
+<tr><td><code>checkcharsetout</code></td><td>Writing: what to do with a character that the character set cannot hold.</td><td>all <code>'strict'</code></td><td>as <code>checkcharsetin</code>; <code>'botsreplace'</code> keeps fixed records the same length</td></tr>
+<tr><td><code>checkunknownentities</code></td><td>Report records and fields that are not in the grammar (errors [S01], [S02], [F01]). When <code>False</code> they are dropped without an error.</td><td>all <code>True</code>; xmlnocheck, jsonnocheck <code>False</code></td><td><code>False</code> to accept extra XML elements</td></tr>
+<tr><td><code>strict_syntax_check</code> <span class="badge green">new in 4.0</span></td><td>Reading csv, edifact, x12, tradacoms: no white space between records (error [A67]) and no double record separator (error [A69]). X12: a letter or digit as repetition separator in ISA11 is an error instead of being ignored.</td><td>csv/excel, edifact, x12, tradacoms <code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>allow_spaces_between_records</code> <span class="badge gray">advanced</span></td><td>Older name: <code>False</code> means <code>strict_syntax_check: True</code>.</td><td>not set</td><td><code>False</code></td></tr>
+<tr><td><code>strip_value</code> <span class="badge green">new in 4.0</span></td><td>Reading csv, edifact, x12, tradacoms: remove spaces at the start and end of every field value (as Bots 3 always did). The ISA segment of X12 is never stripped. Number fields ignore surrounding spaces also when this is <code>False</code>.</td><td>csv/excel, edifact, x12, tradacoms <code>True</code></td><td><code>False</code> to keep spaces in text fields</td></tr>
+<tr><td><code>allow_lastrecordnotclosedproperly</code></td><td>Reading csv (and the other separated formats): accept a file whose last record has no record separator. Other checks on the last record are then not done.</td><td>csv/excel <code>False</code>; others not set (<code>False</code>)</td><td><code>True</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--numbers">Numbers</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>decimaal</code></td><td>Decimal sign in the file. Reading: replaced by <code>.</code>; writing: <code>.</code> is replaced by it. EDIFACT incoming: taken from UNA if present.</td><td>all <code>'.'</code></td><td><code>','</code></td></tr>
+<tr><td><code>triad</code></td><td>Reading: thousands separator; it is removed from numbers.</td><td>all <code>''</code></td><td><code>','</code> (with <code>decimaal</code> <code>'.'</code>), <code>'.'</code> (with <code>decimaal</code> <code>','</code>)</td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--envelope">Envelope, merging and splitting</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>envelope</code></td><td>Name of the envelope. Reading: the grammar <code>usersys/grammars/&lt;editype&gt;/&lt;envelope&gt;.py</code> is read for its syntax (if it exists). Writing: the envelope put around the messages; an envelope script <code>usersys/envelopescripts/&lt;editype&gt;/&lt;envelope&gt;.py</code> is used if it exists. Empty: no envelope. csv: <code>'csvheader'</code> writes a first line with the field names. See <a href="#envelopes">Envelopes</a>.</td><td>edifact <code>'edifact'</code>; x12 <code>'x12'</code>; tradacoms <code>'tradacoms'</code>; json, jsonnocheck <code>'json'</code>; templatehtml <code>'templatehtml'</code>; others <code>''</code></td><td><code>''</code>, <code>'csvheader'</code>, <code>'myenvelope'</code></td></tr>
+<tr><td><code>merge</code></td><td>Writing: put the messages of one route run for the same partners (and the same editype, message type, envelope, test indicator, charset) in one file / interchange. <code>False</code>: one file per message.</td><td>csv/excel, fixed, edifact, x12, templatehtml <code>True</code>; idoc, xml, xmlnocheck, json, jsonnocheck, tradacoms <code>False</code></td><td><code>False</code></td></tr>
+<tr><td><code>pass_all</code></td><td>Reading csv without <code>nextmessage</code>/<code>nextmessageblock</code>: <code>True</code> passes the whole file as one message to the mapping; <code>False</code> passes each top-level record (with its sub-records) as a message.</td><td>csv/excel <code>True</code>; others not set (<code>False</code>)</td><td><code>False</code></td></tr>
+<tr><td><code>KillWholeFile</code> <span class="badge gray">advanced</span></td><td>Reading: when the mapping (or writing) of one message fails, the whole incoming file is in error and no output of any of its messages is kept. Default: the other messages are translated.</td><td>not set (<code>False</code>)</td><td><code>True</code></td></tr>
+<tr><td><code>no_results_if_any_error_in_translation_edifile</code> <span class="badge gray">advanced</span></td><td>Older name of <code>KillWholeFile</code>.</td><td>not set</td><td><code>True</code></td></tr>
+<tr><td><code>contenttype</code></td><td>MIME content type of the outgoing file, used when it is sent by mail or http.</td><td>see the table above</td><td><code>'application/edi-x12'</code></td></tr>
+<tr><td><code>IDmode</code> <span class="badge green">new in 4.0</span> <span class="badge gray">advanced</span></td><td>Enveloping X12/EDIFACT: how the partner ID is split into the IDs of the envelope. Not set: the partner ID is used for ISA/UNB and GS. <code>'ISA_qualifier_GS'</code>: partner ID is <code>ISA-ID|qualifier|GS-ID</code>; <code>'ISA_qualifier'</code> or <code>'UNB_qualifier'</code>: <code>ID|qualifier</code>.</td><td>not set</td><td><code>'ISA_qualifier_GS'</code> with partner ID <code>MYCOMPANY|ZZ|MYCOMPANY</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--write">Writing</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>wrap_length</code></td><td>Writing csv, fixed, edifact, x12, tradacoms: cut the written message into lines of this many characters, each followed by CR LF (mainframe style). The envelope segments (UNB, ISA, …) are written by the envelope and are not wrapped. <code>0</code>: no wrapping.</td><td>csv/excel <code>0</code>; others not set (<code>0</code>)</td><td><code>80</code></td></tr>
+<tr><td><code>indented</code></td><td>xml, json: write readable, indented output. <code>False</code>: one long line. xml: a text value is used as the indent.</td><td>xml, xmlnocheck, json, jsonnocheck <code>False</code></td><td><code>True</code>; xml <code>'    '</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--exits">User exits in the syntax <span class="badge gray">advanced</span></h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>preprocess_lex</code></td><td>A Python function that Bots calls after it has cut the file into records, before it builds the tree, as <code>function(lex=..., ta_info=...)</code>. <code>lex</code> is the list of records; each record is a list of field dicts (key <code>0</code> = value, <code>1</code> = 0 field / 1 sub-field / 2 repeat, <code>2</code> = line, <code>3</code> = position). Used for csv, fixed, idoc, edifact, x12, tradacoms (not for excel, xml, json).</td><td>all <code>False</code></td><td><code>'preprocess_lex': fix_records</code> (a function defined above <code>syntax</code> in the grammar file)</td></tr>
+<tr><td><code>preprocess_nodes</code></td><td>A Python function called before the file is split into messages, as <code>function(thisnode=...)</code>; <code>thisnode</code> is the incoming message object (its tree is <code>thisnode.root</code>).</td><td>all <code>False</code></td><td><code>'preprocess_nodes': add_defaults</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--internal">Internal options (do not change)</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>has_structure</code></td><td>The grammar has <code>structure</code> and <code>recorddefs</code> and messages are checked. templatehtml: set <code>True</code> to give the template the checked tree (see <a href="#editype-other">Other formats</a>).</td><td><code>True</code>; xmlnocheck, jsonnocheck, templatehtml <code>False</code></td><td>-</td></tr>
+<tr><td><code>checkcollision</code></td><td>Check the structure for ambiguous record orders (back and nesting collisions).</td><td>csv, fixed, idoc, edifact, x12, tradacoms <code>True</code>; xml, json, templatehtml <code>False</code></td><td>-</td></tr>
+<tr><td><code>lengthnumericbare</code></td><td>Sign and decimal sign do not count in the length of a number.</td><td>edifact, x12, tradacoms <code>True</code>; others <code>False</code></td><td>-</td></tr>
+<tr><td><code>stripfield_sep</code></td><td>Writing: empty fields at the end of a record (and empty sub-fields at the end of a composite) are left out.</td><td>edifact, x12, tradacoms <code>True</code>; others <code>False</code></td><td>-</td></tr>
+<tr><td><code>startrecordID</code>, <code>endrecordID</code></td><td>fixed: position of <code>BOTSID</code> in a line; calculated from the grammar.</td><td>calculated</td><td>-</td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--csv">csv and excel</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>noBOTSID</code></td><td>The records in the file have no record ID. <code>True</code>: Bots adds the ID of the top record of the structure. A number <code>n</code>: the field at position <code>n</code> (0 is the first) is the record ID; it is moved to the front. Writing (<code>True</code> or a number): the record ID is not written. Only one record type is allowed in the grammar.</td><td>csv/excel <code>False</code></td><td><code>True</code>, <code>2</code></td></tr>
+<tr><td><code>skip_firstline</code></td><td>Reading: skip lines at the start (often a line with column names). <code>True</code>: one line; a number: that many lines.</td><td>csv/excel <code>False</code></td><td><code>True</code>, <code>3</code></td></tr>
+<tr><td><code>pass_all</code>, <code>quote_char</code>, <code>forcequote</code>, <code>escape</code>, <code>wrap_length</code>, <code>allow_lastrecordnotclosedproperly</code></td><td>See the tables above.</td><td>-</td><td>-</td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--fixed">fixed and idoc</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>checkfixedrecordtoolong</code></td><td>Reading: a line longer than its record definition is an error ([S53]).</td><td>fixed <code>True</code>; idoc <code>False</code></td><td><code>False</code></td></tr>
+<tr><td><code>checkfixedrecordtooshort</code></td><td>Reading: a line shorter than its record definition is an error ([S52]).</td><td>fixed <code>False</code>; idoc <code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>noBOTSID</code></td><td>The lines have no record ID; Bots uses the ID of the top record of the structure. Only one record type is allowed.</td><td>fixed, idoc <code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>MANDT</code></td><td>idoc, writing: value written in field <code>MANDT</code> of every record (SAP client).</td><td>idoc <code>'0'</code></td><td><code>'100'</code></td></tr>
+<tr><td><code>DOCNUM</code></td><td>idoc, writing: value written in field <code>DOCNUM</code> of every record.</td><td>idoc <code>'0'</code></td><td><code>'0000000000123456'</code></td></tr>
+<tr><td><code>automaticcount</code></td><td>idoc, writing: Bots fills <code>SEGNUM</code> (record number), <code>PSGNUM</code> (number of the parent record) and <code>HLEVEL</code> (level) in every record.</td><td>idoc <code>True</code></td><td><code>False</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--xml">xml and xmlnocheck</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>attributemarker</code></td><td>Separates element name and attribute name in a field name: field <code>ORDER__type</code> is attribute <code>type</code> of element <code>ORDER</code>.</td><td><code>'__'</code></td><td><code>'__'</code></td></tr>
+<tr><td><code>version</code></td><td>Writing: version in the XML declaration.</td><td><code>'1.0'</code></td><td><code>'1.0'</code></td></tr>
+<tr><td><code>standalone</code></td><td>Writing: <code>standalone</code> in the XML declaration; <code>None</code> leaves it out.</td><td><code>None</code></td><td><code>'yes'</code>, <code>'no'</code></td></tr>
+<tr><td><code>DOCTYPE</code></td><td>Writing: a DOCTYPE line after the declaration.</td><td><code>''</code></td><td><code>'orders SYSTEM "orders.dtd"'</code> gives <code>&lt;!DOCTYPE orders SYSTEM "orders.dtd"&gt;</code></td></tr>
+<tr><td><code>processing_instructions</code></td><td>Writing: processing instructions after the declaration, as a list of (name, text) tuples.</td><td><code>None</code></td><td><code>[('xml-stylesheet', 'href="orders.xsl" type="text/xsl"')]</code></td></tr>
+<tr><td><code>namespace_prefixes</code></td><td>Writing: prefixes for namespaces instead of <code>ns0</code>, <code>ns1</code>, as a list of (prefix, uri) tuples.</td><td><code>None</code></td><td><code>[('ord', 'http://www.example.com/orders')]</code></td></tr>
+<tr><td><code>extra_character_entity</code></td><td>Reading: extra named entities (for example HTML entities) and the character for each.</td><td><code>{}</code></td><td><code>{'nbsp': '\u00a0', 'euro': '\u20ac'}</code></td></tr>
+<tr><td><code>indented</code></td><td>See "Writing".</td><td><code>False</code></td><td><code>True</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--json">json and jsonnocheck</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>named_root_object</code> <span class="badge green">new in 4.0</span></td><td>Writing: <code>True</code> writes <code>{"ROOT": {...}}</code> (the name of the root record as key, as Bots 3 did); <code>False</code> writes the content only: <code>{...}</code>.</td><td>json, jsonnocheck <code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>force_list</code> <span class="badge green">new in 4.0</span></td><td>Writing: always write a list of messages, also for one message. Default: one message is an object, several are a list.</td><td>json <code>False</code>; jsonnocheck not set (<code>False</code>)</td><td><code>True</code></td></tr>
+<tr><td><code>max1_as_object</code> <span class="badge green">new in 4.0</span></td><td>Writing json: a record that can occur only once (<code>MAX: 1</code>) is written as an object instead of a list with one object. Has no effect together with <code>force_list</code>.</td><td>json <code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>json_write_numericals</code> <span class="badge green">new in 4.0</span></td><td>Writing json: fields with format <code>N</code> or <code>R</code> are written as JSON numbers, not as strings.</td><td>json <code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>defaultBOTSIDroot</code></td><td>jsonnocheck, reading: record name of the root of the JSON. When the grammar does not set it, a JSON <code>{"order": {...}}</code> gets root <code>order</code>.</td><td>jsonnocheck <code>'ROOT'</code></td><td><code>'order'</code></td></tr>
+<tr><td><code>indented</code></td><td>See "Writing" (indent of 2 spaces).</td><td><code>False</code></td><td><code>True</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--templatehtml">templatehtml</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default per editype</th><th>Values / example</th></tr>
+<tr><td><code>template</code></td><td>File name of the template for one message, in <code>usersys/grammars/templatehtml/templates/</code>. Can also be set in the mapping (<code>out.ta_info['template']</code>).</td><td>not set (required)</td><td><code>'invoice.html'</code></td></tr>
+<tr><td><code>envelope-template</code></td><td>File name of the template that puts the messages of one file together. Required when <code>envelope</code> is <code>'templatehtml'</code>.</td><td><code>''</code></td><td><code>'envelope.html'</code></td></tr>
+<tr><td><code>template_engine</code> <span class="badge green">new in 4.0</span></td><td>Template library.</td><td><code>'genshi'</code></td><td><code>'genshi'</code>, <code>'django'</code></td></tr>
+<tr><td><code>print_as_row</code></td><td>With <code>has_structure: True</code>: records (given as their path of record IDs) whose repeats are collected into one list, to print as rows of one table.</td><td><code>[]</code></td><td><code>[['INVOICE', 'LIN']]</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--edifact">EDIFACT</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>version</code></td><td>Syntax version (UNB S001.0002). Version 4 and later: date in UNB with 8 digits and the repetition separator is used; before 4: 6 digits, no repetition. Incoming: read from the file.</td><td><code>'3'</code></td><td><code>'4'</code></td></tr>
+<tr><td><code>forceUNA</code></td><td>Writing: always write the UNA segment. Without it UNA is only written when <code>charset</code> is not <code>UNOA</code>.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>UNB.S001.0080</code></td><td>UNB: service code list directory version.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S001.0133</code></td><td>UNB: character encoding, coded.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S002.0007</code></td><td>UNB: qualifier of the sender ID.</td><td><code>'14'</code></td><td><code>'14'</code>, <code>'ZZ'</code></td></tr>
+<tr><td><code>UNB.S002.0008</code></td><td>UNB: sender internal identification.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S002.0042</code></td><td>UNB: sender internal sub-identification.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S003.0007</code></td><td>UNB: qualifier of the receiver ID.</td><td><code>'14'</code></td><td><code>'ZZ'</code></td></tr>
+<tr><td><code>UNB.S003.0014</code></td><td>UNB: receiver internal identification.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S003.0046</code></td><td>UNB: receiver internal sub-identification.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S005.0022</code></td><td>UNB: recipient's reference/password.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.S005.0025</code></td><td>UNB: recipient's reference/password qualifier.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.0026</code></td><td>UNB: application reference.</td><td><code>''</code></td><td><code>'ORDERS'</code></td></tr>
+<tr><td><code>UNB.0029</code></td><td>UNB: processing priority code.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.0031</code></td><td>UNB: acknowledgement request.</td><td><code>''</code></td><td><code>'1'</code></td></tr>
+<tr><td><code>UNB.0032</code></td><td>UNB: interchange agreement identifier.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>UNB.0035</code></td><td>UNB: test indicator. Any value other than <code>'0'</code> writes <code>1</code>. A test indicator set by the mapping or in the transaction has priority.</td><td><code>'0'</code></td><td><code>'1'</code></td></tr>
+<tr><td><code>S002.0004</code> <span class="badge gray">advanced</span></td><td>Sender ID in UNB instead of the partner ID (for example in a partner syntax).</td><td>not set</td><td><code>'5412345000013'</code></td></tr>
+<tr><td><code>S003.0010</code> <span class="badge gray">advanced</span></td><td>Receiver ID in UNB instead of the partner ID.</td><td>not set</td><td></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--x12">X12</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>version</code></td><td>ISA version (ISA12). From <code>00403</code> on, ISA11 holds the repetition separator (<code>reserve</code>).</td><td><code>'00403'</code></td><td><code>'00401'</code>, <code>'00501'</code></td></tr>
+<tr><td><code>functionalgroup</code></td><td>GS01, the functional identifier code of the message type. Set it in each message grammar.</td><td><code>'XX'</code></td><td><code>'PO'</code> (850), <code>'IN'</code> (810), <code>'SH'</code> (856), <code>'FA'</code> (997)</td></tr>
+<tr><td><code>ISA01</code></td><td>Authorization information qualifier.</td><td><code>'00'</code></td><td></td></tr>
+<tr><td><code>ISA02</code></td><td>Authorization information (10 positions).</td><td>10 spaces</td><td></td></tr>
+<tr><td><code>ISA03</code></td><td>Security information qualifier.</td><td><code>'00'</code></td><td></td></tr>
+<tr><td><code>ISA04</code></td><td>Security information (10 positions).</td><td>10 spaces</td><td></td></tr>
+<tr><td><code>ISA05</code></td><td>Interchange ID qualifier of the sender.</td><td><code>'01'</code></td><td><code>'ZZ'</code></td></tr>
+<tr><td><code>ISA07</code></td><td>Interchange ID qualifier of the receiver.</td><td><code>'01'</code></td><td><code>'ZZ'</code></td></tr>
+<tr><td><code>ISA11</code></td><td>Interchange control standards identifier; only for ISA versions before <code>00403</code>.</td><td><code>'U'</code></td><td><code>'U'</code></td></tr>
+<tr><td><code>ISA14</code> <span class="badge orange">changed in 4.0</span></td><td>Acknowledgment requested. A value set by the mapping has priority. A confirm rule <code>ask-x12-997</code> does not change it.</td><td><code>'1'</code></td><td><code>'0'</code></td></tr>
+<tr><td><code>ISA15</code></td><td>Usage indicator. A test indicator set by the mapping or in the transaction has priority.</td><td><code>'P'</code></td><td><code>'T'</code></td></tr>
+<tr><td><code>GS07</code></td><td>Responsible agency code.</td><td><code>'X'</code></td><td><code>'X'</code></td></tr>
+<tr><td><code>ISA06</code>, <code>ISA08</code> <span class="badge gray">advanced</span></td><td>Sender / receiver ID in ISA instead of the partner ID.</td><td>not set</td><td><code>'MYCOMPANY'</code></td></tr>
+<tr><td><code>GS02</code>, <code>GS03</code> <span class="badge gray">advanced</span></td><td>Sender / receiver ID in GS instead of the partner ID.</td><td>not set</td><td><code>'MYCOMPANY'</code></td></tr>
+<tr><td><code>replacechar</code></td><td>See "Separators".</td><td><code>''</code></td><td><code>' '</code></td></tr>
+</table></div>
+
+<h4 id="grammar-syntax--tradacoms">TRADACOMS</h4>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>STX.STDS1</code></td><td>STX: syntax rules identifier.</td><td><code>'ANA'</code></td><td></td></tr>
+<tr><td><code>STX.STDS2</code></td><td>STX: syntax rules version.</td><td><code>'1'</code></td><td></td></tr>
+<tr><td><code>STX.FROM.02</code></td><td>STX: name of the sender (written only when set).</td><td><code>''</code></td><td><code>'MYCOMPANY'</code></td></tr>
+<tr><td><code>STX.UNTO.02</code></td><td>STX: name of the receiver (written only when set).</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>STX.APRF</code></td><td>STX: application reference.</td><td><code>''</code></td><td><code>'ORDHDR'</code></td></tr>
+<tr><td><code>STX.PRCD</code></td><td>STX: processing priority code.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>FROM.01</code>, <code>UNTO.01</code> <span class="badge gray">advanced</span></td><td>Sender / receiver code in STX instead of the partner ID.</td><td>not set</td><td></td></tr>
+</table></div>
+
+<h3 id="grammar-syntax--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>Outgoing csv looks like <code>'HEA':'PO-1001':'20260115'</code></td><td>The csv defaults are <code>field_sep ':'</code>, <code>quote_char "'"</code> and <code>forcequote 1</code> (always quote).</td><td>Set <code>'field_sep': ','</code>, <code>'quote_char': '"'</code> and <code>'forcequote': 0</code> (or <code>'quote_char': ''</code> for no quotes).</td></tr>
+<tr><td>A syntax setting has no effect.</td><td>The key is misspelled (keys are case-sensitive; Bots does not warn about unknown keys), it is set on a layer that is overruled, or it is in a partner file and the file is incoming.</td><td>Compare with the tables above. Remember the order: editype defaults, envelope grammar, message grammar, partner (outgoing only), values in the transaction or set by the mapping.</td></tr>
+<tr><td><code>[F50]: Characters not in character-set "UNOA": ...</code></td><td>The outgoing data has characters that the character set cannot hold, for example lower-case letters or <code>é</code> in UNOA.</td><td>Use another <code>charset</code> (for EDIFACT for example <code>UNOC</code>, agreed with the partner), convert the data to upper case in the mapping, or set <code>'checkcharsetout': 'botsreplace'</code>.</td></tr>
+<tr><td><code>[A59]: incoming file has not allowed characters at/after file-position 1234: "..."</code></td><td>The file is not in the character set of the grammar (for example a UTF-8 file read as <code>us-ascii</code>), or a mail attachment came with a charset in its mail header that does not match the content.</td><td>Set the right <code>charset</code> in the grammar, or use <code>'checkcharsetin': 'botsreplace'</code> or <code>'ignore'</code> if the odd characters do not matter.</td></tr>
+<tr><td><code>[A67]: Found space characters between segments. Line 3, position 1.</code></td><td><code>strict_syntax_check</code> is <code>True</code> and the file has spaces or line ends between records.</td><td>Ask the partner for a clean file, or remove <code>strict_syntax_check</code> (default <code>False</code> ignores such white space).</td></tr>
+<tr><td><code>[F51]: Character "*" is used as separator in this x12 file, so it can not be used in content. Field: "..."</code></td><td>Outgoing X12 data contains a separator; X12 has no escape character.</td><td>Set <code>'replacechar': ' '</code> (or another character), choose other separators in a partner syntax, or clean the data in the mapping.</td></tr>
+<tr><td><code>In enveloping: unknown value "..." for syntax parameter "IDmode".</code></td><td><code>IDmode</code> has a value Bots does not know.</td><td>Use <code>'ISA_qualifier_GS'</code>, <code>'ISA_qualifier'</code> or <code>'UNB_qualifier'</code>, or remove it.</td></tr>
+<tr><td><code>In enveloping "frompartner" is expected to have format "ISA_qualifier_GS", but is "MYCOMPANY".</code></td><td>With <code>IDmode</code> the partner ID must contain the parts separated by <code>|</code>.</td><td>Use partner IDs like <code>MYCOMPANY|ZZ|MYCOMPANY</code>, or remove <code>IDmode</code>.</td></tr>
+<tr><td>Numbers like <code>1.234,50</code> give errors [F09]-[F16] or wrong values.</td><td>Default <code>decimaal</code> is <code>'.'</code> and <code>triad</code> is empty.</td><td>Set <code>'decimaal': ','</code> and <code>'triad': '.'</code> in the incoming grammar.</td></tr>
+<tr><td>One output file per message, but you want one file with all messages for a partner.</td><td><code>merge</code> is <code>False</code> (the default for xml, json, idoc, tradacoms) or a partner file sets it.</td><td>Set <code>'merge': True</code> (XML also needs an envelope script for this).</td></tr>
+<tr><td><code>While enveloping in "templatehtml.invoice": syntax option "envelope-template" not filled; is required.</code></td><td>A templatehtml grammar uses the envelope <code>templatehtml</code> without an envelope template.</td><td>Set <code>'envelope-template'</code> to a template file in <code>usersys/grammars/templatehtml/templates/</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="grammar-records" data-title="Records, fields and structure" data-group="Grammars and mappings">
+<h2>Records, fields and structure</h2>
+<p class="lead">This page explains the two main parts of every grammar: <code>recorddefs</code> (the fields of each record, with their length and format) and <code>structure</code> (which records come in which order, how often, and nested in which other record). It also covers splitting a file into messages and how Bots reports errors it finds in a file.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Think of an order on paper. It has a header block (order number, date, buyer) and a number of item lines (article, quantity). Each block is a <b>record</b>; each box on the block is a <b>field</b>. <code>recorddefs</code> describes the boxes of each block; <code>structure</code> describes that the item lines belong under the header, at least one and at most 9999 of them.</p></div>
+
+<h3 id="grammar-records--how">How it works</h3>
+<p>Every line or segment of an EDI file is a <b>record</b>. Each record starts with a record ID (in EDIFACT and X12 the segment tag, like <code>UNH</code> or <code>BEG</code>; in your own csv files you choose it, like <code>HEA</code>). Bots stores the record ID in the field <code>BOTSID</code>. In the tree every record is a node; records that belong to another record (the lines of a header) are its children.</p>
+<div class="diagram"><svg viewBox="0 0 760 170" width="760" role="img" aria-label="The structure: a HEA record with LIN records under it; recorddefs give the fields of HEA and LIN.">
+<defs><marker id="arrow-grammar-records-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="20" width="220" height="60" rx="10"/><text x="120" y="46" text-anchor="middle" font-weight="600">structure: HEA</text><text class="small" x="120" y="66" text-anchor="middle">MIN 1, MAX 9999</text>
+<path class="arrow" d="M120,82 L120,100" marker-end="url(#arrow-grammar-records-1)"/>
+<rect class="box in" x="30" y="104" width="220" height="56" rx="10"/><text x="140" y="128" text-anchor="middle" font-weight="600">LEVEL: LIN</text><text class="small" x="140" y="148" text-anchor="middle">MIN 1, MAX 9999</text>
+<path class="arrow" d="M234,50 L396,50" marker-end="url(#arrow-grammar-records-1)"/>
+<path class="arrow" d="M254,132 L396,132" marker-end="url(#arrow-grammar-records-1)"/>
+<rect class="box mid" x="400" y="20" width="350" height="60" rx="10"/><text x="575" y="46" text-anchor="middle" font-weight="600">recorddefs['HEA']</text><text class="small" x="575" y="66" text-anchor="middle">BOTSID, ORDERNUMBER, ORDERDATE, BUYER</text>
+<rect class="box mid" x="400" y="104" width="350" height="56" rx="10"/><text x="575" y="128" text-anchor="middle" font-weight="600">recorddefs['LIN']</text><text class="small" x="575" y="148" text-anchor="middle">BOTSID, LINENUMBER, ARTICLE, QUANTITY</text>
+</svg></div>
+<ol>
+<li>Reading a file, Bots takes each record, looks up its ID in the <code>structure</code> at the current place, and checks that mandatory records are not skipped.</li>
+<li>For the record it finds, it uses <code>recorddefs</code> to name the fields (by position in separated formats, by position and length in fixed files, by tag in XML and JSON).</li>
+<li>After the whole file is read, every record and field is checked: counts (<code>MIN</code>/<code>MAX</code>), mandatory fields, lengths and formats.</li>
+<li>Writing, the same checks are made on the tree your mapping made; then records are sorted in the order of the <code>structure</code>, fields in the order of <code>recorddefs</code>.</li>
+</ol>
+
+<h3 id="grammar-records--recorddefs">recorddefs: fields</h3>
+<p><code>recorddefs</code> is a dict. The key is the record ID; the value is a list of field definitions. Every record must have a field <code>BOTSID</code> (normally the first). Field names must be unique within a record.</p>
+<p>A <b>field</b> is a list of 4 items: <code>[name, mandatory, length, format]</code>:</p>
+<pre><code class="language-python">['ORDERNUMBER', 'M', 35, 'AN']          # mandatory, max 35, alphanumeric
+['BUYER', 'C', (13, 13), 'AN']           # conditional, exactly 13 long
+['AMOUNT', 'C', 12.2, 'N']               # number, max 12 digits, exactly 2 decimals
+['REFERENCE', ('C', 5), 35, 'AN']        # repeating field: up to 5 times</code></pre>
+<p>A <b>composite</b> (a field made of sub-fields, like <code>C507</code> in EDIFACT) is a list of 3 items: <code>[name, mandatory, [sub-fields]]</code>, with at least 2 sub-fields. Sub-fields are fields as above. The name of the composite itself is not a field in the tree: in a mapping you use the names of the sub-fields.</p>
+<pre><code class="language-python">['C507', 'M', [
+    ['C507.2005', 'M', 3, 'AN'],     # date/time qualifier
+    ['C507.2380', 'C', 35, 'AN'],    # the date
+    ['C507.2379', 'C', 3, 'AN'],     # format code
+]],
+['C212', ('C', 9), [                 # repeating composite: up to 9 times
+    ['C212.7140', 'C', 35, 'AN'],
+    ['C212.7143', 'C', 3, 'AN'],
+]],</code></pre>
+
+<h4>The four items of a field</h4>
+<div class="table-wrap"><table>
+<tr><th>Item</th><th>What it does</th><th>Values / example</th></tr>
+<tr><td>name</td><td>Field ID; a non-empty string, unique in the record (also over sub-fields). EDIFACT/X12 grammars use the element numbers (<code>0062</code>, <code>BEG03</code>, <code>C507.2380</code>).</td><td><code>'ORDERNUMBER'</code></td></tr>
+<tr><td>mandatory</td><td><code>'M'</code> mandatory or <code>'C'</code> conditional. A tuple <code>('M', n)</code> or <code>('C', n)</code> makes it a repeating field (or composite) that can occur up to <code>n</code> times; in the tree its value is a list.</td><td><code>'C'</code>, <code>('C', 99)</code></td></tr>
+<tr><td>length</td><td>Maximum length (a whole number), or <code>(min, max)</code>. For number formats <code>N</code>, <code>I</code> and <code>R</code> the length can be a decimal number: <code>12.2</code> means max 12 and 2 decimals (up to 9 decimals). Fixed files: a whole number is both minimum and maximum (the field is always that long).</td><td><code>35</code>, <code>(1, 35)</code>, <code>12.2</code></td></tr>
+<tr><td>format</td><td>Format code; which codes are allowed depends on the editype (next table).</td><td><code>'AN'</code>, <code>'N'</code>, <code>'D'</code></td></tr>
+</table></div>
+
+<h4 id="grammar-records--formats">Format codes</h4>
+<p>Bots translates each format code of the grammar to one of its internal formats: A (text), D (date), T (time), N (number with fixed decimals), R (number with any decimals), I (number with implied decimals), B (boolean). The codes you may write depend on the editype; any other code gives a grammar error that lists the allowed codes.</p>
+<div class="table-wrap"><table>
+<tr><th>Code</th><th>Internal</th><th>Editypes</th><th>Meaning, reading and writing</th></tr>
+<tr><td><code>A</code>, <code>AN</code></td><td>A</td><td>all except x12 (x12: only <code>AN</code>), tradacoms</td><td>Text. Reading: too long [F05] or too short [F06] (not checked in fixed files). Writing: [F20] / [F21]. Fixed: padded with spaces on the right.</td></tr>
+<tr><td><code>AR</code></td><td>A</td><td>fixed, idoc</td><td>Text, right aligned (padded with spaces on the left) when writing.</td></tr>
+<tr><td><code>D</code>, <code>DT</code></td><td>D</td><td>all except edifact, tradacoms (x12: only <code>DT</code>)</td><td>Date: 6 digits <code>YYMMDD</code> or 8 digits <code>CCYYMMDD</code>, and a real date. Reading: [F07]; writing: [F22], too long [F31], too short [F32]. <code>DT</code> is checked as a date too.</td></tr>
+<tr><td><code>T</code>, <code>TM</code></td><td>T</td><td>all except edifact, tradacoms (x12: only <code>TM</code>)</td><td>Time: <code>HHMM</code> or <code>HHMMSS</code>; reading also accepts <code>HHMMSS</code> plus 1 or 2 digits. Reading: [F08]; writing: [F23], too long [F33], too short [F34].</td></tr>
+<tr><td><code>N</code></td><td>N (edifact: R; x12: I)</td><td>all except tradacoms</td><td>Number with a fixed number of decimals (from the length, <code>12.2</code> = 2 decimals; a whole length = no decimals). Reading: the number of decimals must be exactly right [F14]. Writing: rounded to that number of decimals (half to even: 2.345 becomes 2.34), padded with zeros on the left to the minimum length. In EDIFACT grammars <code>N</code> means any number of decimals (as R); in X12 it means a whole number (as <code>N0</code>).</td></tr>
+<tr><td><code>NL</code>, <code>NR</code></td><td>N</td><td>fixed, idoc</td><td>As <code>N</code>, but left aligned (padded with spaces on the right) or right aligned (spaces on the left) instead of leading zeros.</td></tr>
+<tr><td><code>R</code></td><td>R</td><td>all except edifact, tradacoms</td><td>Number with any number of decimals ("floating" decimal point). Reading: [F16] if not a number. Writing: as given, padded with zeros to the minimum length.</td></tr>
+<tr><td><code>RL</code>, <code>RR</code></td><td>R</td><td>fixed, idoc</td><td>As <code>R</code>, left or right aligned with spaces.</td></tr>
+<tr><td><code>I</code></td><td>I</td><td>all except edifact, x12, tradacoms</td><td>Number with implied decimals: the file has no decimal sign. With length <code>8.2</code> the file value <code>00001250</code> is 12.50 in the tree. Reading: a decimal sign gives [F12], not a number [F13]. Writing: <code>12.5</code> becomes <code>1250</code>, zero-padded.</td></tr>
+<tr><td><code>N0</code> … <code>N9</code></td><td>I</td><td>x12</td><td>X12 numbers with implied decimals; the digit is the number of decimals (<code>N2</code>: <code>1250</code> = 12.50).</td></tr>
+<tr><td><code>ID</code>, <code>B</code></td><td>A</td><td>x12</td><td>X12 code value and binary data; handled as text.</td></tr>
+<tr><td><code>X</code></td><td>A</td><td>tradacoms</td><td>Text.</td></tr>
+<tr><td><code>9</code></td><td>R</td><td>tradacoms</td><td>Number.</td></tr>
+<tr><td><code>9V9</code></td><td>I</td><td>tradacoms</td><td>Number with implied decimals (give the decimals in the length, for example <code>15.4</code>).</td></tr>
+<tr><td><code>B</code> <span class="badge green">new in 4.0</span></td><td>B</td><td>json, jsonnocheck</td><td>Boolean. Reading accepts <code>true</code>, <code>false</code>, <code>1</code>, <code>0</code> (any case); in the tree it is <code>'True'</code> or <code>'False'</code>. Writing: a JSON <code>true</code>/<code>false</code>. Other values: [F35].</td></tr>
+</table></div>
+<p><b>Numbers, more rules.</b> Reading: a minus sign at the end (<code>12.50-</code>) is moved to the front; the <code>triad</code> character is removed; the <code>decimaal</code> character becomes <code>.</code>; an exponent (<code>1E5</code>) is not allowed [F09]; <code>1_000</code> is not a number. For EDIFACT, X12 and TRADACOMS the minus sign and the decimal sign do not count in the length; for other editypes they do. Too long [F10], too short [F11]. Writing: not a valid number [F25] (R), [F26] (N), [F27] (I); too long [F28].</p>
+<div class="note warn"><span class="label">Watch out</span><p>In csv, fixed and idoc files, a number field that the mapping did not fill is written as zero (<code>0</code>, <code>0.00</code>, <code>00000000</code>), not as an empty field. Use a text format (<code>AN</code>) for a number field that must stay empty when there is no value.</p></div>
+
+<h3 id="grammar-records--structure">structure: records and their order</h3>
+<p><code>structure</code> is a list with exactly one dict: the top (root) record. Every dict describes one record at its place in the message:</p>
+<pre><code class="language-python">structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BEG', MIN: 1, MAX: 1},
+        {ID: 'REF', MIN: 0, MAX: 12},
+        {ID: 'N1', MIN: 0, MAX: 200, LEVEL: [     # N1 loop: N1 with N3, N4 under it
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+        ]},
+        {ID: 'PO1', MIN: 1, MAX: 100000, LEVEL: [
+            {ID: 'PID', MIN: 0, MAX: 1000},
+        ]},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]</code></pre>
+<p>A record with <code>LEVEL</code> is the first record of a group (an EDIFACT segment group, an X12 loop). <code>MIN</code>/<code>MAX</code> of that record count the whole group.</p>
+<div class="table-wrap"><table>
+<tr><th>Key</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>ID</code></td><td>Record ID; must be a key of <code>recorddefs</code>.</td><td>required</td><td><code>'BEG'</code></td></tr>
+<tr><td><code>MIN</code></td><td>Minimum number of times the record (group) occurs here. <code>0</code> = optional.</td><td>required</td><td><code>0</code>, <code>1</code></td></tr>
+<tr><td><code>MAX</code></td><td>Maximum number of times. Not 0, not smaller than <code>MIN</code>.</td><td>required</td><td><code>1</code>, <code>99999</code></td></tr>
+<tr><td><code>LEVEL</code></td><td>List of records under this record (its children), in their order.</td><td>none</td><td><code>[{ID: 'LIN', MIN: 1, MAX: 9999}]</code></td></tr>
+<tr><td><code>QUERIES</code></td><td>Information to take from this record into the transaction (partners, reference, …). See below.</td><td>none</td><td><code>{'reference': {'BOTSID': 'BEG', 'BEG03': None}}</code></td></tr>
+<tr><td><code>SUBTRANSLATION</code> <span class="badge gray">advanced</span></td><td>In envelope grammars: here a message starts; the value gives the message type, whose grammar is used for the records under this one.</td><td>none</td><td>see below</td></tr>
+</table></div>
+<p>Bots adds its own keys to each dict when it reads the grammar (the path of the record, the field list, <code>BOTSIDnr</code>; for fixed files the record length). Do not use other keys.</p>
+
+<h4 id="grammar-records--botsidnr">The same record twice at one level: BOTSIDnr</h4>
+<p>Sometimes the same record ID appears twice at one level with a different meaning, for example <code>UNS</code> in EDIFACT before and after the detail lines. Bots numbers the occurrences at one level: the first <code>UNS</code> gets <code>BOTSIDnr</code> <code>'1'</code>, the second <code>'2'</code>. In a mapping you address the second one with <code>{'BOTSID': 'UNS', 'BOTSIDnr': '2'}</code>; without <code>BOTSIDnr</code> Bots uses <code>'1'</code>.</p>
+
+<h4 id="grammar-records--queries">QUERIES</h4>
+<p><code>QUERIES</code> is a dict: key = name of the information, value = where to find it. Bots looks the values up in the record (and the records under it) after reading, and stores them with the file or message (the transaction). Keys that Bots knows and shows: <code>frompartner</code>, <code>topartner</code>, <code>reference</code>, <code>testindicator</code>, <code>botskey</code>, <code>alt</code>. The partners are used to find the <a href="#translations">translation</a> and for <a href="#confirm-rules">confirm rules</a>; <code>reference</code> and <code>botskey</code> are shown in the reports and can be searched. Values found at a higher level (the envelope) are passed down to every message; a value found in the message itself wins.</p>
+<pre><code class="language-python">{ID: 'ISA', MIN: 1, MAX: 999,
+ QUERIES: {
+     'frompartner':   {'BOTSID': 'ISA', 'ISA06': None},
+     'topartner':     {'BOTSID': 'ISA', 'ISA08': None},
+     'reference':     {'BOTSID': 'ISA', 'ISA13': None},
+     'testindicator': {'BOTSID': 'ISA', 'ISA15': None},
+ },
+ LEVEL: [...]}</code></pre>
+<p>The value (also of <code>SUBTRANSLATION</code> and <code>nextmessageblock</code>) can be:</p>
+<div class="table-wrap"><table>
+<tr><th>Form</th><th>What Bots does</th><th>Example</th></tr>
+<tr><td>dict</td><td>One lookup in this record.</td><td><code>{'BOTSID': 'BEG', 'BEG03': None}</code></td></tr>
+<tr><td>tuple of dicts</td><td>A lookup over several levels, starting at this record.</td><td><code>({'BOTSID': 'N1', 'N101': 'BY'}, {'BOTSID': 'N4', 'N402': None})</code></td></tr>
+<tr><td>list</td><td>Each member is looked up; the results are stripped and joined into one text.</td><td><code>[{'BOTSID': 'UNH', 'S009.0065': None}, {'BOTSID': 'UNH', 'S009.0052': None}]</code></td></tr>
+<tr><td>function</td><td>Called as <code>function(thisnode=record)</code>; returns the value or <code>None</code>.</td><td><code>get_partner</code></td></tr>
+<tr><td>string</td><td>That fixed text.</td><td><code>'PARTNERA'</code></td></tr>
+</table></div>
+
+<h4 id="grammar-records--subtranslation">SUBTRANSLATION</h4>
+<p>In an envelope grammar, the record where a message starts (<code>UNH</code> in EDIFACT, <code>ST</code> in X12, <code>MHD</code> in TRADACOMS) has <code>SUBTRANSLATION</code>. Its value is looked up as above and gives the message type. Then:</p>
+<ol>
+<li>EDIFACT: dots are replaced by underscores (<code>90.1</code> becomes <code>90_1</code>). X12: the version from <code>GS08</code> of the group is added (<code>850</code> + <code>004010</code> = <code>850004010</code>).</li>
+<li>Bots reads the grammar of that message type. If there is none and the envelope grammar has a function <code>getmessagetype(editype, messagetype)</code>, that function can return another message type.</li>
+<li>The records under the subtranslation record are parsed with the <code>LEVEL</code> of the root record of the message grammar. So the message grammar must start with the same record (<code>UNH</code>, <code>ST</code>, <code>MHD</code>).</li>
+<li>The syntax of the message grammar and the message type are stored for that message.</li>
+</ol>
+
+<h4 id="grammar-records--nextmessage">Splitting a file into messages</h4>
+<div class="table-wrap"><table>
+<tr><th>In the grammar</th><th>What the mapping gets</th></tr>
+<tr><td><code>nextmessage = ({'BOTSID': 'UNB'}, {'BOTSID': 'UNH'})</code></td><td>Each record found at that path, with everything under it, is one message. <code>nextmessage2</code> is a second path done after the first (EDIFACT: messages inside UNG groups). Each message gets <code>message_number</code> and <code>total_number_of_messages</code> in <code>inn.ta_info</code>; the envelope is reachable via <code>inn.ta_info['bots_accessenvelope']</code>.</td></tr>
+<tr><td><code>nextmessageblock = {'BOTSID': 'LIN', 'ORDERNUMBER': None}</code></td><td>csv/fixed with one record type: consecutive records with the same value form one message. The grammar may have only one record.</td></tr>
+<tr><td>neither, xml or json with one root object</td><td>The whole file is one message.</td></tr>
+<tr><td>neither, csv with <code>pass_all: True</code> (default)</td><td>The whole file is one message.</td></tr>
+<tr><td>neither, other cases (fixed, idoc; csv with <code>pass_all: False</code>; a JSON list of messages)</td><td>Each top-level record with its children is one message.</td></tr>
+</table></div>
+
+<h4 id="grammar-records--collision">Collision checks</h4>
+<p>For csv, fixed, idoc, EDIFACT, X12 and TRADACOMS Bots checks that the structure can be read in only one way. Two problems are refused:</p>
+<ul>
+<li><b>Back-collision</b>: an optional record can be followed by a record with the same ID at the same place, so Bots cannot tell which one it is reading. Example: <code>AAA</code> (optional), <code>BBB</code> (optional), <code>AAA</code>.</li>
+<li><b>Nesting collision</b>: a record inside a group has the same ID as a record that can follow the group at a higher level.</li>
+</ul>
+<p>Records with <code>MIN</code> equal to <code>MAX</code> (for example 1 and 1) are never ambiguous. To fix a collision, make a record in between mandatory (<code>MIN: 1</code>) or leave out a group you do not use. Some UN/EDIFACT messages (for example INVRPT D96A) have this problem in the standard; message implementation guides (like EANCOM) make the needed choices.</p>
+
+<h3 id="grammar-records--errors">How errors in a file are reported</h3>
+<ol>
+<li><b>Fatal errors</b> stop reading at once: errors in separators or envelope ([A..]), a record that is not allowed at that place ([S50]), a missing mandatory record at the end ([S51]), fixed records with a wrong length ([S52], [S53]), invalid JSON ([J..]). The file gets one error.</li>
+<li><b>Other errors</b> are collected: Bots goes on reading and reports up to <code>max_number_errors</code> (in <code>bots.ini</code>, default 10) errors, then adds <code>Found at least 10 errors.</code></li>
+<li>Each error starts with its code and, when known, the place: <code>line 12 pos 4</code>, and the record path (<code>ST-PO1</code>). In EDIFACT and X12, errors inside a message start with <code>Message nr 3, type 850004010, </code>.</li>
+<li>A file with errors is not translated (no message of it), and gets status error. You see the error text in <span class="ui">Incoming</span> (click the file, or the error icon) and in <span class="ui">Process Errors</span>. For EDIFACT and X12 a negative acknowledgement can be sent (see <a href="#acknowledgements">Acknowledgements</a>).</li>
+<li>Errors when <b>writing</b> (in the outgoing message made by the mapping) have the codes [F20]-[F35], [F50], [F51] and the same [S..]/[F0..] codes without line and position. The message is in error; other messages of the same file are translated (unless <code>KillWholeFile</code>).</li>
+</ol>
+<div class="table-wrap"><table>
+<tr><th>Code</th><th>Group</th><th>Where</th></tr>
+<tr><td><code>[A50]</code>-<code>[A69]</code></td><td>The file as a whole: separators, character set, start of the envelope, data at the end.</td><td>reading</td></tr>
+<tr><td><code>[S01]</code>-<code>[S04]</code>, <code>[S50]</code>-<code>[S53]</code></td><td>Structure: unknown records, too few or too many, record not allowed here.</td><td>reading and writing</td></tr>
+<tr><td><code>[F01]</code>-<code>[F47]</code></td><td>Fields: unknown, mandatory, length, format, repeats.</td><td>reading and writing</td></tr>
+<tr><td><code>[F50]</code>, <code>[F51]</code></td><td>Characters that cannot be written.</td><td>writing</td></tr>
+<tr><td><code>[E01]</code>-<code>[E25]</code></td><td>Envelope counters and references (UNZ, UNT, IEA, GE, SE, END, MTR).</td><td>reading</td></tr>
+<tr><td><code>[G50]</code></td><td>The file starts with another record than the grammar.</td><td>reading and writing</td></tr>
+<tr><td><code>[J52]</code>-<code>[J57]</code></td><td>JSON content.</td><td>reading</td></tr>
+<tr><td><code>[M50]</code>-<code>[M60]</code></td><td>Recognising and splitting interchanges in the mailbag step (see <a href="#preprocessing">Preprocessing</a>).</td><td>before reading</td></tr>
+</table></div>
+<p>All error texts with their fix are also listed in <a href="#error-messages">Error messages</a>. To see every record and field Bots reads, set <code>readrecorddebug = True</code> in <code>bots.ini</code> and look in the engine log.</p>
+
+<h3 id="grammar-records--howto">How to describe a new record</h3>
+<ol class="steps">
+<li><b>Add the record to <code>recorddefs</code></b> with <code>BOTSID</code> first and then the fields in the order of the file: <code>'DTM': [['BOTSID', 'M', 3, 'AN'], ['DATEQUAL', 'M', 3, 'AN'], ['DATE', 'M', 8, 'D']],</code></li>
+<li><b>Add it to <code>structure</code></b> at its place: <code>{ID: 'DTM', MIN: 0, MAX: 10},</code> in the <code>LEVEL</code> of the record it belongs to.</li>
+<li><b>Run <code>bots-grammarcheck</code></b>. Expected: <code>OK - no error found in grammar</code>.</li>
+<li><b>Run a test file</b> through the route and look at the result in <span class="ui">Incoming</span>.</li>
+</ol>
+
+<h3 id="grammar-records--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>BOTSID</code></td><td>Field with the record ID; required in every record.</td><td>-</td><td><code>['BOTSID', 'M', 3, 'AN']</code></td></tr>
+<tr><td><code>BOTSIDnr</code></td><td>Number of the occurrence when a record ID appears more than once at one level.</td><td><code>'1'</code></td><td><code>'2'</code></td></tr>
+<tr><td><code>BOTSCONTENT</code></td><td>XML: the text content of an element that is a record.</td><td>-</td><td>see <a href="#editype-xml-json">XML and JSON</a></td></tr>
+<tr><td>field</td><td><code>[name, 'M'|'C' or ('M'|'C', repeats), length, format]</code></td><td>-</td><td><code>['QTY', 'M', 15.3, 'N']</code></td></tr>
+<tr><td>composite</td><td><code>[name, 'M'|'C' or (…, repeats), [sub-fields]]</code>, at least 2 sub-fields</td><td>-</td><td>see above</td></tr>
+<tr><td><code>ID</code>, <code>MIN</code>, <code>MAX</code>, <code>LEVEL</code>, <code>QUERIES</code>, <code>SUBTRANSLATION</code></td><td>Keys of a record in <code>structure</code>.</td><td>-</td><td>see above</td></tr>
+<tr><td><code>nextmessage</code>, <code>nextmessage2</code>, <code>nextmessageblock</code></td><td>Splitting into messages.</td><td>none</td><td>see above</td></tr>
+<tr><td>minimum number of fields per record</td><td>xml, json, templatehtml: 1 (<code>BOTSID</code>); other editypes: 2.</td><td>-</td><td>-</td></tr>
+</table></div>
+
+<h3 id="grammar-records--trouble">Troubleshooting</h3>
+<p><b>Errors in the grammar</b> (shown by <code>bots-grammarcheck</code> and when a file is translated):</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Grammar "...": record "DTM" is in structure but not in recorddefs.</code></td><td>The structure names a record that has no definition.</td><td>Add <code>'DTM': [...]</code> to <code>recorddefs</code>, or correct the spelling.</td></tr>
+<tr><td><code>Grammar "...", in recorddefs, record "LIN": no field BOTSID.</code></td><td>The record has no <code>BOTSID</code> field.</td><td>Add <code>['BOTSID', 'M', 3, 'AN']</code> (length of the record ID).</td></tr>
+<tr><td><code>Grammar "...", in recorddefs, record "LIN": too few fields.</code></td><td>The record has only <code>BOTSID</code> (allowed only for xml, json, templatehtml) or nothing.</td><td>Add the fields of the record.</td></tr>
+<tr><td><code>Grammar "...", in recorddefs, record "LIN": field "QTY" appears twice. Field names should be unique within a record.</code></td><td>Two fields (or sub-fields) have the same name.</td><td>Rename one of them.</td></tr>
+<tr><td><code>Grammar "...", in recorddefs, record "LIN", field "QTY": list has invalid number of arguments.</code></td><td>A field does not have 4 items, or a composite not 3.</td><td>Write <code>[name, 'M', length, format]</code> or <code>[name, 'M', [sub-fields]]</code>.</td></tr>
+<tr><td><code>... field "QTY": mandatory/conditional must be "M" or "C".</code></td><td>The second item is something else, like <code>'O'</code> or <code>'m'</code>.</td><td>Use <code>'M'</code> or <code>'C'</code> (upper case).</td></tr>
+<tr><td><code>... field "QTY": length "abc" has to be number or (min,max).</code></td><td>Length is a string or a list.</td><td>Write <code>35</code> or <code>(1, 35)</code>.</td></tr>
+<tr><td><code>... field "QTY": min length "5" must be &gt; max length "3".</code></td><td>In <code>(min, max)</code> the minimum is larger than the maximum (the text says "&gt;" but means the reverse).</td><td>Swap the numbers.</td></tr>
+<tr><td><code>... field "NAME": if format "AN", no length "35.2".</code></td><td>A decimal length on a text, date or time field.</td><td>Use a whole number; decimals only with N, I, R.</td></tr>
+<tr><td><code>... field "AMT": field length "2" has to be greater that nr of decimals "2".</code></td><td>The number of decimals is not smaller than the length (<code>2.2</code>).</td><td>Make the length larger: <code>12.2</code>.</td></tr>
+<tr><td><code>Grammar "...", record "BEG", field "BEG03": format "A" has to be one of "AN, B, DT, ID, N, N0, ...".</code></td><td>The format code is not allowed for this editype (for example <code>A</code> in X12).</td><td>Use one of the listed codes.</td></tr>
+<tr><td><code>... field "C507": is a composite field, has to have subfields.</code> / <code>... has &lt; 2 sfields.</code></td><td>A composite has no list of sub-fields or only one.</td><td>Give at least 2 sub-fields, or make it a normal field.</td></tr>
+<tr><td><code>Grammar "...", in structure, at "['ST']": record without MIN: "{...}"</code> (also <code>without MAX</code>, <code>without ID</code>)</td><td>A record dict misses a key.</td><td>Add <code>MIN</code>, <code>MAX</code>, <code>ID</code>. Check <code>from bots.botsconfig import *</code> is at the top.</td></tr>
+<tr><td><code>... record where MIN &gt; MAX</code> / <code>MAX is zero</code> / <code>MIN is not whole number</code></td><td>Wrong numbers.</td><td>Use whole numbers with 0 ≤ MIN ≤ MAX and MAX ≥ 1.</td></tr>
+<tr><td><code>Grammar "...", in structure: back-collision detected at record "['ST', 'REF']".</code></td><td>The structure is ambiguous (see Collision checks).</td><td>Make a record in between mandatory, or remove an unused record.</td></tr>
+<tr><td><code>Grammar "...", in structure: nesting collision detected at record "...".</code></td><td>A record in a group has the same ID as one after the group.</td><td>As above; for standard EDIFACT messages follow the implementation guide.</td></tr>
+<tr><td><code>Grammar "...": if nextmessage2: nextmessage has to be used.</code> / <code>nextmessageblock and nextmessage not both allowed.</code></td><td>Wrong combination of split settings.</td><td>Use <code>nextmessage</code> (with optional <code>nextmessage2</code>) or <code>nextmessageblock</code>.</td></tr>
+</table></div>
+<p><b>Errors in a file</b>:</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[S50]: Line:5 pos:1 record:"DTM": message has an error in its structure; this record is not allowed here. Scanned in message definition until mandatory record: "ST-PO1".</code></td><td>Record DTM is not in the structure at this place (or not at all), or a record before it is missing.</td><td>Compare the file with the structure from the last record that was read. Add the record to the grammar if the partner uses it there.</td></tr>
+<tr><td><code>[S51]: Missing mandatory record "UNB-UNZ".</code></td><td>The file ends before a mandatory record (often a missing trailer).</td><td>Ask for a complete file.</td></tr>
+<tr><td><code>[S03] line 1 pos 1: Record "ST-BEG" occurs 0 times, min is 1.</code></td><td>A mandatory record is missing.</td><td>Correct the file or the mapping; or set <code>MIN: 0</code> if it is really optional.</td></tr>
+<tr><td><code>[S04] line 1 pos 1: Record "ST-REF" occurs 15 times, max is 12.</code></td><td>Too many repeats.</td><td>Raise <code>MAX</code> if the partner is allowed to send more.</td></tr>
+<tr><td><code>[F02] line 3 pos 1: Record "ST-BEG" field "BEG03" is mandatory.</code></td><td>A mandatory field is empty.</td><td>Fill it (in the file or the mapping) or make it <code>'C'</code>.</td></tr>
+<tr><td><code>[F05] line 4 pos 12: Record "HEA" field "ORDERNUMBER" too big (max 35): "..."</code></td><td>Text longer than the maximum.</td><td>Shorten the value in the mapping, or raise the length.</td></tr>
+<tr><td><code>[F14] line 6 pos 20: Record "HEA-LIN" numeric field "PRICE" has invalid nr of decimals: "12.5".</code></td><td>Format <code>N</code> with length <code>10.2</code> needs exactly 2 decimals.</td><td>Use <code>R</code> if the number of decimals varies.</td></tr>
+<tr><td><code>[F07] line 2 pos 30: Record "HEA" date field "ORDERDATE" not a valid date: "2026-01-15".</code></td><td>Format <code>D</code> wants <code>YYYYMMDD</code> or <code>YYMMDD</code>.</td><td>Use format <code>AN</code> for other date layouts and convert in the mapping (see <a href="#mapping-functions">Mapping functions</a>).</td></tr>
+<tr><td><code>[F19] line 7 pos 40: Record "LIN" too many fields in record; unknown field "X".</code></td><td>The record has more fields than the grammar.</td><td>Add the fields to <code>recorddefs</code>, or check the separator.</td></tr>
+<tr><td><code>[F17] ...: expect field but "..." is a subfield.</code> / <code>[F18] ... too many subfields in composite</code></td><td>The file has a sub-field separator where the grammar has a plain field, or more sub-fields than defined.</td><td>Make the field a composite or add sub-fields.</td></tr>
+<tr><td><code>[F40] ...: expect not-repeating elemen, but "..." is repeating.</code></td><td>The repetition separator appears in a field that does not repeat.</td><td>Make the field repeating (<code>('C', n)</code>), or check the separators.</td></tr>
+<tr><td><code>[F01] line 3 pos 1: Record: "HEA" has unknown field "REMARK".</code></td><td>A field name not in the record definition (XML/JSON, or a mapping that writes a wrong name).</td><td>Add it to <code>recorddefs</code> or correct the name in the mapping.</td></tr>
+<tr><td><code>[G50]: Grammar "orders_erp" starts with record "HEA"; but in edi-file found start-record "ORDER".</code></td><td>The root record of the file (or the mapping output) is another one than the grammar's root.</td><td>Use the right grammar, or correct the root record.</td></tr>
+<tr><td><code>Found at least 10 errors.</code></td><td>More errors than <code>max_number_errors</code>.</td><td>Fix the first errors (often one cause); or raise <code>max_number_errors</code> in <code>bots.ini</code>.</td></tr>
+<tr><td><code>Repeating field: must be a list: put(...)</code></td><td>The mapping put a single value in a repeating field.</td><td>Put a list: <code>out.put({'BOTSID': 'HEA', 'REFERENCE': ['A1', 'B2']})</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="editype-edifact" data-title="EDIFACT" data-group="Grammars and mappings">
+<h2>EDIFACT</h2>
+<p class="lead">EDIFACT is the United Nations standard for EDI, used mostly in Europe and in retail (with the EANCOM guidelines). This page shows how Bots reads and writes EDIFACT files (editype <code>edifact</code>), which grammars you need, and how to solve the usual problems.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>An EDIFACT file is one long text of segments like <code>BGM+220+PO-1001+9'</code>. A segment starts with a three-letter tag, <code>+</code> separates fields, <code>:</code> separates parts of a field and <code>'</code> ends the segment. Several messages (orders, invoices) travel together in one "interchange", wrapped in an envelope: <code>UNB</code> at the start and <code>UNZ</code> at the end.</p></div>
+
+<h3 id="editype-edifact--how">How it works</h3>
+<pre><code class="language-text">UNA:+.? '                                                   service string advice (optional): the separators
+UNB+UNOA:3+PARTNERA:ZZ+5412345000013:14+260115:1030+1++ORDERS'   interchange header
+UNH+1+ORDERS:D:96A:UN:EAN008'                                message header: type ORDERS, version D96A
+BGM+220+PO-1001+9'
+DTM+137:20260115:102'
+NAD+BY+5412345000099::9'
+LIN+1++8712345678906:SRV'
+QTY+21:12'
+UNS+S'
+UNT+8+1'                                                     message trailer: 8 segments, reference 1
+UNZ+1+1'                                                     interchange trailer: 1 message, reference 1</code></pre>
+<p><b>Reading</b>:</p>
+<ol>
+<li>The route has incoming editype <code>edifact</code>. The <a href="#preprocessing">mailbag step</a> splits the file into interchanges (one UNB…UNZ each) and gives each the message type <code>edifact</code> (unless the route names a specific message type).</li>
+<li>Bots reads the start of the interchange: UNA (if present) gives the separators, decimal sign, escape and repetition character; UNB gives the character set (<code>UNOA</code>, <code>UNOC</code>, …) and the syntax version. Without UNA the standard separators <code>+ : ? '</code> are assumed (or the UNOB set <code>0x1D 0x1F 0x1C</code>).</li>
+<li>The envelope grammar <code>usersys/grammars/edifact/edifact.py</code> describes UNB, UNG, UNH, UNE, UNZ. At UNH its <code>SUBTRANSLATION</code> builds the message type from UNH: <code>S009.0065</code> + <code>0052</code> + <code>0054</code> + <code>0051</code> + <code>0057</code>, for example <code>ORDERS</code>+<code>D</code>+<code>96A</code>+<code>UN</code>+<code>EAN008</code> = <code>ORDERSD96AUNEAN008</code>. Bots reads that grammar for the segments of the message.</li>
+<li>Bots checks the envelope: UNB/UNZ references and message count, UNH/UNT references and segment count, UNG/UNE ([E01]-[E12]).</li>
+<li><code>nextmessage</code> splits the interchange into messages (also inside UNG groups with <code>nextmessage2</code>); each message goes to the mapping. <code>QUERIES</code> give partners and references.</li>
+<li>If a confirm rule asks for it, Bots sends a CONTRL message back (see <a href="#acknowledgements">Acknowledgements</a>).</li>
+</ol>
+<p><b>Writing</b>:</p>
+<ol>
+<li>Your mapping writes the message from <code>UNH</code> to <code>UNT</code>, including the segment count in UNT.</li>
+<li>Bots checks it with the message grammar and writes it with the separators of the syntax. Separators in the data get the escape character <code>?</code> in front.</li>
+<li>The envelope step adds UNA (when the charset is not UNOA or <code>forceUNA</code> is set), UNB and UNZ. The interchange reference is a counter per sender (or per sender and receiver with <code>interchangecontrolperpartner</code> in <code>bots.ini</code>). With <code>merge: True</code> (default) all messages for the same partners of one run go in one interchange.</li>
+</ol>
+
+<h3 id="editype-edifact--grammar">Example grammars</h3>
+<p>Bots needs two kinds of grammar for EDIFACT. Plugins with ready-made grammars for EANCOM and UN messages exist; the examples below show what is in them.</p>
+<p><b>The envelope grammar</b> <code>usersys/grammars/edifact/edifact.py</code>:</p>
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'charset': 'UNOA',
+    'version': '3',
+}
+
+nextmessage = ({'BOTSID': 'UNB'}, {'BOTSID': 'UNH'})
+nextmessage2 = ({'BOTSID': 'UNB'}, {'BOTSID': 'UNG'}, {'BOTSID': 'UNH'})
+
+UNH_SUBTRANSLATION = [
+    {'BOTSID': 'UNH', 'S009.0065': None},
+    {'BOTSID': 'UNH', 'S009.0052': None},
+    {'BOTSID': 'UNH', 'S009.0054': None},
+    {'BOTSID': 'UNH', 'S009.0051': None},
+    {'BOTSID': 'UNH', 'S009.0057': None},
+]
+
+structure = [
+    {ID: 'UNB', MIN: 1, MAX: 1,
+     QUERIES: {
+         'frompartner':   {'BOTSID': 'UNB', 'S002.0004': None},
+         'topartner':     {'BOTSID': 'UNB', 'S003.0010': None},
+         'reference':     {'BOTSID': 'UNB', '0020': None},
+         'testindicator': {'BOTSID': 'UNB', '0035': None},
+     },
+     LEVEL: [
+         {ID: 'UNG', MIN: 0, MAX: 99999, LEVEL: [
+             {ID: 'UNH', MIN: 0, MAX: 99999,
+              QUERIES: {'reference': {'BOTSID': 'UNH', '0062': None}},
+              SUBTRANSLATION: UNH_SUBTRANSLATION},
+             {ID: 'UNE', MIN: 1, MAX: 1},
+         ]},
+         {ID: 'UNH', MIN: 0, MAX: 99999,
+          QUERIES: {'reference': {'BOTSID': 'UNH', '0062': None}},
+          SUBTRANSLATION: UNH_SUBTRANSLATION},
+         {ID: 'UNZ', MIN: 1, MAX: 1},
+     ]},
+]
+
+recorddefs = {
+    'UNB': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['S001', 'M', [['S001.0001', 'M', 4, 'AN'], ['S001.0002', 'M', 1, 'AN'],
+                       ['S001.0080', 'C', 6, 'AN'], ['S001.0133', 'C', 3, 'AN']]],
+        ['S002', 'M', [['S002.0004', 'M', 35, 'AN'], ['S002.0007', 'C', 4, 'AN'],
+                       ['S002.0008', 'C', 35, 'AN'], ['S002.0042', 'C', 35, 'AN']]],
+        ['S003', 'M', [['S003.0010', 'M', 35, 'AN'], ['S003.0007', 'C', 4, 'AN'],
+                       ['S003.0014', 'C', 35, 'AN'], ['S003.0046', 'C', 35, 'AN']]],
+        ['S004', 'M', [['S004.0017', 'M', 8, 'AN'], ['S004.0019', 'M', 4, 'AN']]],
+        ['0020', 'M', 14, 'AN'],
+        ['S005', 'C', [['S005.0022', 'M', 14, 'AN'], ['S005.0025', 'C', 2, 'AN']]],
+        ['0026', 'C', 14, 'AN'],
+        ['0029', 'C', 1, 'AN'],
+        ['0031', 'C', 1, 'AN'],
+        ['0032', 'C', 35, 'AN'],
+        ['0035', 'C', 1, 'AN'],
+    ],
+    'UNG': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0038', 'M', 6, 'AN'],
+        ['S006', 'M', [['S006.0040', 'M', 35, 'AN'], ['S006.0007', 'C', 4, 'AN']]],
+        ['S007', 'M', [['S007.0044', 'M', 35, 'AN'], ['S007.0007', 'C', 4, 'AN']]],
+        ['S004', 'M', [['S004.0017', 'M', 8, 'AN'], ['S004.0019', 'M', 4, 'AN']]],
+        ['0048', 'M', 14, 'AN'],
+        ['0051', 'M', 2, 'AN'],
+        ['S008', 'M', [['S008.0052', 'M', 3, 'AN'], ['S008.0054', 'M', 3, 'AN'],
+                       ['S008.0057', 'C', 6, 'AN']]],
+        ['0058', 'C', 14, 'AN'],
+    ],
+    'UNH': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0062', 'M', 14, 'AN'],
+        ['S009', 'M', [['S009.0065', 'M', 6, 'AN'], ['S009.0052', 'M', 3, 'AN'],
+                       ['S009.0054', 'M', 3, 'AN'], ['S009.0051', 'M', 2, 'AN'],
+                       ['S009.0057', 'C', 6, 'AN']]],
+        ['0068', 'C', 35, 'AN'],
+    ],
+    'UNE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0060', 'M', 6, 'N'],
+        ['0048', 'M', 14, 'AN'],
+    ],
+    'UNZ': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0036', 'M', 6, 'N'],
+        ['0020', 'M', 14, 'AN'],
+    ],
+}</code></pre>
+<p><b>A message grammar</b> <code>usersys/grammars/edifact/ORDERSD96AUNEAN008.py</code> (small; a real ORDERS grammar has many more segments). The root record is <code>UNH</code>, the same record that has <code>SUBTRANSLATION</code> in the envelope grammar:</p>
+<pre><code class="language-python">from bots.botsconfig import *
+
+structure = [
+    {ID: 'UNH', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BGM', MIN: 1, MAX: 1},
+        {ID: 'DTM', MIN: 1, MAX: 35},
+        {ID: 'NAD', MIN: 0, MAX: 99},
+        {ID: 'LIN', MIN: 1, MAX: 9999, LEVEL: [
+            {ID: 'QTY', MIN: 1, MAX: 99},
+        ]},
+        {ID: 'UNS', MIN: 1, MAX: 1},
+        {ID: 'UNT', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'UNH': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0062', 'M', 14, 'AN'],
+        ['S009', 'M', [['S009.0065', 'M', 6, 'AN'], ['S009.0052', 'M', 3, 'AN'],
+                       ['S009.0054', 'M', 3, 'AN'], ['S009.0051', 'M', 2, 'AN'],
+                       ['S009.0057', 'C', 6, 'AN']]],
+    ],
+    'BGM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['C002', 'C', [['C002.1001', 'C', 3, 'AN'], ['C002.1131', 'C', 3, 'AN'],
+                       ['C002.3055', 'C', 3, 'AN'], ['C002.1000', 'C', 35, 'AN']]],
+        ['1004', 'C', 35, 'AN'],
+        ['1225', 'C', 3, 'AN'],
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['C507', 'M', [['C507.2005', 'M', 3, 'AN'], ['C507.2380', 'C', 35, 'AN'],
+                       ['C507.2379', 'C', 3, 'AN']]],
+    ],
+    'NAD': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['3035', 'M', 3, 'AN'],
+        ['C082', 'C', [['C082.3039', 'M', 35, 'AN'], ['C082.1131', 'C', 3, 'AN'],
+                       ['C082.3055', 'C', 3, 'AN']]],
+    ],
+    'LIN': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['1082', 'C', 6, 'N'],
+        ['1229', 'C', 3, 'AN'],
+        ['C212', 'C', [['C212.7140', 'C', 35, 'AN'], ['C212.7143', 'C', 3, 'AN']]],
+    ],
+    'QTY': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['C186', 'M', [['C186.6063', 'M', 3, 'AN'], ['C186.6060', 'M', 15, 'N'],
+                       ['C186.6411', 'C', 3, 'AN']]],
+    ],
+    'UNS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0081', 'M', 1, 'AN'],
+    ],
+    'UNT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['0074', 'M', 6, 'N'],
+        ['0062', 'M', 14, 'AN'],
+    ],
+}</code></pre>
+<p>Formats in EDIFACT grammars are <code>A</code>, <code>AN</code> (text) and <code>N</code> (a number with any number of decimals). Lengths of numbers do not count the minus sign and the decimal sign. In plugins the segment definitions are usually in a shared file (for example <code>recordsD96AUN.py</code>) that the message grammars import (see <a href="#grammars--reuse">Grammars</a>).</p>
+
+<h3 id="editype-edifact--howto-in">How to receive EDIFACT messages</h3>
+<ol class="steps">
+<li><b>Install the grammars</b>: the envelope grammar <code>edifact.py</code> and the message grammars (for example from a plugin: <span class="ui">Plugins</span> → <span class="ui">Read plugin</span>), in <code>usersys/grammars/edifact/</code>.</li>
+<li><b>Make a route</b> (<span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>), for example <code>orders_in</code>, with an incoming channel, <span class="ui">Fromeditype</span> <code>edifact</code> and <span class="ui">Frommessagetype</span> <code>edifact</code>.</li>
+<li><b>Add a translation</b> (<span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>): from editype <code>edifact</code>, from messagetype <code>ORDERSD96AUNEAN008</code>, your mapping, and the outgoing editype and message type.</li>
+<li><b>Run</b> the route with a test file. Expected: in <span class="ui">Incoming</span> the file is OK, with partner <code>PARTNERA</code> and the message type of each message.</li>
+</ol>
+
+<h3 id="editype-edifact--howto-out">How to send EDIFACT messages</h3>
+<ol class="steps">
+<li><b>Write the mapping</b> (for example <code>invoice_csv_to_edifact.py</code>) so that it fills the message from UNH to UNT. Put the message reference in <code>UNH.0062</code> and <code>UNT.0062</code>, and the number of segments in <code>UNT.0074</code>:
+<pre><code class="language-python">out.put({'BOTSID': 'UNH', '0062': out.ta_info['reference'],
+         'S009.0065': 'INVOIC', 'S009.0052': 'D', 'S009.0054': '96A',
+         'S009.0051': 'UN', 'S009.0057': 'EAN008'})
+# ... the other segments ...
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'UNT', '0074': out.getcount() + 1,
+                            '0062': out.ta_info['reference']})</code></pre></li>
+<li><b>Make sure the partners are known</b>: frompartner and topartner must be set (by the translation, a partner lookup in the mapping, or <code>out.ta_info</code>), otherwise enveloping fails. The partner IDs are written in UNB.</li>
+<li><b>Set the envelope values</b> per partner in <code>usersys/partners/edifact/&lt;partnerid&gt;.py</code> if they differ from the defaults: qualifiers (<code>UNB.S002.0007</code>, <code>UNB.S003.0007</code>), <code>charset</code>, <code>forceUNA</code>, <code>UNB.0026</code>.</li>
+<li><b>Run</b> the route. Expected: in <span class="ui">Outgoing</span> one file per interchange, starting with <code>UNB+UNOA:3+5412345000013:14+…</code>.</li>
+</ol>
+
+<h3 id="editype-edifact--howto-una">How to use another character set or syntax version</h3>
+<ol class="steps">
+<li><b>Agree with the partner</b> which character set (for example <code>UNOC</code> for Western European letters) and syntax version (3 or 4).</li>
+<li><b>Set it</b> in the partner syntax: <code>'charset': 'UNOC'</code>, <code>'version': '4'</code>. With version 4 the UNB date has 8 digits and the repetition separator <code>*</code> is used and written in UNA.</li>
+<li><b>Expect</b> a UNA segment at the start (written because the character set is not UNOA).</li>
+</ol>
+
+<h3 id="editype-edifact--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>separators (<code>sfield_sep</code>, <code>field_sep</code>, <code>decimaal</code>, <code>escape</code>, <code>reserve</code>, <code>record_sep</code>)</td><td>The six characters of UNA. Reading: from UNA in the file; writing: from the syntax.</td><td><code>:</code> <code>+</code> <code>.</code> <code>?</code> <code>*</code> <code>'</code></td><td>see <a href="#grammar-syntax--sep">Grammar syntax options</a></td></tr>
+<tr><td><code>charset</code></td><td>UNB S001.0001; also the encoding. <code>UNOA</code>, <code>UNOB</code> from <code>usersys/charsets/</code>; <code>UNOC</code>…<code>UNOK</code>, <code>UNOW</code> via aliases in <code>bots.ini</code> <code>[charsets]</code>.</td><td><code>'UNOA'</code></td><td><code>'UNOC'</code></td></tr>
+<tr><td><code>version</code></td><td>UNB S001.0002.</td><td><code>'3'</code></td><td><code>'4'</code></td></tr>
+<tr><td><code>forceUNA</code></td><td>Always write UNA.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>UNB.*</code>, <code>S002.0004</code>, <code>S003.0010</code></td><td>Values for the UNB segment.</td><td>see <a href="#grammar-syntax--edifact">Grammar syntax options</a></td><td><code>'UNB.S002.0007': 'ZZ'</code></td></tr>
+<tr><td><code>add_crlfafterrecord_sep</code></td><td>Line end after each segment when writing.</td><td><code>'\r\n'</code></td><td><code>''</code> for one line</td></tr>
+<tr><td><code>skip_char</code></td><td>Characters ignored when reading.</td><td><code>'\r\n'</code></td><td></td></tr>
+<tr><td><code>merge</code></td><td>Several messages in one interchange.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td>envelope data from the mapping</td><td>UNB values set by the mapping in <code>out.envelope_content[0]</code> (keys like <code>'0026'</code>, <code>'S002.0004'</code>, <code>'0035'</code>) have priority over syntax and partner.</td><td>empty</td><td>see <a href="#envelopes">Envelopes</a></td></tr>
+<tr><td>message type</td><td><code>S009.0065</code>+<code>0052</code>+<code>0054</code>+<code>0051</code>+<code>0057</code>, dots replaced by <code>_</code>.</td><td>-</td><td><code>ORDERSD96AUNEAN008</code>, <code>INVOICD01BUN</code></td></tr>
+<tr><td><code>[settings] compatibility_mailbag</code> in <code>bots.ini</code> <span class="badge gray">advanced</span></td><td><code>True</code>: only routes with editype <code>mailbag</code> run the mailbag step; then a route with editype <code>edifact</code> must get files with one interchange.</td><td><code>False</code></td><td>see <a href="#bots-ini">bots.ini</a></td></tr>
+</table></div>
+
+<h3 id="editype-edifact--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[A54]: Found no "UNB" at the start of edifact file. Probably not be edifact.</code></td><td>The file does not start with UNA/UNB (another format, or garbage before UNB).</td><td>Check the file. If the partner sends several formats, use editype <code>mailbag</code> in the route.</td></tr>
+<tr><td><code>[A57]: Edifact file has non-standard separators. An UNA segment is required.</code></td><td>The file uses separators other than <code>+ :</code> without UNA.</td><td>Ask the partner to send UNA, or to use standard separators.</td></tr>
+<tr><td><code>[A56]: Separators as used in edifact file are different from values as in UNA-segment.</code></td><td>UNA says one separator, UNB uses another.</td><td>The file is wrong; ask the partner to correct it.</td></tr>
+<tr><td><code>[A53]: Edifact file contains "UNA" and than garbage.</code></td><td>The UNA segment is shorter than 6 characters after <code>UNA</code>.</td><td>Ask for a correct UNA (<code>UNA:+.? '</code>).</td></tr>
+<tr><td><code>[A58]: Edifact file has unknown characterset "UNOX".</code></td><td>The character set in UNB is not known to Bots.</td><td>Add an alias in <code>bots.ini</code> section <code>[charsets]</code> (for example <code>unox = ...</code>), or a codec file in <code>usersys/charsets/</code>.</td></tr>
+<tr><td><code>[A59]: Edifact file has not allowed characters at/after file-position 211.</code></td><td>A character is not in the character set of UNB, for example lower-case letters with UNOA.</td><td>Ask the partner to use the right charset in UNB (for example UNOC), or set <code>'checkcharsetin': 'botsreplace'</code> in <code>edifact.py</code>.</td></tr>
+<tr><td><code>[A68]: Edifact file starts with BOM.</code></td><td>The file starts with a UTF-8 byte order mark.</td><td>Ask for a file without BOM, or remove it in a preprocessing script.</td></tr>
+<tr><td><code>[A55]: Problems with UNB-segment; too many &lt;CR/LF&gt;.</code></td><td>The UNB segment is broken by line ends at an unusual place.</td><td>Ask for a correct file.</td></tr>
+<tr><td><code>[A64]: Separator problem in edi file: same separator is used twice.</code> (also [A65] space, [A66] alphanumeric)</td><td>UNA defines the same character twice, a space, or a letter/digit as separator.</td><td>The file is wrong; ask the partner to correct UNA.</td></tr>
+<tr><td><code>No (valid) grammar for editype "edifact" messagetype "ORDERSD96AUNEAN008".</code></td><td>There is no grammar for this message type.</td><td>Add <code>usersys/grammars/edifact/ORDERSD96AUNEAN008.py</code>, or add a <code>getmessagetype</code> function to <code>edifact.py</code> that maps it to a grammar you have.</td></tr>
+<tr><td><code>Could not find SUBTRANSLATION "[...]" in (sub)message.</code></td><td>UNH has no message type fields (S009 empty).</td><td>Check the UNH segment of the file.</td></tr>
+<tr><td><code>[E05]: Segmentcount in UNT is 9; should be equal to number of segments 8.</code></td><td>The count in UNT is wrong (incoming file).</td><td>Ask the partner to correct it. For your own outgoing messages: <code>'0074': out.getcount() + 1</code> in the mapping.</td></tr>
+<tr><td><code>[E02]: Count of messages in UNZ is 2; should be equal to number of messages 1.</code></td><td>UNZ does not count the messages correctly.</td><td>Ask the partner to correct it.</td></tr>
+<tr><td><code>[E01]: UNB-reference is "17"; should be equal to UNZ-reference "18".</code> (also [E04] UNH/UNT, [E07] UNG/UNE)</td><td>Header and trailer have different references.</td><td>Ask the partner to correct it.</td></tr>
+<tr><td><code>In enveloping "topartner" unknown.</code></td><td>The outgoing message has no topartner (or frompartner).</td><td>Set the partners in the translation, the mapping (<code>out.ta_info['topartner']</code>) or via <code>QUERIES</code> of the incoming message.</td></tr>
+<tr><td><code>Grammar "...", in structure: nesting collision detected at record "...".</code></td><td>A standard UN message structure is ambiguous.</td><td>Edit the grammar: make segments mandatory or leave out unused groups, as the implementation guide does.</td></tr>
+</table></div>
+</section>
+
+<section id="editype-x12" data-title="X12" data-group="Grammars and mappings">
+<h2>X12</h2>
+<p class="lead">X12 (ANSI ASC X12) is the EDI standard used mostly in North America. This page shows how Bots reads and writes X12 files (editype <code>x12</code>), which grammars you need, and how to solve the usual problems.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>An X12 file is a series of segments like <code>BEG*00*SA*PO-1001**20260115~</code>: a tag, fields separated by <code>*</code>, and <code>~</code> at the end. The file starts with a fixed-length <code>ISA</code> segment that also tells which separators are used. Messages (called transaction sets, <code>ST</code>…<code>SE</code>) are grouped in functional groups (<code>GS</code>…<code>GE</code>) inside the interchange (<code>ISA</code>…<code>IEA</code>).</p></div>
+
+<h3 id="editype-x12--how">How it works</h3>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*PARTNERA       *ZZ*MYCOMPANY      *260115*1030*U*00401*000000001*0*P*&gt;~
+GS*PO*PARTNERA*MYCOMPANY*20260115*1030*1*X*004010~
+ST*850*0001~
+BEG*00*SA*PO-1001**20260115~
+N1*ST*MyCompany Warehouse*92*WH01~
+PO1*1*12*EA*9.95**VP*ART-100~
+PID*F****Blue widget~
+CTT*1~
+SE*7*0001~
+GE*1*1~
+IEA*1*000000001~</code></pre>
+<p><b>Reading</b>:</p>
+<ol>
+<li>The route has incoming editype <code>x12</code>, message type <code>x12</code>. The <a href="#preprocessing">mailbag step</a> splits the file into interchanges.</li>
+<li>Bots reads the ISA segment by position: character 4 is the element separator, 105 the sub-element separator, 106 the segment terminator, 83 the repetition separator (ISA11, only for version <code>00403</code> and later and only if it is not a letter or digit), 85-89 the version. A CR or LF used as segment terminator is not skipped.</li>
+<li>The envelope grammar <code>usersys/grammars/x12/x12.py</code> describes ISA, GS, ST, GE, IEA. At ST its <code>SUBTRANSLATION</code> gives <code>ST01</code> (for example <code>850</code>); Bots adds <code>GS08</code> of the group (<code>004010</code>) and reads grammar <code>850004010</code>.</li>
+<li>Bots checks the envelope: ISA13/IEA02, the group count in IEA01, GS06/GE02, the message count in GE01, ST02/SE02 and the segment count in SE01 ([E13]-[E21]).</li>
+<li>Each ST…SE goes to the mapping. With a confirm rule, Bots sends a 997 back (see <a href="#acknowledgements">Acknowledgements</a>).</li>
+</ol>
+<p><b>Writing</b>:</p>
+<ol>
+<li>Your mapping writes ST to SE, including the segment count in SE01.</li>
+<li>Bots writes the message. X12 has no escape character: a separator in the data gives error [F51], unless <code>replacechar</code> is set.</li>
+<li>The envelope step writes ISA, GS, GE and IEA. ISA06/ISA08 are padded to 15 characters; ISA13 is a counter per sender; GS01 comes from <code>functionalgroup</code>; GS08 is the message type without its first 3 characters (<code>850004010</code> gives <code>004010</code>; <code>850004010VICS</code> gives <code>004010VICS</code>); GS04 has 8 digits from version <code>004010</code> on, else 6.</li>
+</ol>
+
+<h3 id="editype-x12--grammar">Example grammars</h3>
+<p><b>The envelope grammar</b> <code>usersys/grammars/x12/x12.py</code>:</p>
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'version': '00401',
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+}
+
+nextmessage = ({'BOTSID': 'ISA'}, {'BOTSID': 'GS'}, {'BOTSID': 'ST'})
+
+structure = [
+    {ID: 'ISA', MIN: 1, MAX: 1,
+     QUERIES: {
+         'frompartner':   {'BOTSID': 'ISA', 'ISA06': None},
+         'topartner':     {'BOTSID': 'ISA', 'ISA08': None},
+         'reference':     {'BOTSID': 'ISA', 'ISA13': None},
+         'testindicator': {'BOTSID': 'ISA', 'ISA15': None},
+     },
+     LEVEL: [
+         {ID: 'GS', MIN: 1, MAX: 99999, LEVEL: [
+             {ID: 'ST', MIN: 0, MAX: 99999,
+              QUERIES: {'reference': {'BOTSID': 'ST', 'ST02': None}},
+              SUBTRANSLATION: {'BOTSID': 'ST', 'ST01': None}},
+             {ID: 'GE', MIN: 1, MAX: 1},
+         ]},
+         {ID: 'IEA', MIN: 1, MAX: 1},
+     ]},
+]
+
+recorddefs = {
+    'ISA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ISA01', 'M', (2, 2), 'ID'],
+        ['ISA02', 'M', (10, 10), 'AN'],
+        ['ISA03', 'M', (2, 2), 'ID'],
+        ['ISA04', 'M', (10, 10), 'AN'],
+        ['ISA05', 'M', (2, 2), 'ID'],
+        ['ISA06', 'M', (15, 15), 'AN'],
+        ['ISA07', 'M', (2, 2), 'ID'],
+        ['ISA08', 'M', (15, 15), 'AN'],
+        ['ISA09', 'M', (6, 6), 'DT'],
+        ['ISA10', 'M', (4, 4), 'TM'],
+        ['ISA11', 'C', (1, 1), 'AN'],      # repetition separator from 00403 on
+        ['ISA12', 'M', (5, 5), 'ID'],
+        ['ISA13', 'M', (9, 9), 'N0'],
+        ['ISA14', 'M', (1, 1), 'ID'],
+        ['ISA15', 'M', (1, 1), 'ID'],
+        ['ISA16', 'C', [['ISA16.01', 'C', 1, 'AN'], ['ISA16.02', 'C', 1, 'AN']]],
+    ],
+    'GS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GS01', 'M', (2, 2), 'ID'],
+        ['GS02', 'M', (2, 15), 'AN'],
+        ['GS03', 'M', (2, 15), 'AN'],
+        ['GS04', 'M', (6, 8), 'DT'],
+        ['GS05', 'M', (4, 8), 'TM'],
+        ['GS06', 'M', (1, 9), 'N0'],
+        ['GS07', 'M', (1, 2), 'ID'],
+        ['GS08', 'M', (1, 12), 'AN'],
+    ],
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'GE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GE01', 'M', (1, 6), 'N0'],
+        ['GE02', 'M', (1, 9), 'N0'],
+    ],
+    'IEA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['IEA01', 'M', (1, 5), 'N0'],
+        ['IEA02', 'M', (9, 9), 'N0'],
+    ],
+}</code></pre>
+<div class="note info"><span class="label">Note</span><p>The last ISA element (ISA16) is the sub-element separator itself. When reading, Bots sees it as a separator, so in this example ISA16 is an empty composite. When writing, Bots puts the separators in ISA itself; the grammar values for ISA16 are not used.</p></div>
+<p><b>A message grammar</b> <code>usersys/grammars/x12/850004010.py</code> (small). The root is <code>ST</code>; <code>functionalgroup</code> gives GS01:</p>
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'functionalgroup': 'PO',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BEG', MIN: 1, MAX: 1},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'N1', MIN: 0, MAX: 200, LEVEL: [
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+        ]},
+        {ID: 'PO1', MIN: 1, MAX: 100000, LEVEL: [
+            {ID: 'PID', MIN: 0, MAX: 1000},
+        ]},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST':  [['BOTSID', 'M', 3, 'AN'], ['ST01', 'M', (3, 3), 'ID'], ['ST02', 'M', (4, 9), 'AN']],
+    'BEG': [['BOTSID', 'M', 3, 'AN'], ['BEG01', 'M', (2, 2), 'ID'], ['BEG02', 'M', (2, 2), 'ID'],
+            ['BEG03', 'M', (1, 22), 'AN'], ['BEG04', 'C', (1, 30), 'AN'], ['BEG05', 'M', (8, 8), 'DT']],
+    'DTM': [['BOTSID', 'M', 3, 'AN'], ['DTM01', 'M', (3, 3), 'ID'], ['DTM02', 'C', (8, 8), 'DT']],
+    'N1':  [['BOTSID', 'M', 3, 'AN'], ['N101', 'M', (2, 3), 'ID'], ['N102', 'C', (1, 60), 'AN'],
+            ['N103', 'C', (1, 2), 'ID'], ['N104', 'C', (2, 80), 'AN']],
+    'N3':  [['BOTSID', 'M', 3, 'AN'], ['N301', 'M', (1, 55), 'AN'], ['N302', 'C', (1, 55), 'AN']],
+    'N4':  [['BOTSID', 'M', 3, 'AN'], ['N401', 'C', (2, 30), 'AN'], ['N402', 'C', (2, 2), 'ID'],
+            ['N403', 'C', (3, 15), 'ID'], ['N404', 'C', (2, 3), 'ID']],
+    'PO1': [['BOTSID', 'M', 3, 'AN'], ['PO101', 'C', (1, 20), 'AN'], ['PO102', 'M', (1, 15), 'R'],
+            ['PO103', 'M', (2, 2), 'ID'], ['PO104', 'C', (1, 17), 'R'], ['PO105', 'C', (2, 2), 'ID'],
+            ['PO106', 'C', (2, 2), 'ID'], ['PO107', 'C', (1, 48), 'AN']],
+    'PID': [['BOTSID', 'M', 3, 'AN'], ['PID01', 'M', (1, 1), 'ID'], ['PID02', 'C', (2, 3), 'ID'],
+            ['PID03', 'C', (2, 2), 'ID'], ['PID04', 'C', (1, 12), 'AN'], ['PID05', 'C', (1, 80), 'AN']],
+    'CTT': [['BOTSID', 'M', 3, 'AN'], ['CTT01', 'M', (1, 6), 'N0'], ['CTT02', 'C', (1, 10), 'R']],
+    'SE':  [['BOTSID', 'M', 3, 'AN'], ['SE01', 'M', (1, 10), 'N0'], ['SE02', 'M', (4, 9), 'AN']],
+}</code></pre>
+<p>Formats in X12 grammars: <code>AN</code> (text), <code>ID</code> (code value), <code>B</code> (binary, as text), <code>DT</code> (date), <code>TM</code> (time), <code>R</code> (decimal number), <code>N</code> and <code>N0</code>-<code>N9</code> (number with 0-9 implied decimals). <code>A</code> is not allowed.</p>
+
+<h3 id="editype-x12--howto-in">How to receive X12 messages</h3>
+<ol class="steps">
+<li><b>Install the grammars</b> <code>x12.py</code> and the message grammars (for example <code>850004010.py</code>) in <code>usersys/grammars/x12/</code>, for example from a plugin.</li>
+<li><b>Make a route</b> <code>orders_in</code> with <span class="ui">Fromeditype</span> <code>x12</code> and <span class="ui">Frommessagetype</span> <code>x12</code>.</li>
+<li><b>Add a translation</b>: from editype <code>x12</code>, from messagetype <code>850004010</code>, mapping <code>orders_x12_to_csv.py</code>, to editype <code>csv</code>, to messagetype <code>orders_erp</code>.</li>
+<li><b>Add partners</b> <code>PARTNERA</code> and <code>MYCOMPANY</code> (<span class="ui">Configuration</span> → <span class="ui">Partners</span>); the IDs are the values in ISA06/ISA08 (without the padding spaces).</li>
+<li><b>Run</b> and check <span class="ui">Incoming</span>. Expected: one line per 850, frompartner <code>PARTNERA</code>.</li>
+</ol>
+
+<h3 id="editype-x12--howto-out">How to send X12 messages</h3>
+<ol class="steps">
+<li><b>Write the mapping</b> (for example for an 810) so that it fills ST to SE:
+<pre><code class="language-python">out.put({'BOTSID': 'ST', 'ST01': '810', 'ST02': out.ta_info['reference']})
+# ... BIG, N1 loops, IT1 loops, TDS ...
+out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1,
+                           'SE02': out.ta_info['reference']})</code></pre></li>
+<li><b>Set <code>functionalgroup</code></b> in the 810 grammar (<code>'IN'</code>) if the grammar does not have it.</li>
+<li><b>Set partner values</b> in <code>usersys/partners/x12/PARTNERA.py</code>: <code>ISA05</code>/<code>ISA07</code> qualifiers, <code>ISA15</code> (<code>'T'</code> while testing), separators, <code>version</code>.</li>
+<li><b>Run</b>. Expected: in <span class="ui">Outgoing</span> a file starting with <code>ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *</code>.</li>
+</ol>
+
+<h3 id="editype-x12--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>field_sep</code>, <code>sfield_sep</code>, <code>record_sep</code>, <code>reserve</code></td><td>Element, sub-element, segment and repetition separators. Reading: from ISA; writing: from the syntax.</td><td><code>'*'</code>, <code>'&gt;'</code>, <code>'~'</code>, <code>'^'</code></td><td>partner syntax <code>'field_sep': '|'</code></td></tr>
+<tr><td><code>version</code></td><td>ISA12.</td><td><code>'00403'</code></td><td><code>'00401'</code>, <code>'00501'</code></td></tr>
+<tr><td><code>functionalgroup</code></td><td>GS01.</td><td><code>'XX'</code></td><td><code>'PO'</code>, <code>'IN'</code>, <code>'SH'</code></td></tr>
+<tr><td><code>ISA01</code>-<code>ISA05</code>, <code>ISA07</code>, <code>ISA11</code>, <code>ISA14</code>, <code>ISA15</code>, <code>GS07</code></td><td>Envelope values.</td><td>see <a href="#grammar-syntax--x12">Grammar syntax options</a></td><td></td></tr>
+<tr><td><code>ISA06</code>, <code>ISA08</code>, <code>GS02</code>, <code>GS03</code>, <code>IDmode</code></td><td>Envelope IDs other than the partner ID.</td><td>not set</td><td></td></tr>
+<tr><td><code>replacechar</code></td><td>Replacement for separators in data.</td><td><code>''</code> (error)</td><td><code>' '</code></td></tr>
+<tr><td>envelope data from the mapping</td><td><code>out.envelope_content[0]</code> (ISA fields, for example <code>'ISA14'</code>, <code>'ISA15'</code>) and <code>out.envelope_content[1]</code> (GS fields, for example <code>'GS02'</code>, <code>'GS08'</code>) have priority.</td><td>empty</td><td>see <a href="#envelopes">Envelopes</a></td></tr>
+<tr><td>message type</td><td><code>ST01</code> + <code>GS08</code>.</td><td>-</td><td><code>850004010</code>, <code>810004010</code>, <code>856005010</code></td></tr>
+<tr><td><code>[settings] x12_997_version_as_received</code> in <code>bots.ini</code></td><td><code>False</code>: Bots writes its own 997 with grammar <code>997004010</code>. <code>True</code>: the version of the received GS08 if that grammar exists.</td><td><code>False</code></td><td>see <a href="#acknowledgements">Acknowledgements</a></td></tr>
+</table></div>
+
+<h3 id="editype-x12--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[A60]: Expect "ISA", found "...". Probably no x12?</code></td><td>The file does not start with ISA.</td><td>Check the file; use editype <code>mailbag</code> if different formats arrive on one channel.</td></tr>
+<tr><td><code>[A63]: Non-valid ISA header; position 35 of ISA is "Z", expect here element separator "*".</code></td><td>An ISA element has the wrong length (ISA is fixed length; for example ISA06 not padded to 15).</td><td>Ask the partner for a correct ISA.</td></tr>
+<tr><td><code>[A62]: Expect X12 file but envelope is not right.</code> / <code>[A61]: Edi file contains only whitespace.</code></td><td>The ISA segment is shorter than 106 characters, or the file is empty.</td><td>Check the file.</td></tr>
+<tr><td><code>[A64]: Separator problem in edi file: same separator is used twice.</code></td><td>Two of the separators in ISA are the same, for example ISA11 equal to the sub-element separator.</td><td>Ask the partner to correct ISA.</td></tr>
+<tr><td><code>No (valid) grammar for editype "x12" messagetype "850004010VICS".</code></td><td>GS08 has an implementation suffix; there is no grammar with that name.</td><td>Add a grammar <code>850004010VICS.py</code> (a copy of <code>850004010.py</code>), or add a function <code>getmessagetype(editype, messagetype)</code> to <code>x12.py</code> that returns <code>'850004010'</code> for <code>'850004010VICS'</code>.</td></tr>
+<tr><td><code>[F51]: Character "*" is used as separator in this x12 file, so it can not be used in content. Field: "A*B".</code></td><td>Outgoing data contains a separator.</td><td>Set <code>'replacechar'</code> in the syntax, or clean the data in the mapping.</td></tr>
+<tr><td><code>[E20]: Count in SE-SE01 is 8; should be equal to number of segments 7.</code></td><td>SE01 is wrong in the incoming file.</td><td>Ask the partner to correct it. Outgoing: use <code>out.getcount() + 1</code>.</td></tr>
+<tr><td><code>[E17]: Count in GE-GE01 is 2; should be equal to number of transactions: 1.</code> / <code>[E14]: Count in IEA-IEA01 ...</code></td><td>Counts in the trailers do not match.</td><td>Ask the partner to correct it.</td></tr>
+<tr><td><code>[E19]: ST-reference is "0001"; should be equal to SE-reference "0002".</code> (also [E13] ISA/IEA, [E16] GS/GE)</td><td>Header and trailer references differ.</td><td>Ask the partner to correct it.</td></tr>
+<tr><td>Outgoing GS01 is <code>XX</code>.</td><td><code>functionalgroup</code> is not set in the message grammar.</td><td>Add <code>'functionalgroup': 'PO'</code> (or the right code) to the grammar's syntax.</td></tr>
+<tr><td>Partner gets ISA14 <code>1</code> and complains, or expects <code>0</code>.</td><td>Default <code>ISA14</code> is <code>'1'</code> (acknowledgment requested).</td><td>Set <code>'ISA14': '0'</code> in <code>x12.py</code> or the partner syntax.</td></tr>
+<tr><td><code>[F40] ...: expect not-repeating elemen, but "..." is repeating.</code></td><td>The repetition separator of ISA11 (version 00403 and later) appears in a field that does not repeat.</td><td>Make the field repeating in the grammar, or ask the partner which separator is meant.</td></tr>
+</table></div>
+</section>
+
+<section id="editype-csv-fixed" data-title="CSV and fixed files" data-group="Grammars and mappings">
+<h2>CSV and fixed files</h2>
+<p class="lead">Most in-house systems (ERP, warehouse, accounting) exchange data with Bots as csv files (fields separated by a character) or fixed files (each field at a fixed position). This page shows how Bots reads and writes them (editypes <code>csv</code> and <code>fixed</code>), with complete example grammars.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A csv file is like a spreadsheet saved as text: one line per record, values separated by commas or semicolons. A fixed file has no separators at all: the order number is always in columns 4 to 23, the date in columns 24 to 31, and so on. In both, the grammar tells Bots which value is which.</p></div>
+
+<h3 id="editype-csv-fixed--how">How it works</h3>
+<h4>csv</h4>
+<ol>
+<li><b>Lexing.</b> Bots reads the file with the grammar's <code>charset</code>. Each character of <code>record_sep</code> ends a record (the default <code>'\r\n'</code> accepts Windows and Linux line ends; empty lines are skipped). Each character of <code>field_sep</code> ends a field. A value that starts with <code>quote_char</code> runs to the next quote character; two quote characters inside it are one. A character after <code>escape</code> is taken as data.</li>
+<li><b>Skipping.</b> With <code>skip_firstline</code> the first line(s) are dropped (column names).</li>
+<li><b>Record ID.</b> The first field of each line is the record ID (<code>BOTSID</code>). With <code>noBOTSID: True</code> the lines have no record ID and Bots uses the ID of the root record of the grammar; with <code>noBOTSID: 2</code> the third field is the record ID.</li>
+<li><b>Parsing.</b> Each line is matched with the <code>structure</code> and its fields are named by position with <code>recorddefs</code>. Spaces around values are removed (<code>strip_value</code>).</li>
+<li><b>Messages.</b> By default the whole file is one message for the mapping (<code>pass_all: True</code>). With <code>nextmessageblock</code> consecutive lines with the same value in a field (for example the order number) form one message. With <code>pass_all: False</code> each root record (with its lines) is a message.</li>
+<li><b>Writing</b> is the reverse: each record is written with all its fields (empty text fields as empty values, empty number fields as <code>0</code>), quoted according to <code>forcequote</code>, followed by <code>record_sep</code>. The envelope <code>csvheader</code> adds a first line with the field names.</li>
+</ol>
+<h4>fixed</h4>
+<ol>
+<li><b>Lines.</b> Bots reads the file line by line (empty lines are skipped).</li>
+<li><b>Record ID.</b> <code>BOTSID</code> must be at the same position and with the same length in every record; Bots takes that position from the grammar. The record ID is cut from each line and stripped. With <code>noBOTSID: True</code> every line is the root record.</li>
+<li><b>Length check.</b> The record length is the sum of the field lengths. A longer line is an error ([S53], <code>checkfixedrecordtoolong</code>, default on); a shorter line is accepted unless <code>checkfixedrecordtooshort</code> is set ([S52]).</li>
+<li><b>Fields.</b> Each field is cut by its length and stripped of spaces; empty fields are left out. Text fields are not checked for length; numbers, dates and times are checked.</li>
+<li><b>Messages.</b> Without <code>nextmessage</code>/<code>nextmessageblock</code> each root record with its sub-records is one message.</li>
+<li><b>Writing.</b> Every field is written with exactly its length: text padded with spaces on the right (<code>AR</code>: on the left), numbers with leading zeros (<code>NL</code>/<code>RL</code>: left aligned, <code>NR</code>/<code>RR</code>: right aligned with spaces), empty dates and times as spaces, empty numbers as zeros. Then <code>record_sep</code> (default CR LF).</li>
+</ol>
+
+<h3 id="editype-csv-fixed--grammar-csv">Example: csv grammar</h3>
+<p>A csv file from the ERP system, one line per order line, a header line with column names, no record ID, separated by semicolons:</p>
+<pre><code class="language-text">order;date;buyer;line;article;quantity
+PO-1001;20260115;5412345000013;1;8712345678906;12
+PO-1001;20260115;5412345000013;2;8712345678913;4.5
+PO-1002;20260116;5412345000020;1;8712345678906;3</code></pre>
+<pre><code class="language-python"># usersys/grammars/csv/orders_erp.py
+from bots.botsconfig import *
+
+syntax = {
+    'field_sep': ';',
+    'quote_char': '"',
+    'forcequote': 0,          # quotes only when needed
+    'charset': 'utf-8',
+    'noBOTSID': True,         # the lines have no record ID
+    'skip_firstline': True,   # first line has column names
+}
+
+# one message per order: lines with the same ORDERNUMBER belong together
+nextmessageblock = {'BOTSID': 'LIN', 'ORDERNUMBER': None}
+
+structure = [
+    {ID: 'LIN', MIN: 1, MAX: 99999},
+]
+
+recorddefs = {
+    'LIN': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ORDERNUMBER', 'M', 35, 'AN'],
+        ['ORDERDATE', 'M', 8, 'D'],
+        ['BUYER', 'C', 13, 'AN'],
+        ['LINENUMBER', 'M', 6, 'N'],
+        ['ARTICLE', 'M', 14, 'AN'],
+        ['QUANTITY', 'M', 15, 'R'],
+    ],
+}</code></pre>
+<p>The mapping gets two messages: PO-1001 with two lines, PO-1002 with one. In the mapping you loop over the lines with <code>inn.getloop({'BOTSID': 'LIN'})</code>.</p>
+
+<h3 id="editype-csv-fixed--grammar-fixed">Example: fixed grammar</h3>
+<pre><code class="language-text">HDRPO-1001             202601155412345000013000001234.50
+LIN0000018712345678906 000012.000PCE
+LIN0000028712345678913 000004.500PCE</code></pre>
+<pre><code class="language-python"># usersys/grammars/fixed/orders_erp.py
+from bots.botsconfig import *
+
+syntax = {
+    'charset': 'iso-8859-1',
+}
+
+structure = [
+    {ID: 'HDR', MIN: 1, MAX: 9999, LEVEL: [
+        {ID: 'LIN', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'HDR': [                              # record length 3+20+8+13+12 = 56
+        ['BOTSID', 'M', 3, 'AN'],         # positions 1-3
+        ['ORDERNUMBER', 'M', 20, 'AN'],   # positions 4-23
+        ['ORDERDATE', 'M', 8, 'D'],       # positions 24-31
+        ['BUYER', 'C', 13, 'AN'],         # positions 32-44
+        ['TOTAL', 'C', 12.2, 'N'],        # positions 45-56, 2 decimals, with point
+    ],
+    'LIN': [                              # record length 3+6+14+10+3 = 36
+        ['BOTSID', 'M', 3, 'AN'],
+        ['LINENUMBER', 'M', 6, 'N'],
+        ['ARTICLE', 'M', 14, 'AN'],
+        ['QUANTITY', 'M', 10.3, 'N'],
+        ['UNIT', 'C', 3, 'AN'],
+    ],
+}</code></pre>
+<p>In fixed files the decimal point counts in the length (<code>000001234.50</code> is 12 positions). For numbers without a decimal point in the file use format <code>I</code>: <code>['TOTAL', 'C', 12.2, 'I']</code> reads <code>000000123450</code> as 1234.50.</p>
+
+<h3 id="editype-csv-fixed--howto-csv-in">How to read a csv file from your ERP system</h3>
+<ol class="steps">
+<li><b>Look at the file</b> in a text editor: which separator, quotes, a header line, a record ID in the first column or not, the character set (UTF-8 or Windows/latin-1).</li>
+<li><b>Write the grammar</b> <code>usersys/grammars/csv/orders_erp.py</code> as in the example. Set <code>field_sep</code>, <code>quote_char</code>, <code>charset</code>, <code>skip_firstline</code>, <code>noBOTSID</code>.</li>
+<li><b>Decide how to split</b> into messages: <code>nextmessageblock</code> on the order number, or the whole file as one message (default).</li>
+<li><b>Check</b> with <code>bots-grammarcheck -c&lt;config&gt; csv orders_erp</code>.</li>
+<li><b>Use it</b> in a route with <span class="ui">Fromeditype</span> <code>csv</code>, <span class="ui">Frommessagetype</span> <code>orders_erp</code>, and a translation from <code>csv</code>/<code>orders_erp</code>.</li>
+</ol>
+
+<h3 id="editype-csv-fixed--howto-csv-out">How to write a csv file with a header line</h3>
+<ol class="steps">
+<li><b>Write the outgoing grammar</b> with <code>'field_sep': ','</code>, <code>'quote_char': '"'</code>, <code>'forcequote': 0</code> and <code>'envelope': 'csvheader'</code>; add <code>'noBOTSID': True</code> if the record ID should not be written.</li>
+<li><b>Name the fields</b> in <code>recorddefs</code> as you want them in the header: the header line contains the field names of the root record (with <code>BOTSID</code> unless <code>noBOTSID</code>).</li>
+<li><b>Run</b>. Expected first line: <code>ORDERNUMBER,ORDERDATE,BUYER,…</code>, then the data.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>For a semicolon file for Excel in Western Europe use <code>'field_sep': ';'</code>, <code>'decimaal': ','</code> and <code>'charset': 'cp1252'</code>.</p></div>
+
+<h3 id="editype-csv-fixed--howto-fixed">How to describe a fixed file from a specification</h3>
+<ol class="steps">
+<li><b>Get the record layout</b>: for each record type, the start position and length of every field.</li>
+<li><b>Put the fields in order</b> in <code>recorddefs</code>, each with its exact length; also fillers (<code>['FILLER1', 'C', 10, 'AN']</code>) so that the positions add up.</li>
+<li><b>Check the record ID</b>: it must have the same position and length in every record type.</li>
+<li><b>Choose the number formats</b>: <code>N</code> with decimal point in the file, <code>I</code> without, <code>NR</code>/<code>RR</code> for right aligned numbers with spaces.</li>
+<li><b>Run a test file</b>. If lines are shorter than defined (trailing spaces cut off by the sender), that is accepted; set <code>checkfixedrecordtooshort</code> only if you want an error.</li>
+</ol>
+
+<h3 id="editype-csv-fixed--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>field_sep</code></td><td>csv field separator.</td><td><code>':'</code></td><td><code>','</code>, <code>';'</code>, <code>'\t'</code></td></tr>
+<tr><td><code>quote_char</code></td><td>csv quote character.</td><td><code>"'"</code></td><td><code>'"'</code>, <code>''</code></td></tr>
+<tr><td><code>forcequote</code></td><td>csv: 0 when needed, 1 always, 2 text fields.</td><td><code>1</code></td><td><code>0</code></td></tr>
+<tr><td><code>escape</code></td><td>csv escape character.</td><td><code>''</code></td><td><code>'\\'</code></td></tr>
+<tr><td><code>record_sep</code></td><td>Line end.</td><td><code>'\r\n'</code></td><td><code>'\n'</code></td></tr>
+<tr><td><code>skip_char</code></td><td>Characters ignored when reading.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>skip_firstline</code></td><td>csv: skip header line(s).</td><td><code>False</code></td><td><code>True</code>, <code>2</code></td></tr>
+<tr><td><code>noBOTSID</code></td><td>No record ID in the lines (csv: or its position).</td><td><code>False</code></td><td><code>True</code>; csv <code>1</code></td></tr>
+<tr><td><code>pass_all</code></td><td>csv: whole file as one message when not split.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>allow_lastrecordnotclosedproperly</code></td><td>csv: last line without line end.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>strip_value</code> <span class="badge green">new in 4.0</span></td><td>csv: strip spaces from values.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>strict_syntax_check</code> <span class="badge green">new in 4.0</span></td><td>csv: no blank lines/spaces between records.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>checkfixedrecordtoolong</code></td><td>fixed: longer line is an error.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>checkfixedrecordtooshort</code></td><td>fixed: shorter line is an error.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>charset</code></td><td>Character set.</td><td>csv <code>'utf-8'</code>; fixed <code>'us-ascii'</code></td><td><code>'iso-8859-1'</code>, <code>'cp1252'</code>, <code>'utf-8-sig'</code></td></tr>
+<tr><td><code>decimaal</code>, <code>triad</code></td><td>Decimal sign; thousands separator (reading).</td><td><code>'.'</code>, <code>''</code></td><td><code>','</code>, <code>'.'</code></td></tr>
+<tr><td><code>envelope</code></td><td><code>'csvheader'</code>: header line with field names (csv only).</td><td><code>''</code></td><td><code>'csvheader'</code></td></tr>
+<tr><td><code>merge</code></td><td>All messages for the same partners of a run in one file.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>wrap_length</code></td><td>Writing: cut output into lines of this length.</td><td><code>0</code></td><td><code>80</code></td></tr>
+<tr><td><code>nextmessageblock</code></td><td>Split by field value (one record type only).</td><td>none</td><td><code>{'BOTSID': 'LIN', 'ORDERNUMBER': None}</code></td></tr>
+<tr><td>formats</td><td>csv: <code>A AN D DT T TM N R I</code>; fixed: also <code>AR NL NR RL RR</code>.</td><td>-</td><td>see <a href="#grammar-records--formats">Format codes</a></td></tr>
+</table></div>
+
+<h3 id="editype-csv-fixed--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[S50]: Line:1 pos:1 record:"PO-1001": message has an error in its structure; this record is not allowed here. ...</code></td><td>The first field is taken as the record ID, but the file has no record IDs.</td><td>Set <code>'noBOTSID': True</code> (one record type only), or add record IDs to the file.</td></tr>
+<tr><td><code>[S50]: Line:1 pos:1 record:"order": ...</code></td><td>The header line with column names is read as data.</td><td>Set <code>'skip_firstline': True</code>.</td></tr>
+<tr><td><code>[F19] line 2 pos 30: Record "LIN" too many fields in record; unknown field "4.5".</code></td><td>More fields than in the grammar: wrong <code>field_sep</code>, a separator inside an unquoted value, or a decimal comma read as separator.</td><td>Check <code>field_sep</code> and <code>quote_char</code>; ask for quotes around values with separators.</td></tr>
+<tr><td><code>[A51]: Found non-valid data at end of edi file; probably a problem with separators or message structure: "..."</code></td><td>The last line has no line end, or a quote is not closed.</td><td>Set <code>'allow_lastrecordnotclosedproperly': True</code>, or fix the quote in the file.</td></tr>
+<tr><td><code>Grammar "...": if syntax["noBOTSID"]: there can be only one record in recorddefs.</code></td><td><code>noBOTSID</code> with more than one record.</td><td>Use one record type, or add record IDs to the file.</td></tr>
+<tr><td><code>Grammar "...": if nextmessageblock: there can be only one record in recorddefs.</code></td><td><code>nextmessageblock</code> with more than one record.</td><td>Use <code>nextmessage</code>, or one record type.</td></tr>
+<tr><td><code>Grammar "...", record LIN: position and length of BOTSID should be equal in all records.</code></td><td>fixed: <code>BOTSID</code> is not at the same place in every record.</td><td>Correct the field order and lengths before <code>BOTSID</code>.</td></tr>
+<tr><td><code>[S53] line 4: Record "LIN" too long; is 40 pos, defined is 36 pos.</code></td><td>fixed: the line is longer than the record definition.</td><td>Check the field lengths (fillers), or set <code>'checkfixedrecordtoolong': False</code>.</td></tr>
+<tr><td><code>[S52] line 4: Record "LIN" too short; is 30 pos, defined is 36 pos.</code></td><td><code>checkfixedrecordtooshort</code> is on and the line is shorter.</td><td>Remove the setting if trailing spaces may be cut off.</td></tr>
+<tr><td><code>Characterset problem in file. At/after line 12: "..."</code></td><td>fixed: a character is not valid in the charset (default <code>us-ascii</code>).</td><td>Set the right <code>charset</code> (for example <code>'iso-8859-1'</code>), or <code>'checkcharsetin': 'botsreplace'</code>.</td></tr>
+<tr><td><code>[F14] line 2 pos 0: Record "HDR-LIN" numeric field "QUANTITY" has invalid nr of decimals: "12".</code></td><td>Format <code>N</code> with <code>10.3</code> wants exactly 3 decimals in the file.</td><td>Use format <code>R</code>, or <code>I</code> if the file has implied decimals.</td></tr>
+<tr><td>Outgoing csv has <code>0</code> in a field that should be empty.</td><td>Empty number fields are written as zero.</td><td>Use format <code>AN</code> for that field.</td></tr>
+<tr><td>Outgoing csv starts with a strange character in Excel, or Excel shows wrong letters.</td><td>The charset does not match what the reader expects.</td><td>Use <code>'charset': 'utf-8-sig'</code> (UTF-8 with byte order mark) or <code>'cp1252'</code>.</td></tr>
+<tr><td>The mapping gets one message for the whole csv file but you want one per order.</td><td>Default <code>pass_all: True</code>.</td><td>Use <code>nextmessageblock</code>, or <code>'pass_all': False</code> with a header/line structure.</td></tr>
+</table></div>
+</section>
+
+<section id="editype-xml-json" data-title="XML and JSON" data-group="Grammars and mappings">
+<h2>XML and JSON</h2>
+<p class="lead">XML and JSON are used by web shops, portals, APIs and many modern ERP systems. Bots reads and writes them with the editypes <code>xml</code> and <code>json</code> (checked against a grammar) and <code>xmlnocheck</code> and <code>jsonnocheck</code> (no checks). This page shows how elements, attributes, objects and lists become records and fields.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>In XML and JSON the data already has names: <code>&lt;OrderNumber&gt;PO-1001&lt;/OrderNumber&gt;</code> or <code>"OrderNumber": "PO-1001"</code>. Bots turns every element (or object) that has child elements into a <b>record</b>, and every element (or value) without children into a <b>field</b> of its parent. The grammar says which records and fields are allowed.</p></div>
+
+<h3 id="editype-xml-json--how">How it works</h3>
+<h4>XML, reading</h4>
+<ol>
+<li>Bots parses the file with Python's ElementTree (the encoding comes from the XML declaration of the file). Extra named entities can be given in <code>extra_character_entity</code>.</li>
+<li>The root element must be the root record of the grammar ([G50] otherwise).</li>
+<li>For each child element of a record: if it is a record in the <code>LEVEL</code> of that record in the <code>structure</code>, it becomes a child record; if it has no child elements, it is a field of the record (its text is the value); if it has child elements but is not in the structure, it is reported as <code>[S02] Unknown xml-tag</code> and skipped (with <code>checkunknownentities: True</code>).</li>
+<li>Attributes become fields with the <code>attributemarker</code> (<code>'__'</code>): attribute <code>unit</code> of field element <code>Quantity</code> is field <code>Quantity__unit</code>; attribute <code>type</code> of record element <code>Order</code> is field <code>Order__type</code> in the record <code>Order</code>. Attributes with an empty value are ignored.</li>
+<li>Text directly in a record element (next to its child elements) is the field <code>BOTSCONTENT</code>. Spaces around texts and attribute values are removed.</li>
+<li>All fields must be in <code>recorddefs</code> ([F01] otherwise), then the normal checks run. The whole file is one message.</li>
+</ol>
+<h4>XML, writing</h4>
+<ol>
+<li>Every record becomes an element; its fields become child elements in the order of <code>recorddefs</code>; child records follow in the order of the <code>structure</code>.</li>
+<li>Fields with the attribute marker become attributes (sorted alphabetically, as in Bots 3); <code>BOTSCONTENT</code> becomes the text of the record element.</li>
+<li>Bots writes the declaration <code>&lt;?xml version="1.0" encoding="utf-8" ?&gt;</code> (from <code>version</code>, <code>charset</code>, <code>standalone</code>), then <code>DOCTYPE</code> and <code>processing_instructions</code> if set, then the elements, on one line or <code>indented</code>.</li>
+<li>One file per message (<code>merge: False</code>). Several XML messages in one file need an envelope script that makes a valid XML file (see <a href="#envelope-scripts">Envelope scripts</a>).</li>
+</ol>
+<h4>JSON, reading</h4>
+<p>Bots accepts five shapes; <code>ROOT</code> is the ID of the root record of the grammar:</p>
+<div class="table-wrap"><table>
+<tr><th>Shape</th><th>Example</th><th>Messages</th></tr>
+<tr><td>One object</td><td><code>{"OrderNumber": "PO-1001", ...}</code></td><td>1</td></tr>
+<tr><td>One object, named</td><td><code>{"Order": {"OrderNumber": "PO-1001", ...}}</code></td><td>1</td></tr>
+<tr><td>List of objects</td><td><code>[{...}, {...}]</code></td><td>one per object</td></tr>
+<tr><td>List of named objects</td><td><code>[{"Order": {...}}, {"Order": {...}}]</code></td><td>one per object</td></tr>
+<tr><td>Named list</td><td><code>{"Order": [{...}, {...}]}</code></td><td>one per object</td></tr>
+</table></div>
+<p>Inside an object: a string, number or boolean is a field (numbers and booleans become text, <code>true</code> becomes <code>'True'</code>); an object is a child record named by its key; a list of objects is a repeated child record; a list of strings or numbers is a repeating field. <code>null</code> and empty strings are ignored.</p>
+<h4>JSON, writing</h4>
+<p>Each record is an object with its fields in the order of <code>recorddefs</code>; child records are lists under the record ID as key (with <code>max1_as_object</code>: an object for records with <code>MAX: 1</code>). The root is written as <code>{"Order": {...}}</code> (<code>named_root_object: True</code>) or as <code>{...}</code>. Several messages in one write give a list, one message an object (<code>force_list</code> always gives a list). Values are strings, except booleans (format <code>B</code>) and, with <code>json_write_numericals</code>, numbers.</p>
+
+<h3 id="editype-xml-json--grammar-xml">Example: XML grammar</h3>
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;Order type="new"&gt;
+  &lt;OrderNumber&gt;PO-1001&lt;/OrderNumber&gt;
+  &lt;OrderDate&gt;20260115&lt;/OrderDate&gt;
+  &lt;Buyer&gt;5412345000013&lt;/Buyer&gt;
+  &lt;Line number="1"&gt;
+    &lt;Article&gt;8712345678906&lt;/Article&gt;
+    &lt;Quantity unit="PCE"&gt;12&lt;/Quantity&gt;
+  &lt;/Line&gt;
+&lt;/Order&gt;</code></pre>
+<pre><code class="language-python"># usersys/grammars/xml/orders_partnera.py
+from bots.botsconfig import *
+
+syntax = {
+    'indented': True,
+}
+
+structure = [
+    {ID: 'Order', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'Line', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'Order': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['Order__type', 'C', 10, 'AN'],        # attribute type of &lt;Order&gt;
+        ['OrderNumber', 'M', 35, 'AN'],
+        ['OrderDate', 'M', 8, 'D'],
+        ['Buyer', 'C', 13, 'AN'],
+    ],
+    'Line': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['Line__number', 'M', 6, 'N'],         # attribute number of &lt;Line&gt;
+        ['Article', 'M', 14, 'AN'],
+        ['Quantity', 'M', 15, 'R'],
+        ['Quantity__unit', 'C', 3, 'AN'],      # attribute unit of &lt;Quantity&gt;
+    ],
+}</code></pre>
+<p>In a mapping: <code>inn.get({'BOTSID': 'Order', 'OrderNumber': None})</code>, <code>inn.get({'BOTSID': 'Order', 'Order__type': None})</code>, and for lines <code>inn.getloop({'BOTSID': 'Order'}, {'BOTSID': 'Line'})</code>.</p>
+
+<h3 id="editype-xml-json--grammar-json">Example: JSON grammar</h3>
+<pre><code class="language-json">{"Order": {"OrderNumber": "PO-1001", "OrderDate": "20260115", "Paid": true,
+           "Line": [{"Article": "8712345678906", "Quantity": 12}]}}</code></pre>
+<pre><code class="language-python"># usersys/grammars/json/orders_shop.py
+from bots.botsconfig import *
+
+syntax = {
+    'indented': True,
+}
+
+structure = [
+    {ID: 'Order', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'Line', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'Order': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['OrderNumber', 'M', 35, 'AN'],
+        ['OrderDate', 'M', 8, 'D'],
+        ['Paid', 'C', 5, 'B'],
+    ],
+    'Line': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['Article', 'M', 14, 'AN'],
+        ['Quantity', 'M', 15, 'R'],
+    ],
+}</code></pre>
+
+<h3 id="editype-xml-json--howto-ns">How to read and write XML with namespaces</h3>
+<ol class="steps">
+<li><b>Know how Bots sees namespaced names</b>: ElementTree writes them as <code>{uri}name</code>, for example <code>{http://www.example.com/orders}Order</code>. Record IDs and field names in the grammar must use this form.</li>
+<li><b>Use a variable</b> in the grammar to keep it readable:
+<pre><code class="language-python">NS = '{http://www.example.com/orders}'
+structure = [{ID: NS + 'Order', MIN: 1, MAX: 1, LEVEL: [{ID: NS + 'Line', MIN: 1, MAX: 9999}]}]
+recorddefs = {
+    NS + 'Order': [['BOTSID', 'M', 256, 'AN'], [NS + 'OrderNumber', 'M', 35, 'AN']],
+    NS + 'Line':  [['BOTSID', 'M', 256, 'AN'], [NS + 'Article', 'M', 14, 'AN']],
+}</code></pre></li>
+<li><b>In the mapping</b> use the same names: <code>inn.get({'BOTSID': NS + 'Order', NS + 'OrderNumber': None})</code>.</li>
+<li><b>Writing</b>: Bots writes prefixes <code>ns0</code>, <code>ns1</code>; to get your own prefix set <code>'namespace_prefixes': [('ord', 'http://www.example.com/orders')]</code>.</li>
+</ol>
+
+<h3 id="editype-xml-json--howto-mailbag">How to recognise different XML messages on one channel</h3>
+<ol class="steps">
+<li><b>Set the route</b> to incoming editype <code>mailbag</code> (or <code>xml</code> with message type <code>mailbag</code>).</li>
+<li><b>Create</b> <code>usersys/grammars/xml/mailbag.py</code> with a list <code>mailbagsearch</code>. Each entry has an <code>xpath</code> (ElementTree path searched in the file) and a <code>messagetype</code>, and optionally <code>content</code> (the text must be equal) or <code>tag</code> (the found element must have this tag). The first entry that matches gives the message type:
+<pre><code class="language-python"># usersys/grammars/xml/mailbag.py
+mailbagsearch = [
+    {'xpath': './/DocumentType', 'content': 'INVOICE', 'messagetype': 'invoice_partnerb'},
+    {'xpath': './/OrderNumber', 'messagetype': 'orders_partnera'},
+]
+# optional: extra_character_entity = {'nbsp': ' '}</code></pre></li>
+<li><b>Run</b>. Expected: in <span class="ui">Incoming</span> each file has the found message type.</li>
+</ol>
+
+<h3 id="editype-xml-json--howto-nocheck">How to pass XML or JSON without a full grammar</h3>
+<ol class="steps">
+<li><b>Use editype <code>xmlnocheck</code> or <code>jsonnocheck</code></b>. A grammar file is still needed (<code>usersys/grammars/xmlnocheck/&lt;name&gt;.py</code>), but it may contain only a <code>syntax</code> dict or nothing at all; no <code>structure</code>, no <code>recorddefs</code>.</li>
+<li><b>Expect</b>: reading, every element with children is a record and every element without children a field; nothing is checked. jsonnocheck: the root record is <code>ROOT</code> (<code>defaultBOTSIDroot</code>), or the key of a JSON <code>{"order": {...}}</code>.</li>
+<li><b>Writing</b> xmlnocheck: fields of a record are written in alphabetical order; records in the order the mapping made them. jsonnocheck: fields sorted alphabetically, child records always lists.</li>
+</ol>
+
+<h3 id="editype-xml-json--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>attributemarker</code></td><td>Separator between element and attribute name in field names.</td><td><code>'__'</code></td><td><code>Quantity__unit</code></td></tr>
+<tr><td><code>BOTSCONTENT</code></td><td>Field name for the text of a record element.</td><td>-</td><td><code>['BOTSCONTENT', 'C', 256, 'AN']</code></td></tr>
+<tr><td><code>charset</code></td><td>Writing: encoding and encoding in the declaration. (Reading uses the declaration of the file.)</td><td><code>'utf-8'</code></td><td><code>'iso-8859-1'</code></td></tr>
+<tr><td><code>version</code>, <code>standalone</code>, <code>DOCTYPE</code>, <code>processing_instructions</code>, <code>namespace_prefixes</code>, <code>extra_character_entity</code>, <code>indented</code></td><td>XML options.</td><td>see <a href="#grammar-syntax--xml">Grammar syntax options</a></td><td></td></tr>
+<tr><td><code>checkunknownentities</code></td><td>Report unknown elements/fields.</td><td>xml/json <code>True</code>; nocheck <code>False</code></td><td><code>False</code></td></tr>
+<tr><td><code>named_root_object</code>, <code>force_list</code>, <code>max1_as_object</code>, <code>json_write_numericals</code> <span class="badge green">new in 4.0</span></td><td>JSON writing options.</td><td>see <a href="#grammar-syntax--json">Grammar syntax options</a></td><td></td></tr>
+<tr><td><code>defaultBOTSIDroot</code></td><td>jsonnocheck: name of the root record.</td><td><code>'ROOT'</code></td><td><code>'order'</code></td></tr>
+<tr><td>format <code>B</code> <span class="badge green">new in 4.0</span></td><td>JSON boolean field.</td><td>-</td><td><code>['Paid', 'C', 5, 'B']</code></td></tr>
+<tr><td><code>envelope</code></td><td>json: <code>'json'</code> puts merged messages in one JSON list; xml: no envelope by default.</td><td>json <code>'json'</code>; xml <code>''</code></td><td></td></tr>
+<tr><td><code>merge</code></td><td>Several messages in one file.</td><td><code>False</code></td><td>json <code>True</code>; xml only with an envelope script</td></tr>
+<tr><td><code>usersys/grammars/xml/mailbag.py</code>: <code>mailbagsearch</code></td><td>Rules to find the message type of an XML file.</td><td>-</td><td>see above</td></tr>
+</table></div>
+
+<h3 id="editype-xml-json--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[G50]: Grammar "orders_partnera" starts with record "Order"; but in edi-file found start-record "{http://www.example.com/orders}Order".</code></td><td>The file uses a namespace; the grammar does not.</td><td>Use the <code>{uri}name</code> form in the grammar (see the how-to above).</td></tr>
+<tr><td><code>[S02]: Unknown xml-tag "Remarks" (within "Order") in message.</code></td><td>An element with child elements that is not a record in the structure at that place.</td><td>Add it to <code>structure</code> and <code>recorddefs</code>, or set <code>'checkunknownentities': False</code> to skip it.</td></tr>
+<tr><td><code>[F01]: Record: "Order" has unknown field "Order__version".</code></td><td>An element or attribute that is not in <code>recorddefs</code>.</td><td>Add the field (for attributes: <code>element__attribute</code>).</td></tr>
+<tr><td><code>not well-formed (invalid token): line 1, column 0</code> or <code>mismatched tag: line 7, column 2</code></td><td>The file is not valid XML.</td><td>Ask for a valid file. Check the encoding (a file with latin-1 letters and an encoding of UTF-8 in its declaration fails).</td></tr>
+<tr><td><code>undefined entity &amp;nbsp;: line 3, column 20</code></td><td>The file uses an HTML entity XML does not know.</td><td>Add it to <code>extra_character_entity</code>.</td></tr>
+<tr><td><code>Could not find right xml messagetype for mailbag.</code></td><td>No entry of <code>mailbagsearch</code> matched.</td><td>Add an entry; test the xpath on the file.</td></tr>
+<tr><td><code>Invalid search parameters in xml mailbag.</code></td><td>An entry of <code>mailbagsearch</code> misses <code>xpath</code> or <code>messagetype</code>.</td><td>Give both keys in every entry.</td></tr>
+<tr><td><code>[J53]: content of json not OK. Content is not a "list" or "object".</code></td><td>The JSON is a single value (a string or number).</td><td>Ask for an object or a list of objects.</td></tr>
+<tr><td><code>[J52]: No usable content.</code></td><td>The JSON is <code>{}</code>, <code>[]</code> or <code>[{}]</code>.</td><td>Nothing to translate; check the sender.</td></tr>
+<tr><td><code>[J56]: content of json not OK. Content is expected to be a list of objects, but is list of something else.</code></td><td>The top-level list holds values, not objects.</td><td>Ask for a list of objects.</td></tr>
+<tr><td><code>[J57]: Record "Order" field "Reference" is a list, but can not be repeated.</code></td><td>A JSON list of values for a field that is not repeating in the grammar.</td><td>Make the field repeating: <code>['Reference', ('C', 10), 35, 'AN']</code>.</td></tr>
+<tr><td><code>[J55]: Key "x" value "..." is not string, list or dict.</code> / <code>[J54]: List content must be a object, string, int, long or float - but it is not.</code></td><td>Unexpected JSON content (for example a list in a list).</td><td>Ask for a correct file, or use <code>jsonnocheck</code> with <code>'checkunknownentities': False</code>.</td></tr>
+<tr><td><code>[F35]: Record "Order" field "Paid" is not of type bool.</code></td><td>A <code>B</code> field has a value other than true/false/1/0.</td><td>Correct the value in the mapping or the file.</td></tr>
+<tr><td>Output JSON is <code>{"Order": {...}}</code> but the receiver wants <code>{...}</code>.</td><td><code>named_root_object</code> is <code>True</code> by default.</td><td>Set <code>'named_root_object': False</code> (in the grammar, or once for all grammars in the envelope grammar <code>usersys/grammars/json/json.py</code>).</td></tr>
+<tr><td>Output JSON has <code>"Header": [{...}]</code> where the receiver wants <code>"Header": {...}</code>.</td><td>Child records are lists by default (as in Bots 3).</td><td>Set <code>'max1_as_object': True</code> and <code>MAX: 1</code> for that record.</td></tr>
+<tr><td>Numbers are written as <code>"12.50"</code> (strings).</td><td>All values are text by default.</td><td>Set <code>'json_write_numericals': True</code> and use formats <code>N</code>/<code>R</code>.</td></tr>
+<tr><td>jsonnocheck: <code>inn.get({'BOTSID': 'ROOT', ...})</code> finds nothing.</td><td>A JSON <code>{"order": {...}}</code> has root <code>order</code>, not <code>ROOT</code>.</td><td>Use <code>{'BOTSID': 'order', ...}</code>, or set <code>'defaultBOTSIDroot'</code> in the grammar.</td></tr>
+</table></div>
+</section>
+
+<section id="editype-other" data-title="Other formats" data-group="Grammars and mappings">
+<h2>Other formats</h2>
+<p class="lead">Besides EDIFACT, X12, csv, fixed, XML and JSON, Bots knows the editypes <code>tradacoms</code>, <code>idoc</code>, <code>excel</code>, <code>templatehtml</code>, <code>raw</code> and <code>db</code>, and a few special values (<code>mailbag</code>, <code>database</code>, <code>email-confirmation</code>). This page explains each of them: what it is for, how it is read or written, and what can go wrong.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Not every file is a classic EDI message. Some partners still send the older UK standard TRADACOMS, SAP systems use IDocs, a customer may send an Excel sheet, and sometimes you want a readable HTML page, a file passed on untouched, or data for a database. Each of these has its own editype.</p></div>
+
+<h3 id="editype-other--how">How it works</h3>
+<div class="table-wrap"><table>
+<tr><th>Editype</th><th>Read</th><th>Write</th><th>Grammar</th><th>In short</th></tr>
+<tr><td><code>tradacoms</code></td><td>yes</td><td>yes</td><td>yes, with envelope grammar <code>tradacoms.py</code></td><td>UK retail EDI standard; segments like EDIFACT, <code>=</code> after the tag.</td></tr>
+<tr><td><code>idoc</code></td><td>yes</td><td>yes</td><td>yes (fixed records)</td><td>SAP IDoc flat file: fixed records with SAP counters.</td></tr>
+<tr><td><code>excel</code></td><td>yes</td><td>no</td><td>yes (a csv grammar)</td><td>First sheet of an <code>.xlsx</code>/<code>.xlsm</code>/<code>.xls</code> file, read as csv.</td></tr>
+<tr><td><code>templatehtml</code></td><td>no</td><td>yes</td><td>syntax only (or with structure)</td><td>HTML (or other text) made with a template, for people to read.</td></tr>
+<tr><td><code>raw</code></td><td>yes</td><td>yes</td><td>no</td><td>The bytes of the file, untouched.</td></tr>
+<tr><td><code>db</code></td><td>yes</td><td>yes</td><td>no</td><td>A Python object to or from a database channel.</td></tr>
+<tr><td><code>mailbag</code></td><td>-</td><td>-</td><td>no</td><td>Route value: "find out what this is" (EDIFACT, X12, TRADACOMS or XML).</td></tr>
+<tr><td><code>database (old)</code></td><td>no</td><td>no</td><td>-</td><td>Kept in the list for old configurations; use <code>db</code>.</td></tr>
+<tr><td><code>email-confirmation</code></td><td>-</td><td>-</td><td>no</td><td>Internal: the MDN (mail receipt) that Bots makes itself.</td></tr>
+</table></div>
+
+<h3 id="editype-other--tradacoms">TRADACOMS</h3>
+<pre><code class="language-text">STX=ANA:1+5000000000001:PARTNERA+5412345000013:MYCOMPANY+260115:103000+1234++ORDHDR'
+MHD=1+ORDHDR:9'
+TYP=0430+NEW-ORDERS'
+MTR=3'
+END=1'</code></pre>
+<p><b>Reading.</b> The <a href="#preprocessing">mailbag step</a> finds each interchange (<code>STX</code> … <code>END</code>). Separators are fixed: <code>=</code> after the tag (<code>record_tag_sep</code>), <code>+</code> between fields, <code>:</code> between sub-fields, <code>'</code> at the end, <code>?</code> as escape. The envelope grammar <code>usersys/grammars/tradacoms/tradacoms.py</code> describes STX, MHD and END; at MHD its <code>SUBTRANSLATION</code> gives the message type (for example <code>TYPE.01</code> + <code>TYPE.02</code> = <code>ORDHDR9</code>). Bots checks the message count in <code>END</code> ([E22], [E23]) and the segment count in <code>MTR</code> ([E24], [E25]).</p>
+<p><b>Writing.</b> The mapping builds a tree with <code>STX</code> at the top and the messages (<code>MHD</code> … <code>MTR</code>) under it. Bots writes each MHD message with the grammar named by its <code>TYPE.01</code> + <code>TYPE.02</code>; the envelope step writes STX and END (values from <code>STX.*</code> syntax options, sender and receiver from the partners). <code>merge</code> is <code>False</code> by default.</p>
+<p>Format codes in TRADACOMS grammars are <code>X</code> (text), <code>9</code> (number) and <code>9V9</code> (number with implied decimals).</p>
+<pre><code class="language-python"># usersys/grammars/tradacoms/tradacoms.py  (envelope grammar)
+from bots.botsconfig import *
+
+nextmessage = ({'BOTSID': 'STX'}, {'BOTSID': 'MHD'})
+
+structure = [
+    {ID: 'STX', MIN: 1, MAX: 1,
+     QUERIES: {
+         'frompartner': {'BOTSID': 'STX', 'FROM.01': None},
+         'topartner':   {'BOTSID': 'STX', 'UNTO.01': None},
+         'reference':   {'BOTSID': 'STX', 'SNRF': None},
+     },
+     LEVEL: [
+         {ID: 'MHD', MIN: 0, MAX: 9999,
+          SUBTRANSLATION: [{'BOTSID': 'MHD', 'TYPE.01': None}, {'BOTSID': 'MHD', 'TYPE.02': None}]},
+         {ID: 'END', MIN: 1, MAX: 1},
+     ]},
+]
+
+recorddefs = {
+    'STX': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['STDS', 'M', [['STDS1', 'M', 4, 'X'], ['STDS2', 'M', 1, '9']]],
+        ['FROM', 'M', [['FROM.01', 'C', 14, 'X'], ['FROM.02', 'C', 35, 'X']]],
+        ['UNTO', 'M', [['UNTO.01', 'C', 14, 'X'], ['UNTO.02', 'C', 35, 'X']]],
+        ['TRDT', 'M', [['TRDT.01', 'M', 6, 'X'], ['TRDT.02', 'C', 6, 'X']]],
+        ['SNRF', 'M', 14, 'X'],
+        ['RCRF', 'C', 14, 'X'],
+        ['APRF', 'C', 14, 'X'],
+        ['PRCD', 'C', 1, 'X'],
+    ],
+    'MHD': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['MSRF', 'M', 12, '9'],
+        ['TYPE', 'M', [['TYPE.01', 'M', 6, 'X'], ['TYPE.02', 'M', 1, '9']]],
+    ],
+    'END': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['NMST', 'M', 5, '9'],
+    ],
+}</code></pre>
+<pre><code class="language-python"># usersys/grammars/tradacoms/ORDHDR9.py  (message grammar, small)
+from bots.botsconfig import *
+
+structure = [
+    {ID: 'MHD', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'TYP', MIN: 1, MAX: 1},
+        {ID: 'MTR', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'MHD': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['MSRF', 'M', 12, '9'],
+        ['TYPE', 'M', [['TYPE.01', 'M', 6, 'X'], ['TYPE.02', 'M', 1, '9']]],
+    ],
+    'TYP': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['TCDE', 'M', 4, 'X'],
+        ['TTYP', 'C', 12, 'X'],
+    ],
+    'MTR': [
+        ['BOTSID', 'M', 3, 'X'],
+        ['NOSG', 'M', 10, '9'],
+    ],
+}</code></pre>
+
+<h3 id="editype-other--idoc">idoc (SAP IDoc flat files)</h3>
+<p>An IDoc flat file is a fixed file: every record (segment) starts with the segment name, followed by SAP administration fields and the data. Bots reads it exactly like a <a href="#editype-csv-fixed">fixed file</a>, but longer lines are accepted (<code>checkfixedrecordtoolong: False</code>, because SAP cuts empty fields at the end). When writing, Bots fills in every record: <code>MANDT</code> and <code>DOCNUM</code> from the syntax, and (with <code>automaticcount: True</code>) <code>SEGNUM</code> (the number of the record), <code>PSGNUM</code> (the number of the parent record) and <code>HLEVEL</code> (the level). The grammar must have these fields; take the record layout from the IDoc documentation of your SAP system.</p>
+<pre><code class="language-python"># usersys/grammars/idoc/orders_sap.py
+from bots.botsconfig import *
+
+syntax = {
+    'MANDT': '100',
+    'charset': 'iso-8859-1',
+}
+
+def sapfields():
+    # a new list of new field lists for every record (see the warning below)
+    return [
+        ['MANDT', 'C', 3, 'AN'],
+        ['DOCNUM', 'C', 16, 'AN'],
+        ['SEGNUM', 'C', 6, 'AN'],
+        ['PSGNUM', 'C', 6, 'AN'],
+        ['HLEVEL', 'C', 2, 'AN'],
+    ]
+
+structure = [
+    {ID: 'E1HEAD', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'E1LINE', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'E1HEAD': [['BOTSID', 'M', 30, 'AN']] + sapfields() + [
+        ['ORDERNUMBER', 'M', 35, 'AN'],
+        ['ORDERDATE', 'M', 8, 'D'],
+    ],
+    'E1LINE': [['BOTSID', 'M', 30, 'AN']] + sapfields() + [
+        ['ARTICLE', 'M', 18, 'AN'],
+        ['QUANTITY', 'M', 15.3, 'N'],
+    ],
+}</code></pre>
+<div class="note warn"><span class="label">Watch out</span><p>Bots extends every field list of <code>recorddefs</code> when it reads the grammar. The same field list object may therefore be used only once: if two records share one list (for example <code>SAPFIELDS = [...]</code> added to both), reading the second record fails with <code>list has invalid number of arguments</code>. Use a function that returns new lists, as in the example.</p></div>
+
+<h3 id="editype-other--excel">excel (incoming only)</h3>
+<ol>
+<li>Install the libraries: <code>pip install bots-ediint[excel]</code> (<code>openpyxl</code> for <code>.xlsx</code>/<code>.xlsm</code>, <code>xlrd</code> for <code>.xls</code>). <span class="badge orange">changed in 4.0</span> <code>.xlsx</code> works; the type is recognised from the content, not the file name.</li>
+<li>Bots reads the <b>first sheet</b> only and turns it into csv text with the separators of the grammar (<code>field_sep</code>, <code>quote_char</code>, <code>escape</code>), then reads that as a csv file with the same grammar. The grammar is a csv grammar in <code>usersys/grammars/excel/</code>.</li>
+<li>Values: whole numbers without decimals (<code>12.0</code> becomes <code>12</code>); dates as ISO text (<code>2026-01-15</code>, <code>2026-01-15T13:45:00</code>, a time alone as <code>T13:45:00</code>); booleans as <code>1</code>/<code>0</code>; a cell error as its text (<code>#DIV/0!</code>); a formula as the value Excel calculated last. Empty rows at the end and empty columns at the right are dropped.</li>
+</ol>
+<pre><code class="language-python"># usersys/grammars/excel/orders_sheet.py
+from bots.botsconfig import *
+
+syntax = {
+    'field_sep': ',',
+    'quote_char': '"',
+    'noBOTSID': True,
+    'skip_firstline': True,       # row 1 has column titles
+}
+
+structure = [
+    {ID: 'ROW', MIN: 1, MAX: 99999},
+]
+
+recorddefs = {
+    'ROW': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ORDERNUMBER', 'M', 35, 'AN'],
+        ['ORDERDATE', 'M', 19, 'AN'],    # ISO date text: 2026-01-15
+        ['ARTICLE', 'M', 14, 'AN'],
+        ['QUANTITY', 'M', 15, 'R'],
+    ],
+}</code></pre>
+<div class="note tip"><span class="label">Tip</span><p>Use format <code>AN</code> for date columns (the ISO text has dashes, format <code>D</code> wants <code>CCYYMMDD</code>) and convert in the mapping. Use <code>AN</code> for article numbers too: Excel stores <code>0123</code> typed as a number as <code>123</code>.</p></div>
+
+<h3 id="editype-other--templatehtml">templatehtml (outgoing only)</h3>
+<p>templatehtml writes a file from a template: for example an invoice as an HTML page to mail to a partner without EDI. Install Genshi with <code>pip install bots-ediint[templatehtml]</code>. Templates are in <code>usersys/grammars/templatehtml/templates/</code>. There are two ways of working:</p>
+<ol>
+<li><b>Data object</b> (default, <code>has_structure: False</code>): the grammar has only a syntax. The mapping puts what it wants in <code>out.data</code> (an empty object: <code>out.data.invoicenumber = ...</code>). The template gets <code>data</code> and <code>ta_info</code>.</li>
+<li><b>Tree</b> (<code>has_structure: True</code> with <code>structure</code> and <code>recorddefs</code>): the mapping uses <code>out.put()</code> as usual; Bots checks the tree; the template gets <code>node</code> (the root of the tree) and <code>ta_info</code>. <code>print_as_row</code> collects repeated records into lists for table rows.</li>
+</ol>
+<p>The envelope (<code>envelope: 'templatehtml'</code>, the default) puts the messages of one file together with <code>envelope-template</code>; that template gets <code>data</code> (the list of message files) and <code>ta_info</code>. With <code>template_engine: 'django'</code> <span class="badge green">new in 4.0</span> Django templates are used instead of Genshi.</p>
+<pre><code class="language-python"># usersys/grammars/templatehtml/invoice_html.py
+syntax = {
+    'template': 'invoice.html',
+    'envelope-template': 'envelope.html',
+    'charset': 'utf-8',
+}</code></pre>
+<pre><code class="language-xml">&lt;!-- usersys/grammars/templatehtml/templates/invoice.html --&gt;
+&lt;div xmlns:py="http://genshi.edgewall.org/"&gt;
+  &lt;h2&gt;Invoice ${data.invoicenumber}&lt;/h2&gt;
+  &lt;table&gt;
+    &lt;tr py:for="line in data.lines"&gt;&lt;td&gt;${line['article']}&lt;/td&gt;&lt;td&gt;${line['quantity']}&lt;/td&gt;&lt;/tr&gt;
+  &lt;/table&gt;
+&lt;/div&gt;
+
+&lt;!-- usersys/grammars/templatehtml/templates/envelope.html --&gt;
+&lt;html xmlns="http://www.w3.org/1999/xhtml" xmlns:py="http://genshi.edgewall.org/"
+      xmlns:xi="http://www.w3.org/2001/XInclude"&gt;
+  &lt;body&gt;
+    &lt;div py:for="message in data"&gt;&lt;xi:include href="${message}" /&gt;&lt;/div&gt;
+  &lt;/body&gt;
+&lt;/html&gt;</code></pre>
+<pre><code class="language-python"># in the mapping (usersys/mappings/csv/invoice_csv_to_html.py)
+out.data.invoicenumber = inn.get({'BOTSID': 'HEA', 'INVOICENUMBER': None})
+out.data.lines = [{'article': lin.get({'BOTSID': 'LIN', 'ARTICLE': None}),
+                   'quantity': lin.get({'BOTSID': 'LIN', 'QUANTITY': None})}
+                  for lin in inn.getloop({'BOTSID': 'HEA'}, {'BOTSID': 'LIN'})]</code></pre>
+
+<h3 id="editype-other--raw">raw</h3>
+<p>No grammar and no checks. Incoming: <code>inn.root</code> in the mapping is the content of the file as bytes. Outgoing: the mapping puts bytes in <code>out.root</code>; Bots writes them as they are, without envelope and without merging. Mappings are in <code>usersys/mappings/raw/</code>. Use it to pass a file on with a few changes, or to wrap a PDF, for example.</p>
+<pre><code class="language-python">def main(inn, out):
+    out.root = inn.root.replace(b'\r\n', b'\n')    # raw to raw: change line ends</code></pre>
+
+<h3 id="editype-other--db">db</h3>
+<p>For <a href="#channel-database">database channels</a>. Incoming: the communication script of the channel reads from the database and returns a Python object (for example a list of dicts); Bots stores it, and in the mapping <code>inn.root</code> is that object. Outgoing: the mapping puts any Python object (dict, list) in <code>out.root</code>; the outgoing database channel's script writes it to the database. No grammar, no envelope, no merging. Mappings are in <code>usersys/mappings/db/</code>.</p>
+
+<h3 id="editype-other--special">mailbag, database (old), email-confirmation, test</h3>
+<ul>
+<li><b><code>mailbag</code></b>: only as incoming editype of a route. The mailbag step looks at each file, splits it into EDIFACT, X12 and TRADACOMS interchanges and gives each its editype; an XML file gets editype <code>xml</code> with message type <code>mailbag</code> (see <a href="#editype-xml-json--howto-mailbag">XML and JSON</a> and <a href="#preprocessing">Preprocessing</a>).</li>
+<li><b><code>database (old)</code></b>: in the list so that configurations from older Bots versions can be opened. Bots 4.0 cannot read or write it: use <code>db</code>.</li>
+<li><b><code>email-confirmation</code></b>: Bots gives this editype to the MDN mails it makes as receipt for incoming mails (see <a href="#acknowledgements">Acknowledgements</a>). Do not use it in routes or translations.</li>
+<li><b><code>test</code></b>: a grammar type for the tests of Bots itself; it has a <code>usersys/grammars/test/</code> folder but is not in the web interface lists.</li>
+</ul>
+
+<h3 id="editype-other--howto-excel">How to translate an Excel order sheet</h3>
+<ol class="steps">
+<li><b>Install</b> the Excel libraries: <code>pip install bots-ediint[excel]</code>.</li>
+<li><b>Write the grammar</b> <code>usersys/grammars/excel/orders_sheet.py</code> as above, one field per column.</li>
+<li><b>Make a route</b> with <span class="ui">Fromeditype</span> <code>excel</code> and <span class="ui">Frommessagetype</span> <code>orders_sheet</code>, and a translation from <code>excel</code>/<code>orders_sheet</code> (mapping in <code>usersys/mappings/excel/</code>).</li>
+<li><b>Run</b> with a test sheet. Expected: in <span class="ui">Incoming</span> the file is OK; in the mapping each row is a <code>ROW</code> record.</li>
+</ol>
+
+<h3 id="editype-other--howto-html">How to send an invoice as HTML by mail</h3>
+<ol class="steps">
+<li><b>Install</b> Genshi: <code>pip install bots-ediint[templatehtml]</code>.</li>
+<li><b>Create</b> the grammar <code>usersys/grammars/templatehtml/invoice_html.py</code> and the two templates as above.</li>
+<li><b>Write the mapping</b> that fills <code>out.data</code>, and a translation to editype <code>templatehtml</code>, message type <code>invoice_html</code>.</li>
+<li><b>Use a mail channel</b> as outgoing channel of the route (see <a href="#channel-mail">Mail channels</a>). The content type is <code>text/html</code>.</li>
+<li><b>Run</b> and open the result in <span class="ui">Outgoing</span>. Expected: an HTML page with the invoice.</li>
+</ol>
+
+<h3 id="editype-other--ref">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>record_tag_sep</code></td><td>tradacoms: separator after the segment tag.</td><td><code>'='</code></td><td></td></tr>
+<tr><td><code>STX.STDS1</code>, <code>STX.STDS2</code>, <code>STX.FROM.02</code>, <code>STX.UNTO.02</code>, <code>STX.APRF</code>, <code>STX.PRCD</code>, <code>FROM.01</code>, <code>UNTO.01</code></td><td>tradacoms: STX values.</td><td>see <a href="#grammar-syntax--tradacoms">Grammar syntax options</a></td><td></td></tr>
+<tr><td>formats <code>X</code>, <code>9</code>, <code>9V9</code></td><td>tradacoms format codes.</td><td>-</td><td><code>['NMST', 'M', 5, '9']</code></td></tr>
+<tr><td><code>MANDT</code>, <code>DOCNUM</code>, <code>automaticcount</code></td><td>idoc: SAP fields filled when writing.</td><td><code>'0'</code>, <code>'0'</code>, <code>True</code></td><td></td></tr>
+<tr><td><code>checkfixedrecordtoolong</code></td><td>idoc: longer records are accepted.</td><td><code>False</code></td><td></td></tr>
+<tr><td>excel libraries</td><td><code>openpyxl</code> (<code>.xlsx</code>, <code>.xlsm</code>), <code>xlrd</code> (<code>.xls</code>).</td><td>not installed</td><td><code>pip install bots-ediint[excel]</code></td></tr>
+<tr><td><code>template</code>, <code>envelope-template</code>, <code>template_engine</code>, <code>print_as_row</code>, <code>has_structure</code></td><td>templatehtml options.</td><td>see <a href="#grammar-syntax--templatehtml">Grammar syntax options</a></td><td></td></tr>
+<tr><td>template folder</td><td>Where templates are looked for.</td><td><code>usersys/grammars/templatehtml/templates/</code></td><td></td></tr>
+<tr><td>Genshi</td><td>Template library for templatehtml.</td><td>not installed</td><td><code>pip install bots-ediint[templatehtml]</code></td></tr>
+<tr><td><code>inn.root</code> / <code>out.root</code></td><td>raw: bytes; db: any Python object.</td><td>-</td><td></td></tr>
+</table></div>
+
+<h3 id="editype-other--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Dependency failure: editype "excel" requires python library "openpyxl" for a .xlsx file.</code> (or <code>"xlrd" for a .xls file</code>)</td><td>The library is not installed.</td><td><code>pip install bots-ediint[excel]</code> in the Python environment of Bots.</td></tr>
+<tr><td><code>Excel extraction failed, may not be an Excel file? Error: ...</code></td><td>The file is not a readable Excel file (for example a csv file with an <code>.xls</code> name, or a password-protected sheet).</td><td>Check the file; use editype <code>csv</code> for csv files.</td></tr>
+<tr><td><code>[A52]: Found non-valid data at end of excel file: "..."</code></td><td>Rows after the end of the structure (for example a totals row with another layout).</td><td>Allow the rows in the grammar, or remove them from the sheet.</td></tr>
+<tr><td><code>Unknown editype for outgoing message: excel</code></td><td>excel can only be read.</td><td>Write csv instead (Excel opens csv files).</td></tr>
+<tr><td><code>Unknown editype for incoming message: database</code> (or <code>templatehtml</code>)</td><td>These editypes cannot be read by Bots 4.0.</td><td>Use <code>db</code> for database channels; templatehtml is for output only.</td></tr>
+<tr><td><code>Dependency failure: editype "templatehtml" requires python library "genshi".</code></td><td>Genshi is not installed.</td><td><code>pip install bots-ediint[templatehtml]</code>.</td></tr>
+<tr><td><code>While templating "templatehtml.invoice_html", error: ...</code></td><td>The template cannot be found or has an error (Genshi shows the line).</td><td>Check the file name in <code>template</code> and the template syntax.</td></tr>
+<tr><td><code>template_engine (mako) not supported !</code></td><td><code>template_engine</code> has an unknown value.</td><td>Use <code>'genshi'</code> or <code>'django'</code>.</td></tr>
+<tr><td><code>No outgoing message</code></td><td>raw/db: the mapping did not set <code>out.root</code>; other editypes: the mapping put nothing.</td><td>Set <code>out.root</code> (raw: bytes) or put data in the out tree.</td></tr>
+<tr><td><code>[E22]: Count in END is 3; should be equal to number of messages 2.</code> (also [E24] MTR)</td><td>tradacoms: the counts in END or MTR are wrong.</td><td>Ask the partner to correct the file.</td></tr>
+<tr><td><code>[M59]: Found no valid END trailer for the STX header at position 0.</code></td><td>tradacoms: the interchange has no END segment.</td><td>Ask for a complete file.</td></tr>
+<tr><td>idoc output has <code>0</code> in <code>MANDT</code>/<code>DOCNUM</code>.</td><td>Defaults are <code>'0'</code>.</td><td>Set <code>MANDT</code> and <code>DOCNUM</code> in the syntax (or in <code>out.ta_info</code> in the mapping).</td></tr>
+</table></div>
+</section>

@@ -459,8 +459,8 @@ def extractpdf(ta_from, endstatus, **kwargs):  # pylint: disable=unused-argument
     of each text element within tolerance allowed.
     Multiple text elements may combine to make one field, some PDFs have every character separated!
     You may need to experiment with x_group and y_group values, but defaults seem ok for most files.
-    Output csv is UTF-8 encoded
-        - The csv module doesn't directly support reading and writing Unicode
+    Output csv is UTF-8 encoded (or: parameter charset).
+    Needs python library "pdfminer.six".
     If the PDF is just an image, all bets are off. Maybe try OCR, good luck with that!
     Mike Griffin 14/12/2011
     """
@@ -468,9 +468,15 @@ def extractpdf(ta_from, endstatus, **kwargs):  # pylint: disable=unused-argument
     from collections import defaultdict
     import csv
 
-    from pdfminer.converter import TextConverter
-    from pdfminer.layout import LTContainer, LTText
-    from pdfminer.pdfinterp import PDFResourceManager, process_pdf
+    try:
+        from pdfminer.converter import TextConverter
+        from pdfminer.layout import LTContainer, LTText
+        from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+        from pdfminer.pdfpage import PDFPage
+    except ImportError as exc:
+        raise ImportError(
+            _('Dependency failure: preprocessing "extractpdf" requires python library "pdfminer.six".')
+        ) from exc
 
     class CsvConverter(TextConverter):
         """TextConverter subclass"""
@@ -485,7 +491,7 @@ def extractpdf(ta_from, endstatus, **kwargs):  # pylint: disable=unused-argument
                 if isinstance(item, LTContainer):
                     for child in item:
                         render(child)
-                elif isinstance(item, LTText):
+                elif isinstance(item, LTText) and hasattr(item, 'bbox'):
                     (_unused1, _unused2, x, y) = item.bbox
                     # group the y values (rows) within group tolerance
                     for v in yv:
@@ -494,7 +500,7 @@ def extractpdf(ta_from, endstatus, **kwargs):  # pylint: disable=unused-argument
                     yv.append(y)
 
                     line = lines[int(-y)]
-                    line[x] = item.get_text().encode('utf-8')
+                    line[x] = item.get_text()
 
             lines = defaultdict(lambda: {})
 
@@ -542,27 +548,23 @@ def extractpdf(ta_from, endstatus, **kwargs):  # pylint: disable=unused-argument
         pdf_stream = botslib.opendata_bin(ta_from.filename, 'rb')
         ta_to = ta_from.copyta(status=endstatus)
         tofilename = str(ta_to.idta)
-        csv_stream = botslib.opendata_bin(tofilename, 'wb')
+        # csv module writes text; line ends are written by the csv module (as in python 2: CRLF)
+        csv_stream = botslib.opendata(tofilename, 'w', charset)
         csvout = csv.writer(
             csv_stream,
             quotechar=quotechar,
             delimiter=field_sep,
             doublequote=doublequote,
-            escapechar=escape,
+            escapechar=escape or None,
         )
 
         # Process PDF
         rsrcmgr = PDFResourceManager(caching=True)
         device = CsvConverter(rsrcmgr, csv_stream, codec=charset)
-        process_pdf(
-            rsrcmgr,
-            device,
-            pdf_stream,
-            pagenos=set(),
-            password=password,
-            caching=True,
-            check_extractable=True,
-        )
+        interpreter = PDFPageInterpreter(rsrcmgr, device)
+        for page in PDFPage.get_pages(
+                pdf_stream, pagenos=set(), password=password, caching=True, check_extractable=True):
+            interpreter.process_page(page)
 
         device.close()
         pdf_stream.close()

@@ -1,0 +1,1227 @@
+<!-- Group "Configure": routes and channels. Written from bots/models.py, admin.py, router.py, engine.py,
+     communication.py, dbconnect.py, preprocess.py, cleanup.py and the templates of Bots 4.0.0. -->
+
+<section id="routes" data-title="Routes" data-group="Configure">
+<h2>Routes</h2>
+<p class="lead">A route is the work order for a kind of EDI file: where Bots picks the files up, what it does with
+them, and where it delivers the result. Every file that Bots handles goes through a route, so you set up at least
+one route before Bots does anything.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Think of a route as a conveyor belt. At the
+start a <b>channel</b> drops files on the belt (from a folder, an FTP server, a mailbox). In the middle Bots can
+<b>translate</b> each file into another format. At the end another channel takes the files off the belt and
+delivers them. A route can be one belt, or several belts in a row (route parts) that share the same name.</p></div>
+
+<h3 id="routes--how">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="A route: incoming channel, translation, outgoing channel">
+<defs><marker id="arrow-routes-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Incoming channel</text><text class="small" x="120" y="86" text-anchor="middle">receive files, set editype</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-routes-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Translate</text><text class="small" x="380" y="86" text-anchor="middle">or pass through unchanged</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-routes-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Outgoing channel</text><text class="small" x="640" y="86" text-anchor="middle">filter, then send files</text>
+</svg></div>
+
+<p>A route is a row (or several rows) in <span class="ui">Configuration</span> → <span class="ui">Routes</span>.
+Each row is a <b>route part</b>. All parts with the same <span class="ui">Idroute</span> form one route; the field
+<span class="ui">Sequence</span> (<code>seq</code>) gives their order. The combination of idroute and sequence must
+be unique.</p>
+
+<p>When the engine (<code>bots-engine</code>) runs a route part, it does these steps, in this order
+(<code>bots/router.py</code>):</p>
+<ol>
+<li><b>Route script, function <code>main</code>.</b> If <code>usersys/routescripts/&lt;idroute&gt;.py</code> has a
+function <code>main</code>, Bots runs only that function for this part and nothing else. See
+<a href="#route-scripts">Route scripts</a>.</li>
+<li><b>Check.</b> A part without route script, without incoming channel, without outgoing channel and with
+<span class="ui">Translate</span> set to <code>Nothing</code> is an error: <code>Route "…" is empty: no routescript,
+not enough parameters.</code></li>
+<li><b>Receive.</b> If the part has an <span class="ui">Incoming channel</span>, Bots runs that channel (only in a
+normal run, see below). Each received file gets the values of the route: editype, messagetype, frompartner,
+topartner and alt (only the values that are filled in).</li>
+<li><b>Unzip</b> (if <span class="ui">Incoming zip-file handling</span> is set).</li>
+<li><b>Mailbag.</b> If <span class="ui">Fromeditype</span> is <code>mailbag</code>, <code>edifact</code>,
+<code>x12</code> or <code>tradacoms</code>, Bots splits each file into its separate interchanges and finds the
+real editype of each (see <a href="#preprocessing">Preprocessing</a>). With <code>compatibility_mailbag = True</code>
+in <code>bots.ini</code> only <code>mailbag</code> does this.</li>
+<li><b>Translate</b> (Translate = <code>Translate</code> or <code>Parse &amp; Pass-through</code>): every received
+file of this route that is not yet translated is parsed, split into messages and translated with the
+<a href="#translations">translation</a> that matches; then the results are merged into
+<a href="#envelopes">envelopes</a>. With <code>Pass-through</code> the files are marked as ready to send without
+any change. With <code>Nothing</code> nothing happens to the files in this part.</li>
+<li><b>Select for the outgoing channel.</b> If the part has an <span class="ui">Outgoing channel</span>, Bots gives
+that channel all files of this route that are ready to send and that pass the filters of the part
+(<span class="ui">Toeditype</span>, <span class="ui">Tomessagetype</span>, <span class="ui">Testindicator</span>,
+<span class="ui">Frompartner tochannel</span>, <span class="ui">Topartner tochannel</span>). A file that is given to
+a channel is no longer available to later parts.</li>
+<li><b>Ask for acknowledgements</b> (by the <a href="#confirm-rules">confirm rules</a>) and <b>zip</b> (if
+<span class="ui">Outgoing zip-file handling</span> is set; only files of this route part).</li>
+<li><b>Send.</b> Unless <span class="ui">Defer</span> is ticked, Bots runs the outgoing channel now. It sends every
+file of this run that waits for this channel, including files that earlier, deferred parts selected for it.</li>
+</ol>
+
+<p>Files stay in their route: the translation of a part only picks up files received by the same route in the same
+run, and a part only sends files of its own route.</p>
+
+<h4 id="routes--which">Which routes run</h4>
+<ul>
+<li><b>A normal run</b> (<code>bots-engine</code> or <code>bots-engine --new</code>, or the menu
+<span class="ui">Run</span> → <span class="ui">Run (only new)</span>): all routes that are <b>active</b> and
+<b>not</b> marked <span class="ui">Not in default run</span>.</li>
+<li><b>Routes named on the command line</b> (<code>bots-engine orders_in invoices_out</code>): only these routes,
+also when they are marked <span class="ui">Not in default run</span>. They still must be active.</li>
+<li><b>Other runs</b> (<code>--resend</code>, <code>--rereceive</code>, <code>--automaticretrycommunication</code>):
+all active routes, including those not in the default run, unless you name routes. In these runs incoming channels
+are not run: no new files are received.</li>
+</ul>
+<p>Routes run one after another, sorted by idroute in character order (uppercase before lowercase, digits before
+letters). Within a route the parts run by sequence. <span class="badge orange">changed in 4.0</span> The order no
+longer depends on the database: on every database it is the order SQLite and Bots 3 gave.</p>
+<div class="note tip"><span class="label">Tip</span><p>Because routes run in name order, you can give names that
+put them in the order you want, for example <code>a_orders_in</code> before <code>b_invoices_out</code>. Or name
+the routes on the command line in the order you want them.</p></div>
+
+<h4 id="routes--translateind">The four values of "Translate"</h4>
+<div class="table-wrap"><table>
+<tr><th>Value (stored)</th><th>What happens to the received files of the route</th></tr>
+<tr><td><code>Nothing</code> (0)</td><td>Nothing in this part. Use it for a part that only receives or only sends.</td></tr>
+<tr><td><code>Translate</code> (1, default)</td><td>Parse, check against the grammar, split in messages, translate with the matching translation, merge into envelopes.</td></tr>
+<tr><td><code>Pass-through</code> (2)</td><td>No parsing. The file is sent as it was received. Editype and messagetype of the route are not needed.</td></tr>
+<tr><td><code>Parse &amp; Pass-through</code> (3)</td><td>The file is parsed and checked (so errors are found, partners are known and acknowledgements such as a 997 or CONTRL are made), but no mapping is run: the original file is sent unchanged.</td></tr>
+</table></div>
+
+<h3 id="routes--howto-translate">How to make a route with a translation</h3>
+<p>Example: <code>PartnerA</code> puts X12 850 orders in a folder; you want them as csv in another folder. The
+<a href="#translations">translation</a> (grammar, mapping) must exist; see
+<a href="#tutorial-first-translation">the tutorial</a>.</p>
+<ol class="steps">
+<li><b>Make the incoming channel.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> →
+<span class="ui">In</span> → <span class="ui">Add incoming channel</span>: Idchannel <code>local_orders_in</code>,
+Type <code>file</code>, Path <code>botssys/infile/orders</code>, Filename <code>*.edi</code>. Save. See
+<a href="#channel-file">File channels</a>.</li>
+<li><b>Make the outgoing channel.</b> <span class="ui">Channels</span> → <span class="ui">Out</span> →
+<span class="ui">Add outgoing channel</span>: Idchannel <code>erp_orders_out</code>, Type <code>file</code>, Path
+<code>botssys/outfile/orders</code>, Filename <code>order_*.csv</code>. Save.</li>
+<li><b>Open a new route.</b> <span class="ui">Configuration</span> → <span class="ui">Routes</span> →
+<span class="ui">Add</span>.</li>
+<li><b>Tick <span class="ui">Active</span>.</b> The engine only uses active routes.</li>
+<li><b>Fill in the name.</b> <span class="ui">Idroute</span> <code>orders_in</code>, <span class="ui">Sequence</span>
+<code>1</code>.</li>
+<li><b>Choose the incoming channel</b> <code>local_orders_in</code>.</li>
+<li><b>Set what comes in.</b> <span class="ui">Fromeditype</span> <code>x12</code>,
+<span class="ui">Frommessagetype</span> <code>x12</code>. For X12 and EDIFACT the messagetype is the editype itself:
+Bots finds the real message type (850, ORDERS…) in the file.</li>
+<li><b>Leave <span class="ui">Translate</span> on <code>Translate</code>.</b></li>
+<li><b>Choose the outgoing channel</b> <code>erp_orders_out</code>.</li>
+<li><b>Save.</b> The list of routes shows <code>orders_in 1</code>. The translate column shows an icon that links to
+the matching translations.</li>
+<li><b>Test.</b> Put an 850 file in <code>botssys/infile/orders</code> and choose <span class="ui">Run</span> →
+<span class="ui">Run (only new)</span>. In <span class="ui">Incoming</span> you see the file with status
+<code>Done</code>; the csv file is in <code>botssys/outfile/orders</code>.</li>
+</ol>
+
+<h3 id="routes--howto-passthrough">How to make a pass-through route</h3>
+<p>A pass-through route moves files without changing them, for example from an SFTP server of
+<code>PartnerC</code> to a local folder.</p>
+<ol class="steps">
+<li><b>Make the two channels</b>, for example <code>partnerc_sftp_in</code> (type <code>sftp</code>) and
+<code>local_docs_out</code> (type <code>file</code>).</li>
+<li><b>Add a route</b>: <span class="ui">Configuration</span> → <span class="ui">Routes</span> →
+<span class="ui">Add</span>; tick <span class="ui">Active</span>; Idroute <code>docs_in</code>, Sequence
+<code>1</code>.</li>
+<li><b>Choose the incoming channel</b> <code>partnerc_sftp_in</code>.</li>
+<li><b>Set <span class="ui">Translate</span> to <code>Pass-through</code>.</b> Fromeditype and frommessagetype
+may stay empty. The field <span class="ui">Alternative translation</span> disappears and is cleared (it has no use
+here).</li>
+<li><b>Choose the outgoing channel</b> <code>local_docs_out</code>. Use the filename <code>{infile}</code> in that
+channel to keep the original file names (see <a href="#channels--filenames">file names</a>).</li>
+<li><b>Save and run.</b> The files arrive unchanged.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>If you give a pass-through route the editype
+<code>edifact</code>, <code>x12</code> or <code>tradacoms</code>, the mailbag step still splits files with several
+interchanges into one file per interchange. Leave Fromeditype empty to keep files whole.</p></div>
+
+<h3 id="routes--howto-partners">How to send to a different channel per partner</h3>
+<p>Example: invoices from your ERP go to <code>PartnerA</code> by SFTP and to <code>PartnerB</code> by FTP. You make
+one route with three parts: one that receives and translates, and one per partner that sends.</p>
+<ol class="steps">
+<li><b>Make part 1.</b> Idroute <code>invoices_out</code>, Sequence <code>1</code>, Active; Incoming channel
+<code>erp_invoices_in</code>; Fromeditype <code>csv</code>, Frommessagetype <code>invoices_erp</code>; Translate
+<code>Translate</code>; Outgoing channel <code>partnera_sftp_out</code>; in <span class="ui">Filtering for
+outchannel</span> set <span class="ui">Topartner tochannel</span> to <code>PARTNERA</code>. Save.</li>
+<li><b>Make part 2.</b> Use <span class="ui">Save as new</span> on part 1, or add a new route: Idroute
+<code>invoices_out</code>, Sequence <code>2</code>, Active; no incoming channel; Translate <code>Nothing</code>;
+Outgoing channel <code>partnerb_ftp_out</code>; Topartner tochannel <code>PARTNERB</code>. Save.</li>
+<li><b>Optional: a part for all others.</b> Sequence <code>3</code>, Translate <code>Nothing</code>, an outgoing
+channel without filter. It gets every file that parts 1 and 2 did not take.</li>
+<li><b>Run and check</b> <span class="ui">Outgoing</span>: each invoice shows the channel it went to.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Topartner tochannel and Frompartner tochannel accept a
+<b>partner group</b> too. With the group <code>Retailers</code> one part serves all partners in that group. See
+<a href="#partners">Partners</a>.</p></div>
+<div class="note warn"><span class="label">Watch out</span><p>A file that no part selects is not sent. It stays
+with status <code>Stuck</code> and the run report counts it as "files got stuck". Add a last part without filter,
+or a part to a <code>trash</code> channel (see <a href="#channel-other">Other channel types</a>), if some files are
+not to be sent anywhere.</p></div>
+
+<h3 id="routes--howto-byhand">How to make a route that only runs when you start it</h3>
+<ol class="steps">
+<li><b>Open the route</b> in <span class="ui">Configuration</span> → <span class="ui">Routes</span>.</li>
+<li><b>Tick <span class="ui">Not in default run</span></b> and keep <span class="ui">Active</span> ticked. Save.
+Bots sets the same value on every part of this route.</li>
+<li><b>Start it from the web interface:</b> the menu <span class="ui">Run</span> → <span class="ui">Run (only
+new)</span> shows a sub-menu with the routes that are active and not in the default run (setting
+<code>menu_all_routes = notindefaultrun</code> in <code>[webserver]</code> of <code>bots.ini</code>, the default;
+<code>True</code> lists all active routes, <code>False</code> none). Choose <code>orders_in</code>.</li>
+<li><b>Or start it from the command line:</b>
+<pre><code class="language-bash">bots-engine orders_in</code></pre>
+With your own configuration directory: <code>bots-engine -c/srv/edi/env1/config orders_in</code>.</li>
+<li><b>Or schedule it</b> separately, see <a href="#scheduling">Scheduling</a>.</li>
+</ol>
+
+<h3 id="routes--howto-multi">How to receive from several places in one route</h3>
+<ol class="steps">
+<li><b>Make part 1</b> with the first incoming channel (eg <code>partnera_sftp_in</code>), the editype and
+messagetype, Translate <code>Nothing</code>, no outgoing channel.</li>
+<li><b>Make part 2</b> with the second incoming channel (eg <code>mail_in</code>), the same editype and
+messagetype, Translate <code>Nothing</code>.</li>
+<li><b>Make part 3</b> without incoming channel, Translate <code>Translate</code>. It translates the files of parts
+1 and 2 (a translate step needs no editype when the part has no incoming channel).</li>
+<li><b>Make the sending parts</b> as above.</li>
+</ol>
+
+<h3 id="routes--howto-defer">How to collect files of several routes in one connection</h3>
+<p>Tick <span class="ui">Defer</span> in a part to only select files for its outgoing channel; the channel is not
+run then. The first later part (of any route in the same run) that has the same outgoing channel without Defer
+sends all waiting files in one session. Use it to make one FTP or SMTP connection instead of many.</p>
+<div class="note warn"><span class="label">Watch out</span><p>If no later part sends the deferred channel, the
+files are not sent in this run and stay <code>Stuck</code>. In acceptance tests
+(<code>runacceptancetest</code>) Defer is ignored.</p></div>
+
+<h3 id="routes--reference">Reference</h3>
+<p>All fields of a route (model <code>routes</code>, form in <code>admin.py</code>). The screen has three blocks:
+the main block, <span class="ui">Filtering for outchannel</span> and <span class="ui">Advanced</span> (both
+folded).</p>
+<div class="table-wrap"><table>
+<tr><th>Name (screen / database)</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Active</span> / <code>active</code></td><td>Only active route parts run. Can also be switched in the list with the action <span class="ui">activate/de-activate</span>.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Not in default run</span> / <code>notindefaultrun</code></td><td>Leave the route out of a normal run; it runs only when named (command line, Run menu, job). Saving one part sets the same value on all parts of the route.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Script</span></td><td>Read-only: shows if <code>usersys/routescripts/&lt;idroute&gt;.py</code> exists, with a link to view it.</td><td>-</td><td>-</td></tr>
+<tr><td><span class="ui">Idroute</span> / <code>idroute</code></td><td>Name of the route. Parts with the same name form one route. Max 35 characters.</td><td>-</td><td><code>orders_in</code></td></tr>
+<tr><td><span class="ui">Sequence</span> / <code>seq</code></td><td>Order of the parts within the route. Idroute + sequence must be unique.</td><td>1</td><td><code>1</code>, <code>2</code>, <code>10</code></td></tr>
+<tr><td><span class="ui">Incoming channel</span> / <code>fromchannel</code></td><td>Channel that receives files for this part. Only channels with in/out = <code>in</code> can be chosen. Empty: this part receives nothing.</td><td>empty</td><td><code>local_orders_in</code></td></tr>
+<tr><td><span class="ui">Dirmonitor</span> / <code>dirmonitor</code> <span class="badge gray">advanced</span></td><td>Let <code>bots-dirmonitor</code> watch the folder of the incoming channel and start this route when a file arrives. The incoming channel must be of type <code>file</code>; only one active route per channel. See <a href="#scheduling">Scheduling</a>.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Fromeditype</span> / <code>fromeditype</code></td><td>Editype (kind of format) of the received files. Required with an incoming channel, unless Translate is Pass-through. Changing it lists the grammars of that editype for Frommessagetype.</td><td>empty</td><td><code>x12</code>, <code>edifact</code>, <code>csv</code>, <code>fixed</code>, <code>xml</code>, <code>json</code>, <code>mailbag</code>, <code>db</code>, <code>raw</code>, … (see <a href="#grammars">Grammars</a>)</td></tr>
+<tr><td><span class="ui">Frommessagetype</span> / <code>frommessagetype</code></td><td>Messagetype (the grammar) of the received files. For edifact use <code>edifact</code>, for x12 <code>x12</code>, for tradacoms <code>tradacoms</code>, for mixed files <code>mailbag</code>: Bots then finds the message type in the file. Required with an incoming channel unless Pass-through.</td><td>empty</td><td><code>x12</code>, <code>orders_erp</code></td></tr>
+<tr><td><span class="ui">Translate</span> / <code>translateind</code></td><td>What to do with received files, see the table above.</td><td><code>Translate</code></td><td><code>Nothing</code> (0), <code>Translate</code> (1), <code>Pass-through</code> (2), <code>Parse &amp; Pass-through</code> (3)</td></tr>
+<tr><td><span class="ui">Alternative translation</span> / <code>alt</code></td><td>Set on received files; chooses between translations with the same editype and messagetype (field <code>alt</code> of the translation). Hidden and cleared for Pass-through and Parse &amp; Pass-through.</td><td>empty</td><td><code>to_html</code></td></tr>
+<tr><td><span class="ui">Outgoing channel</span> / <code>tochannel</code></td><td>Channel that sends the files of this part. Only channels with in/out = <code>out</code>. Empty: this part sends nothing.</td><td>empty</td><td><code>partnera_sftp_out</code></td></tr>
+<tr><td><span class="ui">Description</span> / <code>desc</code></td><td>Free text for yourself.</td><td>empty</td><td>-</td></tr>
+<tr><td><span class="ui">Toeditype</span> / <code>toeditype</code></td><td>Filter: only files of this editype go to the outgoing channel.</td><td>empty (no filter)</td><td><code>edifact</code></td></tr>
+<tr><td><span class="ui">Tomessagetype</span> / <code>tomessagetype</code></td><td>Filter: only files of this messagetype.</td><td>empty</td><td><code>INVOICD96AUNEAN008</code></td></tr>
+<tr><td><span class="ui">Frompartner tochannel</span> / <code>frompartner_tochannel</code></td><td>Filter: only files from this partner, or from a member of this partner group.</td><td>empty</td><td><code>PARTNERA</code>, <code>Retailers</code></td></tr>
+<tr><td><span class="ui">Topartner tochannel</span> / <code>topartner_tochannel</code></td><td>Filter: only files to this partner, or to a member of this group.</td><td>empty</td><td><code>PARTNERB</code></td></tr>
+<tr><td><span class="ui">Testindicator</span> / <code>testindicator</code></td><td>Filter: only files with this test indicator (one character, as set from the envelope or by the mapping; eg <code>1</code> for an EDIFACT test interchange, <code>T</code> for X12). Empty means no filter, so you can not filter for "no indicator".</td><td>empty</td><td><code>1</code>, <code>T</code>, <code>P</code></td></tr>
+<tr><td><span class="ui">Frompartner</span> / <code>frompartner</code> <span class="badge gray">advanced</span></td><td>Set this partner as sender on every received file (not a filter). Useful for formats without partner information such as csv. Only partners, no groups.</td><td>empty</td><td><code>PARTNERA</code></td></tr>
+<tr><td><span class="ui">Topartner</span> / <code>topartner</code> <span class="badge gray">advanced</span></td><td>Set this partner as receiver on every received file.</td><td>empty</td><td><code>MYCOMPANY</code></td></tr>
+<tr><td><span class="ui">Defer</span> / <code>defer</code> <span class="badge gray">advanced</span></td><td>Select files for the outgoing channel, but do not run the channel now; a later part with the same channel sends them.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Incoming zip-file handling</span> / <code>zip_incoming</code> <span class="badge gray">advanced</span></td><td>Unzip received files: every file in the zip becomes a received file.</td><td>empty (no unzip)</td><td><code>Always unzip file</code> (1; a file that is not a zip is an error: <code>File is not a zip-file.</code>), <code>If zip-file: unzip</code> (2; other files pass)</td></tr>
+<tr><td><span class="ui">Outgoing zip-file handling</span> / <code>zip_outgoing</code> <span class="badge gray">advanced</span></td><td>Zip each outgoing file of this part before sending.</td><td>empty</td><td><code>Always zip</code> (1)</td></tr>
+<tr><td><code>rsrv1</code>, <code>rsrv2</code> <span class="badge gray">advanced</span></td><td>Reserved fields in the database; not shown and not used by Bots.</td><td>empty</td><td>-</td></tr>
+</table></div>
+
+<p>Actions in the list of routes: <span class="ui">activate/de-activate</span>, <span class="ui">Disable
+dirmonitor</span>, <span class="ui">Make bots plugin with selected entries</span> and (for superusers)
+<span class="ui">Make bots plugin, skip translate (grammars, mappings)</span>. The menu
+<span class="ui">Configuration</span> → <span class="ui">Routes</span> also has quick filters: by type of incoming
+or outgoing channel, by editype, default run, dirmonitor, active.</p>
+
+<p>Command line (see <a href="#command-line">Command line</a>):</p>
+<pre><code class="language-text">bots-engine [--new] [--resend] [--rereceive] [--automaticretrycommunication] [--cleanup] [-c&lt;configdir&gt;] [route ...]</code></pre>
+
+<h3 id="routes--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>When using an inchannel and not pass-through, both "fromeditype" and "frommessagetype" are required.</code> (when saving)</td><td>The part has an incoming channel and translates, but editype or messagetype is empty.</td><td>Fill in both, or set Translate to <code>Pass-through</code>.</td></tr>
+<tr><td><code>Route with this Idroute and Sequence already exists.</code></td><td>Two parts with the same name and sequence.</td><td>Give the part another Sequence.</td></tr>
+<tr><td><code>There is no (active) route "orders_in".</code> in the log, and an error report mail</td><td>You named a route (command line, job, Run menu) that does not exist or has no active part.</td><td>Check the spelling (names are case sensitive) and tick Active.</td></tr>
+<tr><td><code>Route "orders_in" is empty: no routescript, not enough parameters.</code> (process error)</td><td>A part has no channel, Translate is <code>Nothing</code> and there is no route script.</td><td>Give the part a channel or Translate value, or delete it.</td></tr>
+<tr><td>The run does nothing; the log says <code>Run active routes from database that are in default run: "[]".</code></td><td>No route is active, or all are "Not in default run".</td><td>Tick Active; untick Not in default run, or name the route.</td></tr>
+<tr><td>A route runs by hand but not in the schedule</td><td>It is marked Not in default run, and the schedule starts a normal run.</td><td>Untick it, or let the schedule name the route.</td></tr>
+<tr><td>Files show status <code>Stuck</code>; the report says "files got stuck"</td><td>Translated files of the route were not selected by any outgoing channel: no outgoing channel, filters too narrow, or only deferred parts.</td><td>Check Toeditype/Tomessagetype/partner filters against the values in <span class="ui">Outgoing</span>; add a part without filter; make sure a non-deferred part sends the channel.</td></tr>
+<tr><td><code>Translation not found for editype "x12", messagetype "850004010", frompartner "PARTNERA", topartner "MYCOMPANY", alt "".</code></td><td>No active translation matches the received message.</td><td>Add or activate a translation; check Alternative translation of the route. See <a href="#translations">Translations</a>.</td></tr>
+<tr><td>A file was translated twice, or by the wrong part</td><td>Two parts of the same route have Translate set and both have incoming channels with files of different types.</td><td>Use one translating part; set the others to <code>Nothing</code>.</td></tr>
+<tr><td><code>Please specify a "file" fromchannel to activate dirmonitor for this route.</code> / <code>Dirmonitor doesn't work with fromchannel type "sftp", must be a fromchannel type ['file']</code></td><td>Dirmonitor only watches local folders.</td><td>Use a <code>file</code> incoming channel, or schedule the route instead.</td></tr>
+<tr><td><code>Dirmonitor already active for fromchannel local_orders_in route: …</code></td><td>Another active route watches the same channel.</td><td>Untick Dirmonitor in one of them.</td></tr>
+<tr><td>An incoming channel was deleted and the route now has an empty <span class="ui">Incoming channel</span></td><td>Deleting a channel empties that field in all routes (no warning).</td><td>Make the channel again and choose it in the route.</td></tr>
+<tr><td><code>File is not a zip-file.</code></td><td>Incoming zip-file handling is <code>Always unzip file</code> and a plain file arrived.</td><td>Use <code>If zip-file: unzip</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="channels" data-title="Channels" data-group="Configure">
+<h2>Channels</h2>
+<p class="lead">A channel is one way in or out of Bots: a folder, an FTP or SFTP server, a mailbox, a database, a
+web address. Routes use channels to receive and send files. This page explains what all channels have in common;
+the pages after it explain each type.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A channel is an address book entry plus a
+delivery method: "pick up files ending in <code>.edi</code> from this folder" or "upload to this server with this
+user". You make a channel once and use it in as many routes as you like.</p></div>
+
+<h3 id="channels--how">How it works</h3>
+<ol>
+<li>A channel is <b>incoming</b> (<code>in</code>) or <b>outgoing</b> (<code>out</code>). An incoming channel can only
+be chosen as <span class="ui">Incoming channel</span> of a route, an outgoing one only as
+<span class="ui">Outgoing channel</span>.</li>
+<li>The <b>type</b> says how Bots talks to the other side: <code>file</code>, <code>ftp</code>, <code>ftps</code>,
+<code>ftpis</code>, <code>sftp</code>, <code>pop3</code>, <code>pop3s</code>, <code>pop3apop</code>,
+<code>imap4</code>, <code>imap4s</code>, <code>smtp</code>, <code>smtps</code>, <code>smtpstarttls</code>,
+<code>http</code>, <code>https</code>, <code>xmlrpc</code>, <code>mimefile</code>, <code>trash</code>,
+<code>communicationscript</code>, <code>db</code> and <code>database</code> (old).</li>
+<li><b>Incoming:</b> Bots connects (up to <code>maxconnectiontries</code> times), copies every file that matches into
+its own storage (<code>botssys/data</code>), deletes it on the other side if <span class="ui">Remove</span> is
+ticked, and disconnects. It stops early after <span class="ui">Max seconds</span>. Incoming channels only run in a
+normal ("new") run.</li>
+<li><b>Outgoing:</b> Bots connects and writes every file that waits for this channel, with a name made from the
+<span class="ui">Filename</span> pattern. A file that fails gets status error and can be sent again
+(<span class="ui">Outgoing</span> → resend, or <code>--automaticretrycommunication</code>).</li>
+<li>After the session Bots copies the files to the <b>archive</b>, if <span class="ui">Archive path</span> is
+set.</li>
+<li>If <code>usersys/communicationscripts/&lt;idchannel&gt;.py</code> exists, Bots uses it: functions in it change
+details (file name, mail subject, archive path…), and a class with the name of the type (eg <code>class
+sftp</code>) replaces the built-in one. See <a href="#communication-scripts">Communication scripts</a>.</li>
+</ol>
+
+<h3 id="channels--howto-add">How to add a channel</h3>
+<ol class="steps">
+<li><b>Open the form.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> →
+<span class="ui">In</span> → <span class="ui">Add incoming channel</span> (or <span class="ui">Out</span> →
+<span class="ui">Add outgoing channel</span>).</li>
+<li><b>Type the <span class="ui">Idchannel</span></b>, a short name without spaces, eg
+<code>partnera_sftp_in</code>. It is also the name of the communication script, if you write one.</li>
+<li><b>Choose <span class="ui">In/out</span> and <span class="ui">Type</span>.</b> The field
+<span class="ui">Remove</span> shows only for incoming channels and for type <code>communicationscript</code>.</li>
+<li><b>Fill in the fields of that type</b>: see the type pages (<a href="#channel-file">file</a>,
+<a href="#channel-ftp">FTP</a>, <a href="#channel-sftp">SFTP</a>, <a href="#channel-mail">mail</a>,
+<a href="#channel-database">database</a>, <a href="#channel-other">other</a>). The folded blocks
+<span class="ui">Email specific</span>, <span class="ui">FTP specific</span>, <span class="ui">Database
+specific</span>, <span class="ui">Safe writing &amp; file locking</span> and <span class="ui">Other</span> open with
+a click.</li>
+<li><b>Save.</b> The list shows the channel with its type; the column <span class="ui">Routes</span> links to the
+routes that use it, or offers to add one.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>To make a similar channel (eg the outgoing twin of an
+incoming one), open the channel, change Idchannel and press <span class="ui">Save as new</span>.</p></div>
+<div class="note stop"><span class="label">Stop</span><p>Deleting a channel also deletes its mail addresses per
+partner and the <a href="#confirm-rules">confirm rules</a> for that channel, and empties the channel field of every
+route that used it. Check the <span class="ui">Routes</span> column first.</p></div>
+
+<h3 id="channels--filenames">File names of outgoing files</h3>
+<p>For the types that write named files (<code>file</code>, <code>ftp</code>, <code>ftps</code>, <code>ftpis</code>,
+<code>sftp</code>, <code>mimefile</code>, <code>communicationscript</code>; the attachment name for mail; the
+<code>Content-Disposition</code> name for http) the field <span class="ui">Filename</span> is a pattern. Bots fills
+it in for each file with Python's <code>str.format</code>. An empty field means <code>*</code> (http: no name).</p>
+<div class="table-wrap"><table>
+<tr><th>Placeholder</th><th>Becomes</th></tr>
+<tr><td><code>*</code> or <code>{unique}</code></td><td>A counter per channel: 1, 2, 3… (kept in the database, see <a href="#counters">Counters</a>).</td></tr>
+<tr><td><code>{datetime:%Y%m%d}</code></td><td>The current date/time in any <code>strftime</code> format, eg <code>{datetime:%Y%m%d%H%M%S}</code>. In acceptance tests always 2013-01-23 01:23:45.</td></tr>
+<tr><td><code>{infile}</code></td><td>The name (with extension, without folder) of the received file this file came from.</td></tr>
+<tr><td><code>{infile:name}</code>, <code>{infile:ext}</code></td><td>Only the name, or only the extension (without the dot).</td></tr>
+<tr><td><code>{infile[0]}</code>, <code>{infile[4]}</code></td><td>One character of the received name, by position (0 is the first). Python format strings have no slices; the position is not checked.</td></tr>
+<tr><td><code>{editype}</code>, <code>{messagetype}</code></td><td>Editype and messagetype of the outgoing file, eg <code>edifact</code>, <code>INVOICD96AUNEAN008</code>.</td></tr>
+<tr><td><code>{frompartner}</code>, <code>{topartner}</code></td><td>Partner ids, eg <code>MYCOMPANY</code>, <code>PARTNERA</code>.</td></tr>
+<tr><td><code>{botskey}</code></td><td>The key a mapping set (eg an order number). Only useful when the messagetype is not merged (one message per file).</td></tr>
+<tr><td><code>{alt}</code>, <code>{idroute}</code>, <code>{fromchannel}</code>, <code>{tochannel}</code>, <code>{idta}</code>, <code>{reference}</code>, <code>{testindicator}</code>, <code>{charset}</code>, <code>{contenttype}</code>, <code>{nrmessages}</code>, <code>{envelope}</code>, <code>{frommail}</code>, <code>{tomail}</code>, <code>{cc}</code>, <code>{filesize}</code>, <code>{rsrv1}</code>…<code>{rsrv5}</code></td><td>Any other value Bots keeps for the file (the columns of its table <code>ta</code>). <code>{idta}</code> is the internal number of the file, <code>{reference}</code> the interchange reference.</td></tr>
+<tr><td><code>{messagetype[0]}</code></td><td>Indexing works for every text value, as for <code>{infile[0]}</code>.</td></tr>
+<tr><td><code>{overwrite}</code></td><td>Not part of the name. It makes Bots overwrite a file with the same name; without it Bots <b>appends</b> to an existing file (types file, ftp, ftps, ftpis, sftp, communicationscript).</td></tr>
+<tr><td><code>/</code> in the pattern</td><td>A sub-folder under the channel path, eg <code>{topartner}/{messagetype}/{unique}.edi</code>. The sub-folders must exist.</td></tr>
+</table></div>
+<p>Examples:</p>
+<div class="table-wrap"><table>
+<tr><th>Filename</th><th>Result</th></tr>
+<tr><td><code>*</code> or empty</td><td><code>39724</code></td></tr>
+<tr><td><code>order_*.csv</code></td><td><code>order_17.csv</code></td></tr>
+<tr><td><code>{botskey}_{unique}.idoc</code></td><td><code>PO4711_18.idoc</code></td></tr>
+<tr><td><code>{infile:name}_{unique}.txt</code></td><td><code>orders0815_19.txt</code></td></tr>
+<tr><td><code>{editype}-{messagetype}-{datetime:%Y%m%d}-{unique}.{infile:ext}</code></td><td><code>edifact-ORDERSD96AUNEAN008-20261015-20.edi</code></td></tr>
+<tr><td><code>{topartner}/INPUT/ORDER_{botskey}.csv</code></td><td><code>PARTNERA/INPUT/ORDER_PO4711.csv</code></td></tr>
+<tr><td><code>{infile[4]}{infile[5]}{infile[6]}{infile[7]}.xml</code></td><td><code>7389.xml</code> (from <code>INV_7389.txt</code>)</td></tr>
+<tr><td><code>{overwrite}daily_report.txt</code></td><td><code>daily_report.txt</code>, replaced each time</td></tr>
+</table></div>
+<div class="note warn"><span class="label">Watch out</span><p>A fixed name without <code>*</code>, <code>{unique}</code>
+or <code>{overwrite}</code> makes Bots add every file to the end of the same file. That is right for a daily
+collection file, and wrong in almost every other case.</p></div>
+<div class="note info"><span class="label">Note</span><p><code>{infile}</code> is the name as Bots received it. For
+files that came by mail, http or database this is not a real file name (eg the mail account). If Bots can not find
+a received file for an outgoing file, <code>{infile}</code> gives an error.</p></div>
+<p>A communication script can change the result with a function <code>filename(channeldict, filename, ta)</code>
+that returns the name to use. Do not change <code>out.ta_info['filename']</code> in a mapping for this: that is
+Bots' internal storage name.</p>
+
+<h3 id="channels--locking">Safe writing and locking</h3>
+<p>Another program must not read a file while Bots still writes it, and Bots must not read a file another program
+still writes. Three fields help (block <span class="ui">Safe writing &amp; file locking</span>):</p>
+<ul>
+<li><b><span class="ui">Tmp-part file name</span></b> (database field <code>mdnchannel</code>; outgoing file, ftp,
+ftps, ftpis, sftp): Bots writes the file, then renames it, removing the last occurrence of this text. With Filename
+<code>order_*.csv.tmp</code> and Tmp-part <code>.tmp</code> the file is written as <code>order_17.csv.tmp</code> and
+renamed to <code>order_17.csv</code>. The other program must ignore <code>*.tmp</code>.</li>
+<li><b><span class="ui">System locks</span></b> (<code>syslock</code>; file and mimefile): Bots locks the file with
+the operating system while it reads (shared lock) or writes (exclusive lock). Linux: <code>fcntl.lockf</code>,
+non-blocking: a locked file is an error and is tried again next run. Windows: <code>msvcrt.locking</code>, which
+retries once a second, 10 times.</li>
+<li><b><span class="ui">Lock-file</span></b> (<code>lockname</code>; file and mimefile): a directory lock. Before
+reading or writing, Bots creates this file in the channel path; if it already exists, the connection fails (another
+program has the folder). Bots deletes it at the end. The other program must do the same.</li>
+</ul>
+<div class="note warn"><span class="label">Watch out</span><p>The lock file is in the same folder as the files.
+Make sure the <span class="ui">Filename</span> pattern of an incoming channel does not match it: with
+<code>*</code> Bots would receive its own lock file.</p></div>
+
+<h3 id="channels--archive">Archive</h3>
+<p>With <span class="ui">Archive path</span> set (eg <code>C:/edi/archive/partnera_sftp_in</code> or
+<code>/srv/edi/archive/partnera_sftp_in</code>) Bots copies every file the channel received or sent, after the
+session, to <code>&lt;archive path&gt;/&lt;YYYYMMDD&gt;/</code>. Details:</p>
+<ul>
+<li>The name in the archive is Bots' internal number. With <code>archiveexternalname = True</code> in
+<code>bots.ini</code> it is the external name, for types file, ftp, ftps, ftpis, sftp, mimefile and
+communicationscript with a Filename set. A name that already exists gets <code>_HHMMSS</code> added.</li>
+<li>With <code>archivezip = True</code> the archive of a day is one zip file <code>YYYYMMDD.zip</code>.</li>
+<li>The cleanup deletes day folders older than <span class="ui">Max days archive</span> (field <code>rsrv3</code>),
+or else <code>maxdaysarchive</code> of <code>bots.ini</code> (default 180). It deletes <b>everything</b> in the
+archive path whose name sorts before the cut-off date: use a folder for the archive only.</li>
+<li>No archive in acceptance tests.</li>
+<li>Communication script functions <code>archivepath(channeldict)</code> and <code>archivename(channeldict, idta,
+filename)</code> change folder and name.</li>
+</ul>
+
+<h3 id="channels--paths">Relative paths</h3>
+<p>Every path in a channel (path, archive path, test path, key and certificate files, SQLite file) that is not
+absolute is relative to the <b>environment directory</b>: the folder that holds <code>config</code>,
+<code>botssys</code> and <code>usersys</code> (see <a href="#environments">Environments</a>). So
+<code>botssys/infile/orders</code> is inside your environment. Use forward slashes, also on Windows
+(<code>C:/edi/in</code>). <span class="badge orange">changed in 4.0</span> In Bots 3 a relative path was relative to
+the Bots program folder; <code>bots-updatedb</code> lists the channels this concerns.</p>
+
+<h3 id="channels--testpath">Test path and acceptance tests</h3>
+<p><span class="ui">Acceptance test path</span> (<code>testpath</code>) is used in two situations:</p>
+<ul>
+<li><code>[acceptance] runacceptancetest = True</code>: a channel with a test path reads from or writes to that
+folder instead of its real destination. Mail types become <code>mimefile</code>, all others (ftp, sftp, http, db,
+xmlrpc, communicationscript…) become <code>file</code>; <span class="ui">Remove</span> is switched off. A channel
+without test path keeps working as usual. See <a href="#acceptance-testing">Acceptance testing</a>.</li>
+<li><span class="badge green">new in 4.0</span> <code>[settings] channels_use_testpath = True</code>: the same switch
+for a test environment, but every channel that would connect to another machine must have a test path, or it is not
+run (error). Clock and counters run normally.</li>
+</ul>
+
+<h3 id="channels--tls">Certificates (TLS/SSL)</h3>
+<p>For pop3s, imap4s, smtps, smtpstarttls, ftps, ftpis and https:</p>
+<ul>
+<li><span class="badge green">new in 4.0</span> <b><span class="ui">Verify server certificate</span></b> (default on):
+the certificate of the server must be valid, for the host name of the channel, and issued by a known CA (the CAs of
+the system, or <span class="ui">CA certificate file</span>). Off: any certificate is accepted (as in Bots 3); the
+connection is encrypted but you do not know with whom. Channels that come from a Bots 3 database are set to off by
+<code>bots-updatedb</code>.</li>
+<li><span class="badge green">new in 4.0</span> <b><span class="ui">CA certificate file</span></b>: PEM file with the
+CA certificate(s) of the server, or the server's own certificate if it is self-signed.</li>
+<li><b><span class="ui">Certificate chain file</span></b> with <b><span class="ui">Private key file</span></b>: a
+client certificate, when the server wants Bots to identify itself. A certificate chain file without key file is
+used as CA file (as before the CA field existed).</li>
+</ul>
+
+<h3 id="channels--reference">Reference</h3>
+<p>All fields of a channel (model <code>channel</code>), in the order of the screen.</p>
+<div class="table-wrap"><table>
+<tr><th>Name (screen / database)</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Idchannel</span> / <code>idchannel</code></td><td>Name of the channel, max 35 characters. Also the name of its communication script.</td><td>-</td><td><code>partnera_sftp_in</code></td></tr>
+<tr><td><span class="ui">In/out</span> / <code>inorout</code></td><td>Incoming or outgoing.</td><td>-</td><td><code>in</code>, <code>out</code></td></tr>
+<tr><td><span class="ui">Type</span> / <code>type</code></td><td>The protocol, see above.</td><td>-</td><td><code>file</code>, <code>sftp</code>…</td></tr>
+<tr><td><span class="ui">Remove</span> / <code>remove</code></td><td>Incoming: delete files (mails) on the other side after reading. Without it the same files are received again each run. Communicationscript: delete files after the script (also outgoing). Never in acceptance tests.</td><td>off</td><td>on in production</td></tr>
+<tr><td><span class="ui">Script</span></td><td>Read-only: shows if a communication script exists for this channel.</td><td>-</td><td>-</td></tr>
+<tr><td><span class="ui">Host</span> / <code>host</code></td><td>Server name or address. Required for all types except file, mimefile, trash, communicationscript and db.</td><td>empty</td><td><code>sftp.example.net</code></td></tr>
+<tr><td><span class="ui">Port</span> / <code>port</code></td><td>TCP port. 0 means the standard port for ftp, ftps, smtp, smtps, smtpstarttls, http, https and db. pop3, pop3s, pop3apop, imap4, imap4s, sftp and ftpis need the port filled in.</td><td>0</td><td><code>22</code>, <code>990</code>, <code>995</code></td></tr>
+<tr><td><span class="ui">Username</span> / <code>username</code></td><td>Login name.</td><td>empty</td><td><code>mycompany</code></td></tr>
+<tr><td><span class="ui">Password</span> / <code>secret</code></td><td>Password; for sftp with key file: the passphrase of the key. Stored as plain text in the database; the list shows asterisks.</td><td>empty</td><td><code>********</code></td></tr>
+<tr><td><span class="ui">Path</span> / <code>path</code></td><td>file, mimefile, communicationscript: the folder. ftp/sftp: folder on the server, relative to the login folder (made if missing). imap4: the mailbox (empty: INBOX). http: the path of the url. xmlrpc: the remote function. db: the database name (SQLite: the file).</td><td>empty</td><td><code>botssys/infile/orders</code>, <code>out/invoices</code></td></tr>
+<tr><td><span class="ui">Filename</span> / <code>filename</code></td><td>Incoming: a wildcard pattern (<code>*</code>, <code>?</code>, <code>[abc]</code>) for the files to receive. Outgoing: a name pattern, see <a href="#channels--filenames">above</a>. db: database name if Path is empty.</td><td>empty (out: <code>*</code>)</td><td><code>*.edi</code>, <code>INV_*.xml</code></td></tr>
+<tr><td><span class="ui">Archive path</span> / <code>archivepath</code></td><td>Folder for the archive of this channel.</td><td>empty (no archive)</td><td><code>C:/edi/archive/mail_in</code></td></tr>
+<tr><td><span class="ui">Max days archive</span> / <code>rsrv3</code></td><td>Days the archive is kept; overrules <code>maxdaysarchive</code>.</td><td>empty (180)</td><td><code>365</code></td></tr>
+<tr><td><span class="ui">Description</span> / <code>desc</code></td><td>Free text.</td><td>empty</td><td>-</td></tr>
+<tr><td><span class="ui">No check from-address</span> / <code>starttls</code></td><td>Mail in: do not check that the sender address belongs to a known partner. (The database name is historic: it has nothing to do with STARTTLS.)</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">No check to-address</span> / <code>apop</code></td><td>Mail in: do not check that a "To" address belongs to a known partner. (Nothing to do with APOP.)</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Mime encoding</span> / <code>askmdn</code></td><td>Mail out (smtp types, mimefile), http out: how the content is encoded.</td><td>empty (= Base64)</td><td><code>Base64</code> (stored <code>always</code>), <code>Never</code> (<code>never</code>), <code>Base64 if not ascii</code> (<code>ascii</code>)</td></tr>
+<tr><td><span class="ui">As body or attachment</span> / <code>sendmdn</code></td><td>Mail out: where the EDI file goes in the mail. http out: <code>attachment</code> gives <code>Content-Disposition: attachment</code>, anything else <code>inline</code>.</td><td>empty (= attachment)</td><td><code>As attachment</code>, <code>In body of email</code>, <code>multipart</code>, <code>multipart/attachment</code></td></tr>
+<tr><td><span class="ui">Ftp active mode</span> / <code>ftpactive</code></td><td>ftp, ftps, ftpis: active mode; otherwise passive.</td><td>off (passive)</td><td>on / off</td></tr>
+<tr><td><span class="ui">Ftp binary transfer mode</span> / <code>ftpbinary</code></td><td>ftp, ftps, ftpis: binary transfer; otherwise ASCII (line ends are changed).</td><td>off (ASCII)</td><td>on for EDI</td></tr>
+<tr><td><span class="ui">Ftp account</span> / <code>ftpaccount</code> <span class="badge gray">advanced</span></td><td>ftp, ftps, ftpis: the ACCT value at login; few servers use it.</td><td>empty</td><td>-</td></tr>
+<tr><td><span class="ui">Database</span> / <code>dbengine</code> <span class="badge green">new in 4.0</span></td><td>db: the kind of database; Bots makes the connection. Empty: the script connects.</td><td>empty</td><td><code>MySQL / MariaDB</code>, <code>PostgreSQL</code>, <code>SQLite</code>, <code>Microsoft SQL Server</code></td></tr>
+<tr><td><span class="ui">Tmp-part file name</span> / <code>mdnchannel</code></td><td>Out (file, ftp, ftps, ftpis, sftp): write, then rename without this part. Max 35 characters.</td><td>empty</td><td><code>.tmp</code></td></tr>
+<tr><td><span class="ui">System locks</span> / <code>syslock</code> <span class="badge gray">advanced</span></td><td>file, mimefile: lock each file with the operating system while reading/writing.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Lock-file</span> / <code>lockname</code> <span class="badge gray">advanced</span></td><td>file, mimefile: directory lock file name. Max 35 characters.</td><td>empty</td><td><code>bots.lock</code></td></tr>
+<tr><td><span class="ui">Acceptance test path</span> / <code>testpath</code></td><td>Folder used in acceptance tests and with <code>channels_use_testpath</code>.</td><td>empty</td><td><code>botssys/test/partnera_sftp_in</code></td></tr>
+<tr><td><span class="ui">Private key file</span> / <code>keyfile</code></td><td>sftp: the private key to log in with. TLS types: key of the client certificate.</td><td>empty</td><td><code>config/keys/partnera_id_ed25519</code></td></tr>
+<tr><td><span class="ui">Certificate chain file</span> / <code>certfile</code></td><td>TLS types: client certificate (PEM), with Private key file; alone: used as CA file.</td><td>empty</td><td><code>config/keys/client.pem</code></td></tr>
+<tr><td><span class="ui">CA certificate file</span> / <code>cafile</code> <span class="badge green">new in 4.0</span></td><td>TLS types: CA certificate(s) to trust for this server (PEM). Empty: the CAs of the system.</td><td>empty</td><td><code>config/keys/partner_ca.pem</code></td></tr>
+<tr><td><span class="ui">Verify server certificate</span> / <code>verify_cert</code> <span class="badge green">new in 4.0</span></td><td>TLS types: check the server certificate.</td><td>on</td><td>on / off</td></tr>
+<tr><td><span class="ui">Max seconds</span> / <code>rsrv2</code></td><td>In: stop receiving after this many seconds (the rest comes next run). Overrules <code>maxsecondsperchannel</code> of <code>bots.ini</code> (60). Checked between files (not for db).</td><td>empty (60)</td><td><code>120</code></td></tr>
+<tr><td><span class="ui">Max failures</span> / <code>rsrv1</code></td><td>In: number of runs in a row in which the connection may fail before it is reported as a process error; until then failures are only logged. Out: number of connection tries in one run (overrules <code>maxconnectiontries</code>).</td><td>empty (in: report at once; out: see <code>maxconnectiontries</code>)</td><td><code>5</code></td></tr>
+<tr><td><span class="ui">Debug level</span> / <code>debug</code></td><td>Protocol details in the log: ftp types 0–2, pop3 0–2, smtp 0–1 (smtps, smtpstarttls 0–2), imap4 0–5, http 0–4, sftp 0=no log, 1=critical, 2=error, 3=warning, 4=info, 5=debug. Empty: the setting of <code>bots.ini</code> (<code>ftpdebug</code>, <code>pop3debug</code>, <code>smtpdebug</code>, <code>imap4debug</code>, <code>httpdebug</code>).</td><td>empty</td><td>0–5</td></tr>
+<tr><td><span class="ui">Parameters</span> / <code>parameters</code></td><td>Extra settings, max 70 characters. sftp: JSON for the SSH library; ftpis: TLS version; http(s): query parameters; db: driver options; any type: free use in a communication script.</td><td>empty</td><td><code>{"disabled_algorithms": {"pubkeys": ["rsa-sha2-512"]}}</code></td></tr>
+<tr><td><code>charset</code> <span class="badge gray">advanced</span></td><td>Not used since Bots 3; not shown in the screen.</td><td><code>us-ascii</code></td><td>-</td></tr>
+</table></div>
+
+<p>Settings in <code>bots.ini</code> <code>[settings]</code> that act on all channels (see
+<a href="#bots-ini">bots.ini</a>): <code>maxconnectiontries</code> (connection tries; the code uses 3 for incoming and
+1 for outgoing channels when it is not set), <code>maxsecondsperchannel</code> (60), <code>globaltimeout</code> (10
+seconds, all TCP connections), <code>ftptimeout</code> (10 seconds, ftp and sftp), <code>archivezip</code>,
+<code>archiveexternalname</code>, <code>maxdaysarchive</code>, <code>channels_use_testpath</code> and the debug
+levels.</p>
+
+<h3 id="channels--trouble">Troubleshooting</h3>
+<p>Communication errors of incoming channels show in <span class="ui">Process errors</span> (see
+<a href="#web-reports">Reports</a>); errors of outgoing files show in <span class="ui">Outgoing</span> with status
+error.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>HOST field is mandatory for ftp channel</code> (when saving)</td><td>This type connects to a server.</td><td>Fill in Host.</td></tr>
+<tr><td><code>Communication try 1 error on channel partnera_sftp_in: …</code> (log), then a process error</td><td>The incoming connection failed; Bots tries <code>maxconnectiontries</code> times.</td><td>Read the text after the colon; see the troubleshooting of the type. Set Max failures if short outages should not be reported.</td></tr>
+<tr><td><code>Communication failure 2/5 on channel partnera_sftp_in: …</code></td><td>Max failures is 5; this is the 2nd failed run in a row; not yet a process error.</td><td>Nothing, unless it keeps growing. At 5/5 the error is reported and the count starts again.</td></tr>
+<tr><td><code>Outgoing connection failure 1 on channel partnera_sftp_out: …</code></td><td>The outgoing connection failed. The files of this run get status error.</td><td>Fix the cause; then resend from <span class="ui">Outgoing</span>, or let <code>--automaticretrycommunication</code> send them.</td></tr>
+<tr><td><code>Channel "partnera_sftp_out" is unknown.</code></td><td>A route points to a channel id that does not exist.</td><td>Make the channel or correct the route.</td></tr>
+<tr><td><code>Error in formatting outgoing filename "{botskey}.xml". Error: "…KeyError…"</code></td><td>A placeholder that is not a value of the file, a typo, or a missing <code>}</code>.</td><td>Check the spelling against the table of placeholders.</td></tr>
+<tr><td><code>Error in format of "{filename}": unknown format: "base".</code></td><td><code>{infile:…}</code> accepts only <code>name</code> and <code>ext</code>.</td><td>Use <code>{infile:name}</code> or <code>{infile:ext}</code>.</td></tr>
+<tr><td>Outgoing files are added to one big file</td><td>The Filename has no <code>*</code>/<code>{unique}</code>, so every file gets the same name and is appended.</td><td>Add <code>*</code>, or <code>{overwrite}</code> if replacing is intended.</td></tr>
+<tr><td>The same files are received every run</td><td><span class="ui">Remove</span> is off.</td><td>Tick Remove.</td></tr>
+<tr><td>Only part of the files are received</td><td>Max seconds (or <code>maxsecondsperchannel</code>, 60) was reached.</td><td>Nothing: the rest comes next run. Raise Max seconds if needed.</td></tr>
+<tr><td><code>[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: …</code></td><td>Verify server certificate is on and the certificate is self-signed, expired, from an unknown CA, or for another host name.</td><td>Put the CA (or the server certificate) in CA certificate file; use the host name that is in the certificate; or switch verification off if you accept the risk.</td></tr>
+<tr><td><code>[Errno 17] File exists: '…/bots.lock'</code></td><td>The Lock-file is there: another program works in the folder, or an earlier run stopped hard and left it.</td><td>Wait; if no other program uses it, delete the lock file.</td></tr>
+<tr><td><code>Channel "partnera_sftp_out" (type sftp) is not run: bots.ini [settings] channels_use_testpath is set and the channel has no testpath.</code></td><td>Test environment setting.</td><td>Give the channel a test path, or switch the setting off.</td></tr>
+<tr><td>An archive folder disappeared</td><td>The cleanup removes everything in the archive path older than Max days archive.</td><td>Use a separate folder for each archive path; raise Max days archive.</td></tr>
+<tr><td><code>Userscript "…": "…"</code></td><td>An error in a function of the communication script.</td><td>Correct the script; the text after the name is the Python error. See <a href="#communication-scripts">Communication scripts</a>.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-file" data-title="File channels" data-group="Configure">
+<h2>File channels</h2>
+<p class="lead">A channel of type <code>file</code> reads files from a folder or writes files to a folder on the
+machine where Bots runs, or on a network share it can reach. Use it to exchange files with your ERP system, and
+for tests.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>An incoming file channel is an in-tray: Bots
+takes every file that matches the name pattern. An outgoing file channel is an out-tray: Bots puts each result
+there under a new name.</p></div>
+
+<h3 id="channel-file--how">How it works</h3>
+<ol>
+<li><b>Incoming:</b> Bots lists <span class="ui">Path</span>/<span class="ui">Filename</span> (wildcards
+<code>*</code>, <code>?</code>, <code>[…]</code>; only files, not folders), sorted by name, and copies them one by
+one. With <span class="ui">Remove</span> it deletes each file after copying. It stops after Max seconds.</li>
+<li><b>Outgoing:</b> Bots makes the folder if it is missing, makes a name from the Filename pattern, and writes the
+file. Without <code>{overwrite}</code> it appends to an existing file of the same name. With a Tmp-part it writes
+first and renames after.</li>
+<li>A file that can not be read becomes a process error; the next files go on.</li>
+</ol>
+
+<h3 id="channel-file--howto-in">How to receive files from a folder</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> →
+<span class="ui">Add incoming channel</span>.</li>
+<li><b>Idchannel</b> <code>local_orders_in</code>; <b>Type</b> <code>file</code>.</li>
+<li><b>Tick <span class="ui">Remove</span></b> (in production; leave it off while you test, so you can run the same
+file again).</li>
+<li><b>Path</b> <code>botssys/infile/orders</code> (inside the environment), or absolute: Windows
+<code>C:/edi/in</code>, Linux <code>/srv/edi/in</code>.</li>
+<li><b>Filename</b> <code>*.edi</code>. Make sure files that are still being written by the other program do not
+match (for example the other program writes <code>*.tmp</code> and renames to <code>*.edi</code>).</li>
+<li><b>Optional:</b> Archive path, Max seconds; System locks or Lock-file if the other program uses them.</li>
+<li><b>Save</b>, and use the channel as Incoming channel of a route.</li>
+</ol>
+
+<h3 id="channel-file--howto-out">How to write files to a folder</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Channels</span> → <span class="ui">Out</span> → <span class="ui">Add outgoing
+channel</span>.</li>
+<li><b>Idchannel</b> <code>erp_orders_out</code>; <b>Type</b> <code>file</code>.</li>
+<li><b>Path</b> <code>botssys/outfile/orders</code>; Bots makes the folder (and its parents) if it does not
+exist.</li>
+<li><b>Filename</b> <code>order_{datetime:%Y%m%d}_*.csv</code> (see <a href="#channels--filenames">file
+names</a>).</li>
+<li><b>Optional: Tmp-part file name</b> <code>.tmp</code> with Filename <code>order_*.csv.tmp</code>, so the ERP
+system never reads a half-written file.</li>
+<li><b>Save</b> and use it as Outgoing channel of a route. After a run the files are in the folder; in
+<span class="ui">Outgoing</span> each shows its full file name.</li>
+</ol>
+
+<h3 id="channel-file--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does for type file</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Path</td><td>The folder. Relative to the environment directory, or absolute. Network share: <code>//server/share/edi</code> (the user that runs Bots needs rights).</td><td>empty (= environment directory)</td><td><code>C:/edi/in</code>, <code>/srv/edi/in</code></td></tr>
+<tr><td>Filename</td><td>In: wildcard pattern. Out: name pattern with placeholders.</td><td>out: <code>*</code></td><td><code>*.xml</code>, <code>{infile}</code></td></tr>
+<tr><td>Remove</td><td>In: delete the file after it is received.</td><td>off</td><td>on</td></tr>
+<tr><td>Tmp-part file name</td><td>Out: write, then rename without this text.</td><td>empty</td><td><code>.tmp</code></td></tr>
+<tr><td>System locks</td><td>Lock each file while reading (shared) or writing (exclusive).</td><td>off</td><td>on / off</td></tr>
+<tr><td>Lock-file</td><td>Directory lock: Bots makes this file in Path at the start and removes it at the end; fails if it exists.</td><td>empty</td><td><code>bots.lock</code></td></tr>
+<tr><td>Archive path, Max days archive</td><td>Archive, see <a href="#channels--archive">Channels</a>.</td><td>empty</td><td>-</td></tr>
+<tr><td>Max seconds, Max failures</td><td>See <a href="#channels--reference">Channels</a>.</td><td>empty</td><td>-</td></tr>
+<tr><td>Acceptance test path</td><td>Folder used instead of Path in acceptance tests.</td><td>empty</td><td>-</td></tr>
+<tr><td>Host, Port, Username, Password, FTP and mail fields, Debug level</td><td>Not used.</td><td>-</td><td>-</td></tr>
+</table></div>
+
+<h3 id="channel-file--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>No files are received, no error</td><td>Path or Filename do not match (case on Linux, a typo, a relative path that points into the environment while the files are elsewhere).</td><td>Check the full path: a relative Path is under the environment directory. Test the pattern; on Linux <code>*.EDI</code> and <code>*.edi</code> differ.</td></tr>
+<tr><td>The same files come in again every run</td><td>Remove is off.</td><td>Tick Remove.</td></tr>
+<tr><td><code>[Errno 13] Permission denied: …</code> (process error <code>file-incommunicate</code>, or an outgoing error)</td><td>The user that runs Bots (service, scheduled task) has no rights on the folder or file, or another program has the file open (Windows).</td><td>Give rights; check which user the scheduler uses.</td></tr>
+<tr><td><code>[Errno 2] No such file or directory: …</code> when sending</td><td>The Filename has a sub-folder (<code>{topartner}/…</code>) that does not exist.</td><td>Make the sub-folders; Bots only makes the Path itself.</td></tr>
+<tr><td>A half-written file was received</td><td>The other program writes directly under a name that matches.</td><td>Let it write under another name and rename; or use System locks / Lock-file on both sides.</td></tr>
+<tr><td><code>[Errno 17] File exists: '…/bots.lock'</code></td><td>The lock file exists.</td><td>See <a href="#channels--trouble">Channels</a>.</td></tr>
+<tr><td><code>[Errno 11] Resource temporarily unavailable</code> (Linux) or <code>[Errno 36] Resource deadlock avoided</code> (Windows)</td><td>System locks: another program holds a lock on the file.</td><td>Nothing: the file is tried again in the next run.</td></tr>
+<tr><td><code>Can not do a systemlock on this platform</code></td><td>System locks on an operating system other than Windows or Linux/Unix.</td><td>Switch System locks off.</td></tr>
+<tr><td>Files written to the wrong folder after moving from Bots 3</td><td>Relative paths are now relative to the environment directory.</td><td>Use full paths, or make the folders in the environment.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-ftp" data-title="FTP and FTPS channels" data-group="Configure">
+<h2>FTP and FTPS channels</h2>
+<p class="lead">Types <code>ftp</code>, <code>ftps</code> and <code>ftpis</code> receive files from and send files
+to an FTP server. <code>ftp</code> is not encrypted; <code>ftps</code> (explicit) and <code>ftpis</code> (implicit)
+use TLS.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>FTP is an old, common way to put files on
+another company's server. Plain FTP sends the password and the files readable for anyone on the way, so use FTPS
+(or <a href="#channel-sftp">SFTP</a>) when the partner offers it.</p></div>
+
+<h3 id="channel-ftp--how">How it works</h3>
+<ol>
+<li>Bots connects to Host and Port, logs in with Username, Password (and Ftp account), and goes to Path, relative to
+the folder the server shows after login. If that folder does not exist Bots makes it (one level).</li>
+<li><b>ftps (explicit):</b> Bots connects as plain FTP (normally port 21), asks for TLS (<code>AUTH TLS</code>),
+logs in and protects the data connections (<code>PROT P</code>).</li>
+<li><b>ftpis (implicit):</b> the connection is TLS from the first byte (normally port 990). Bots also sends
+<code>PBSZ 0</code> and <code>PROT P</code> and ignores a refusal of these.</li>
+<li><b>Incoming:</b> Bots lists the folder (<code>NLST</code>), keeps the names that match Filename, and downloads
+them. Folders and empty files are skipped without an error (and are not removed). With Remove the file is deleted
+on the server after download.</li>
+<li><b>Outgoing:</b> Bots uploads each file with <code>APPE</code> (append) or, with <code>{overwrite}</code> in the
+Filename, <code>STOR</code>; with a Tmp-part it renames after the upload.</li>
+<li><b>ASCII or binary:</b> without <span class="ui">Ftp binary transfer mode</span> Bots uses ASCII mode: when
+receiving, CRLF line ends become LF and the last line gets a line end; when sending, every line end becomes CRLF.
+The bytes themselves are not re-coded. Binary mode transfers the file exactly.</li>
+<li><b>Passive or active:</b> passive unless <span class="ui">Ftp active mode</span> is ticked. In passive mode Bots
+opens the data connection (works through most firewalls).</li>
+<li>Time-out: <code>ftptimeout</code> in <code>bots.ini</code> (10 seconds).</li>
+</ol>
+
+<h3 id="channel-ftp--howto-in">How to receive from an FTP or FTPS server</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> →
+<span class="ui">Add incoming channel</span>.</li>
+<li><b>Idchannel</b> <code>partnera_ftp_in</code>; <b>Type</b> <code>ftps (explicit)</code> (or <code>ftp</code>,
+or <code>ftps (implicit)</code> if the partner says "implicit" or port 990).</li>
+<li><b>Tick Remove</b> (production).</li>
+<li><b>Host</b> <code>ftp.example.com</code>; <b>Port</b> <code>0</code> (= 21) for ftp and ftps, <code>990</code>
+for ftpis.</li>
+<li><b>Username</b> and <b>Password</b> as given by the partner.</li>
+<li><b>Path</b> <code>out</code> (the folder where the partner puts your files); empty for the login folder.</li>
+<li><b>Filename</b> <code>*.edi</code>, or <code>*</code> for all.</li>
+<li><b>Open <span class="ui">FTP specific</span></b>: tick <span class="ui">Ftp binary transfer mode</span> unless
+the partner wants ASCII; leave active mode off unless the partner asks for it.</li>
+<li><b>For ftps/ftpis open <span class="ui">Other</span></b>: keep <span class="ui">Verify server certificate</span>
+on; if the server has its own or a private CA, put that certificate in <span class="ui">CA certificate
+file</span>.</li>
+<li><b>Save</b>, add the channel to a route and run. In <span class="ui">Incoming</span> the file names show as
+<code>ftp://out/ORDERS001.edi</code>.</li>
+</ol>
+
+<h3 id="channel-ftp--howto-out">How to send to an FTP or FTPS server</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Channels</span> → <span class="ui">Out</span> → <span class="ui">Add outgoing
+channel</span>; Idchannel <code>partnerb_ftp_out</code>; Type as above.</li>
+<li><b>Host, Port, Username, Password, Path</b> (eg <code>in</code>).</li>
+<li><b>Filename</b> with a unique part, eg <code>INV_{datetime:%Y%m%d}_*.edi</code>. Many servers do not allow append
+(<code>APPE</code>): then use unique names or <code>{overwrite}</code>.</li>
+<li><b>Optional: Tmp-part</b> <code>.tmp</code> with Filename <code>INV_*.edi.tmp</code>, if the partner picks files
+up automatically.</li>
+<li><b>FTP specific:</b> binary mode on.</li>
+<li><b>Optional: Max failures</b> (outgoing: number of connection tries).</li>
+<li><b>Save</b> and use it in a route.</li>
+</ol>
+
+<h3 id="channel-ftp--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does for ftp, ftps, ftpis</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Host</td><td>FTP server. Required.</td><td>-</td><td><code>ftp.example.com</code></td></tr>
+<tr><td>Port</td><td>0 = 21 (ftp, ftps). ftpis: fill in (usually 990); 0 would also mean 21, which is wrong for implicit TLS.</td><td>0</td><td><code>21</code>, <code>990</code></td></tr>
+<tr><td>Username, Password</td><td>Login.</td><td>empty</td><td>-</td></tr>
+<tr><td>Path</td><td>Folder relative to the login folder; made if missing (one level).</td><td>empty</td><td><code>out</code>, <code>edi/in</code></td></tr>
+<tr><td>Filename</td><td>In: wildcard pattern on the names the server lists. Out: name pattern.</td><td>out: <code>*</code></td><td><code>*.edi</code></td></tr>
+<tr><td>Remove</td><td>In: delete on the server after download.</td><td>off</td><td>on</td></tr>
+<tr><td>Ftp active mode</td><td>Active mode instead of passive.</td><td>off</td><td>on / off</td></tr>
+<tr><td>Ftp binary transfer mode</td><td>Binary instead of ASCII.</td><td>off</td><td>on / off</td></tr>
+<tr><td>Ftp account</td><td>Value sent with <code>ACCT</code> at login.</td><td>empty</td><td>-</td></tr>
+<tr><td>Tmp-part file name</td><td>Out: upload under the long name, then <code>RNFR/RNTO</code> to the name without this part.</td><td>empty</td><td><code>.tmp</code></td></tr>
+<tr><td>Verify server certificate, CA certificate file, Certificate chain file, Private key file</td><td>ftps, ftpis: TLS settings, see <a href="#channels--tls">Certificates</a>.</td><td>verify on</td><td>-</td></tr>
+<tr><td>Parameters</td><td>ftpis only: <code>5</code> = TLS 1.2 only; empty, <code>2</code> or <code>16</code> = negotiate the version. Other values (SSL 2/3, TLS 1.0/1.1 of Bots 3) give a warning and the version is negotiated.</td><td>empty</td><td><code>5</code></td></tr>
+<tr><td>Debug level</td><td>0 none, 1 commands, 2 everything. Empty: <code>ftpdebug</code>.</td><td>empty</td><td>0–2</td></tr>
+<tr><td>Archive path, Max days archive, Max seconds, Max failures, Acceptance test path</td><td>See <a href="#channels--reference">Channels</a>.</td><td>-</td><td>-</td></tr>
+<tr><td>Lock-file, System locks</td><td>Not used.</td><td>-</td><td>-</td></tr>
+</table></div>
+<div class="note info"><span class="label">Note</span><p><span class="badge orange">changed in 4.0</span> Sending with
+ftps/ftpis no longer hangs on servers that do not close TLS on the data connection (Bots waits at most 2 seconds).
+In ASCII mode the received bytes are written as they are, as in Bots 3.2.0.</p></div>
+
+<h3 id="channel-ftp--trouble">Troubleshooting</h3>
+<p>The texts below follow <code>Communication try 1 error on channel …:</code> (incoming) or <code>Outgoing
+connection failure 1 on channel …:</code> (outgoing), or are the error text of a file.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>530 Login incorrect.</code> (or another 530 text)</td><td>Wrong user or password; or the server wants FTPS.</td><td>Check the login; try type <code>ftps (explicit)</code>.</td></tr>
+<tr><td><code>timed out</code> or <code>[WinError 10060] …</code></td><td>Host or port wrong, firewall, or a passive/active mismatch (login works, listing or transfer times out).</td><td>Check host and port; switch Ftp active mode; ask the partner which data ports are open.</td></tr>
+<tr><td><code>[Errno 111] Connection refused</code> / <code>[WinError 10061] …</code></td><td>Nothing listens on that port; for ftpis the port is often 990, not 21.</td><td>Correct the port.</td></tr>
+<tr><td><code>[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate</code></td><td>ftps/ftpis with a certificate Bots does not trust.</td><td>Put the server certificate or its CA in CA certificate file, or switch Verify server certificate off.</td></tr>
+<tr><td><code>[SSL: WRONG_VERSION_NUMBER] wrong version number</code></td><td>ftpis against a plain FTP/explicit server, or ftps against an implicit one.</td><td>Use the other ftps type and the right port.</td></tr>
+<tr><td><code>550 …</code> or <code>553 …</code> on sending</td><td>No write rights, the folder does not exist, or the server does not allow <code>APPE</code>.</td><td>Ask for rights; use unique names or <code>{overwrite}</code>.</td></tr>
+<tr><td>Received EDI files have changed line ends, or binary files are damaged</td><td>ASCII mode.</td><td>Tick Ftp binary transfer mode.</td></tr>
+<tr><td>Empty files stay on the server</td><td>Bots skips empty files and folders without an error and does not remove them.</td><td>Ask the partner not to leave empty files, or remove them by hand.</td></tr>
+<tr><td><code>ssl_version '3' in channel parameter can not be used; valid values: [2, 5, 16]. The version is negotiated with the server.</code> (warning)</td><td>An old Bots 3 value in Parameters of an ftpis channel.</td><td>Clear Parameters, or set <code>5</code> for TLS 1.2.</td></tr>
+<tr><td>The partner receives half files</td><td>The partner reads while Bots uploads.</td><td>Use a Tmp-part file name.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-sftp" data-title="SFTP channels" data-group="Configure">
+<h2>SFTP channels</h2>
+<p class="lead">Type <code>sftp</code> receives and sends files over SSH (the SSH File Transfer Protocol). You log in
+with a password or with a private key. It needs the Python library <code>paramiko</code> (version 2 or higher).</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>SFTP looks like FTP to you, but everything is
+encrypted, and instead of a password you can use a key file: a long secret that stays on your machine, while the
+partner only gets the public half.</p></div>
+
+<h3 id="channel-sftp--how">How it works</h3>
+<ol>
+<li>Install the library once: <code>pip install bots-ediint[sftp]</code> (part of <code>[bots3]</code> too).</li>
+<li>Bots connects to Host and Port and logs in as Username, with one of:
+  <ul>
+  <li><b>password</b>: Password, no key file;</li>
+  <li><b>key file</b>: <span class="ui">Private key file</span>; the Password field is then the <b>passphrase</b> of
+  the key (empty for a key without passphrase), not a login password. Bots reads RSA, ECDSA and Ed25519 keys (and DSA
+  if the installed paramiko still supports it), in OpenSSH or PEM format;</li>
+  <li><b>a communication script</b> with a function <code>privatekey(channeldict)</code> that returns
+  <code>(key file, key type, passphrase)</code>; the type (<code>'RSA'</code>, <code>'ECDSA'</code>,
+  <code>'ED25519'</code>, <code>'DSA'</code>) is tried first.</li>
+  </ul></li>
+<li>Bots goes to Path (relative to the login folder) and makes it if it is missing.</li>
+<li><b>Incoming:</b> lists the folder, downloads the names that match Filename; with Remove deletes them.</li>
+<li><b>Outgoing:</b> writes each file; a file that already exists is appended to, unless the Filename has
+<code>{overwrite}</code>; a new file is opened for writing. With a Tmp-part it renames after writing.</li>
+<li>SFTP has no ASCII mode: files are transferred exactly.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>Bots does <b>not</b> check the host key of the server,
+unless a communication script supplies it with a function <code>hostkey(channeldict)</code> that returns a paramiko
+key object. This is the same as in Bots 3. Without it, you can not be sure you talk to the right server. See
+<a href="#communication-scripts">Communication scripts</a>.</p></div>
+
+<h3 id="channel-sftp--howto">How to set up an SFTP channel with a key</h3>
+<ol class="steps">
+<li><b>Make a key pair</b> (once), for example with OpenSSH:
+<pre><code class="language-bash">ssh-keygen -t ed25519 -f config/keys/partnera_id_ed25519 -C "MyCompany EDI"</code></pre>
+Windows PowerShell: the same command with <code>ssh-keygen.exe</code>. Give the partner the file ending in
+<code>.pub</code>. Keep the other file private.</li>
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> →
+<span class="ui">Add incoming channel</span>.</li>
+<li><b>Idchannel</b> <code>partnera_sftp_in</code>; <b>Type</b> <code>sftp (ssh)</code>; tick <b>Remove</b>.</li>
+<li><b>Host</b> <code>sftp.example.net</code>; <b>Port</b> <code>22</code> (fill it in: 0 does not work for
+sftp).</li>
+<li><b>Username</b> as given by the partner. <b>Password</b>: the passphrase of the key, or empty.</li>
+<li><b>Path</b> <code>out</code>; <b>Filename</b> <code>*.xml</code>.</li>
+<li><b>Open <span class="ui">Other</span></b>; <b>Private key file</b>
+<code>config/keys/partnera_id_ed25519</code> (relative to the environment, or absolute).</li>
+<li><b>Save</b> and run a route with it. The incoming files show as <code>sftp://home/mycompany/out/…</code>.</li>
+<li><b>Make the outgoing twin</b> <code>partnera_sftp_out</code> with <span class="ui">Save as new</span>: change
+In/out to <code>out</code>, Path to <code>in</code>, Filename to eg <code>{messagetype}_*.xml</code>.</li>
+</ol>
+<p>With a password instead: leave Private key file empty and type the password in Password.</p>
+
+<h3 id="channel-sftp--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does for sftp</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Host</td><td>SSH server. Required.</td><td>-</td><td><code>sftp.example.net</code></td></tr>
+<tr><td>Port</td><td>Fill in <code>22</code> (or the partner's port). An empty port in the database means 22, but the form fills in 0.</td><td>0</td><td><code>22</code></td></tr>
+<tr><td>Username</td><td>Login name.</td><td>-</td><td><code>mycompany</code></td></tr>
+<tr><td>Password</td><td>Without key file: the password. With key file: the passphrase of the key.</td><td>empty</td><td><code>********</code></td></tr>
+<tr><td>Private key file</td><td>Private key (RSA, ECDSA, Ed25519; DSA if paramiko has it).</td><td>empty</td><td><code>config/keys/partnera_id_ed25519</code></td></tr>
+<tr><td>Path</td><td>Folder relative to the login folder; made if missing.</td><td>empty</td><td><code>out</code></td></tr>
+<tr><td>Filename</td><td>In: wildcard pattern. Out: name pattern; <code>{overwrite}</code> for servers that do not allow append.</td><td>out: <code>*</code></td><td><code>*.edi</code></td></tr>
+<tr><td>Remove</td><td>In: delete on the server after download.</td><td>off</td><td>on</td></tr>
+<tr><td>Tmp-part file name</td><td>Out: write, then rename.</td><td>empty</td><td><code>.tmp</code></td></tr>
+<tr><td>Parameters</td><td>JSON with extra arguments for the SSH connection (<code>paramiko.Transport</code>); keys paramiko does not know are ignored (logged at debug level). Max 70 characters. Typical use: switch off algorithms an old server can not handle.</td><td>empty</td><td><code>{"disabled_algorithms": {"pubkeys": ["rsa-sha2-256", "rsa-sha2-512"]}}</code> (exactly 70 characters; for longer values use a communication script)</td></tr>
+<tr><td>Debug level</td><td>Log of the SSH library: 0 none, 1 critical, 2 error, 3 warning, 4 info, 5 debug. Empty: <code>ftpdebug</code> of <code>bots.ini</code>, if set.</td><td>empty</td><td>0–5</td></tr>
+<tr><td>Archive path, Max days archive, Max seconds, Max failures, Acceptance test path</td><td>See <a href="#channels--reference">Channels</a>.</td><td>-</td><td>-</td></tr>
+<tr><td>Verify server certificate, CA/certificate files, FTP fields, Lock-file, System locks</td><td>Not used.</td><td>-</td><td>-</td></tr>
+</table></div>
+<p>Time-out of the connection: <code>ftptimeout</code> in <code>bots.ini</code> (10 seconds).</p>
+
+<h3 id="channel-sftp--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Dependency failure: communicationtype "sftp" requires python library "paramiko".</code></td><td>paramiko is not installed in the Python of Bots.</td><td><code>pip install bots-ediint[sftp]</code> (or <code>pip install "paramiko&gt;=2"</code>) in the same Python environment.</td></tr>
+<tr><td><code>Dependency failure: communicationtype "sftp" requires python library "paramiko" version 2.0 or higher (…)</code></td><td>An old paramiko.</td><td><code>pip install -U paramiko</code>.</td></tr>
+<tr><td><code>Authentication failed.</code></td><td>Wrong user or password; the partner has not installed your public key; or a key file is set while the server expects a password (the Password is then used as passphrase, not as password).</td><td>Check with the partner; check which login method they expect.</td></tr>
+<tr><td><code>sftp: private key "…" is encrypted, but there is no passphrase.</code></td><td>The key has a passphrase and Password is empty.</td><td>Type the passphrase in Password.</td></tr>
+<tr><td><code>sftp: can not read private key "…" (wrong passphrase?): RSAKey: …; ECDSAKey: …</code></td><td>Wrong passphrase, a damaged file, a public key instead of the private key, or a format paramiko does not read (eg a PuTTY <code>.ppk</code> file).</td><td>Check the passphrase; convert the key to OpenSSH format (<code>puttygen key.ppk -O private-openssh -o key</code>).</td></tr>
+<tr><td><code>[Errno 2] No such file or directory: '…'</code> (key file)</td><td>Wrong path of the key file; a relative path is relative to the environment directory.</td><td>Use the right or an absolute path.</td></tr>
+<tr><td><code>Incompatible ssh peer (no acceptable kex algorithm)</code> or <code>… no acceptable host key</code></td><td>An old server and a new paramiko have no algorithm in common, or the reverse.</td><td>Use Parameters (<code>disabled_algorithms</code>) or a communication script; ask the partner to update the server.</td></tr>
+<tr><td><code>Error reading SSH protocol banner</code> or <code>timed out</code></td><td>Wrong port, firewall, or a slow server.</td><td>Check host and port (22 must be filled in); raise <code>ftptimeout</code>.</td></tr>
+<tr><td><code>Invalid sftp channel parameters, must be a valid json format.</code> (log)</td><td>Parameters is not valid JSON (often cut off at 70 characters, or single quotes).</td><td>Fix the JSON (double quotes), or move it to a communication script.</td></tr>
+<tr><td>Files of 0 bytes on the server, or <code>[Errno 13] Permission denied</code></td><td>No write rights; or a server that does not allow append for existing files.</td><td>Ask for rights; use unique file names or <code>{overwrite}</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-mail" data-title="Mail channels" data-group="Configure">
+<h2>Mail channels</h2>
+<p class="lead">Bots can receive EDI files as mail attachments (types <code>pop3</code>, <code>pop3s</code>,
+<code>pop3apop</code>, <code>imap4</code>, <code>imap4s</code>) and send them by mail (<code>smtp</code>,
+<code>smtps</code>, <code>smtpstarttls</code>). The mail addresses also tell Bots which partner sent a file and to
+whom a file goes.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots reads a mailbox like a person would: it
+opens each mail, checks that the sender is a known partner, saves the attachments as files, and (if you want)
+deletes the mail. To send, Bots writes a mail with the EDI file attached and hands it to your mail server.</p></div>
+
+<h3 id="channel-mail--how">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Receiving mail: fetch, check addresses, save attachments">
+<defs><marker id="arrow-mail-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Fetch mails</text><text class="small" x="120" y="86" text-anchor="middle">pop3 / imap4, delete if Remove</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-mail-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Check addresses</text><text class="small" x="380" y="86" text-anchor="middle">From and To → partners</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-mail-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Save attachments</text><text class="small" x="640" y="86" text-anchor="middle">each one a file; MDN if asked</text>
+</svg></div>
+
+<h4 id="channel-mail--in">Receiving</h4>
+<ol>
+<li><b>pop3, pop3s, pop3apop:</b> Bots logs in (pop3apop with the APOP method, pop3s over TLS), downloads all mails,
+and with <span class="ui">Remove</span> marks them for deletion; the server deletes them when Bots logs out. If the
+connection breaks before the logout, Bots forgets the mails it fetched, so they are fetched again next time (no
+double processing).</li>
+<li><b>imap4, imap4s:</b> Bots opens the mailbox in <span class="ui">Path</span> (empty: <code>INBOX</code>) and
+downloads every mail not marked as deleted. With Remove each mail is deleted directly after download.</li>
+<li>For each mail Bots reads the <b>From</b> address and looks for the partner:
+  <ol>
+  <li>the <span class="ui">email address per channel</span> of an active partner for this channel (in the partner
+  screen);</li>
+  <li>else the <span class="ui">Mail</span> field of an active partner (several addresses separated by commas);</li>
+  <li>else the <span class="ui">Cc</span> field of an active partner.</li>
+  </ol>
+  An unknown sender is an error, unless <span class="ui">No check from-address</span> is ticked. The same for the
+  <b>To</b> addresses: at least one must belong to a partner (usually your own company), unless <span class="ui">No
+  check to-address</span> is ticked. The partners found become frompartner and topartner of the files. Upper and
+  lower case do not matter.</li>
+<li>Bots saves each part of the mail with a main content type <code>text</code> or <code>application</code> as a
+file, except <code>text/html</code>, <code>text/enriched</code>, <code>text/rtf</code>, <code>text/richtext</code>,
+<code>text/vcard</code>, <code>text/css</code> and <code>application/postscript</code>. So an EDI file in the body
+of a plain text mail is also received. Empty parts are skipped. A mail without any such part is an error:
+<code>No valid attachment in received email</code>.</li>
+<li>A received <b>MDN</b> (a mail of type <code>multipart/report</code>) is not saved as a file: Bots marks the mail
+it once sent as confirmed.</li>
+<li>If a mail asks for an MDN (header <code>Disposition-Notification-To</code>) and a
+<a href="#confirm-rules">confirm rule</a> <code>send-email-MDN</code> applies, Bots makes the MDN as an outgoing
+file (editype <code>email-confirmation</code>) in the same route; an outgoing mail channel in that route sends it.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>For a mailbox that receives EDIFACT, X12 and xml mixed, use
+Fromeditype <code>mailbag</code> and Frommessagetype <code>mailbag</code> in the route: Bots finds the type of every
+attachment. See <a href="#preprocessing">Preprocessing</a>.</p></div>
+
+<h4 id="channel-mail--out">Sending</h4>
+<ol>
+<li>Before connecting, Bots turns each outgoing file into a mail (one file, one mail):
+  <ul>
+  <li><b>From</b>: the mail address of the frompartner of the file: first the email address per channel of that
+  partner for this channel, else its Mail field. So your own company must be a partner with a mail address (eg
+  <code>MYCOMPANY</code>, <code>edi@mycompany.example</code>).</li>
+  <li><b>To</b> and <b>Cc</b>: the same lookup for the topartner (eg <code>orders@partnera.example</code>).</li>
+  <li><b>Subject</b>: the internal number of the file (change it with a communication script function
+  <code>subject</code>).</li>
+  <li>The file as attachment named by <span class="ui">Filename</span> (default <code>*</code>), or as body, by
+  <span class="ui">As body or attachment</span>; encoded by <span class="ui">Mime encoding</span>; content type and
+  charset from the grammar of the file.</li>
+  <li><code>Disposition-Notification-To</code> if a confirm rule <code>ask-email-MDN</code> applies.</li>
+  </ul></li>
+<li>Bots connects to the SMTP server (<code>smtps</code>: TLS from the start; <code>smtpstarttls</code>: plain,
+then STARTTLS), logs in if Username <b>and</b> Password are filled in, and sends the mails to all To and Cc
+addresses.</li>
+</ol>
+
+<h3 id="channel-mail--howto-in">How to receive orders from a mailbox</h3>
+<ol class="steps">
+<li><b>Register the addresses</b> (once): in <span class="ui">Configuration</span> → <span class="ui">Partners</span>
+give <code>PARTNERA</code> the Mail <code>orders@partnera.example</code>, and <code>MYCOMPANY</code> the Mail
+<code>edi@mycompany.example</code>. See <a href="#partners">Partners</a>.</li>
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> →
+<span class="ui">Add incoming channel</span>; Idchannel <code>mail_in</code>; Type <code>imap4s</code> (or
+<code>pop3s</code>).</li>
+<li><b>Tick Remove</b> (otherwise every mail is received again each run).</li>
+<li><b>Host</b> <code>mail.example.org</code>; <b>Port</b> <code>993</code> (imap4s; pop3s: 995; imap4: 143; pop3
+and pop3apop: 110). The port must be filled in for receiving types.</li>
+<li><b>Username</b> <code>edi@mycompany.example</code>, <b>Password</b> of the mailbox.</li>
+<li><b>imap4 only: Path</b> = the folder, eg <code>INBOX/EDI</code>; empty means <code>INBOX</code>.</li>
+<li><b>Optional, <span class="ui">Email specific</span></b>: tick No check from-address if anyone may send files
+(then the partner comes from the file itself, or from the route).</li>
+<li><b>Save</b>, and use the channel in a route with Fromeditype/Frommessagetype of the attachments (or
+<code>mailbag</code>).</li>
+<li><b>Test</b>: send a mail with an attachment from <code>orders@partnera.example</code>; run. In
+<span class="ui">Incoming</span> the mail shows, with the attachment as a file of PARTNERA.</li>
+</ol>
+
+<h3 id="channel-mail--howto-out">How to send invoices by mail</h3>
+<ol class="steps">
+<li><b>Register the addresses</b> of <code>MYCOMPANY</code> (sender) and of the partner (receiver) as above. To use
+another address only for this channel, add it in the partner screen under <span class="ui">Email address per
+channel</span>, with this channel.</li>
+<li><b>Open</b> <span class="ui">Channels</span> → <span class="ui">Out</span> → <span class="ui">Add outgoing
+channel</span>; Idchannel <code>partnera_mail_out</code>; Type <code>smtpstarttls</code> (or <code>smtps</code>, or
+<code>smtp</code> for a server without TLS).</li>
+<li><b>Host</b> <code>mail.example.org</code>; <b>Port</b> <code>587</code> (smtps: 465; smtp: 25). 0 means 25 for
+smtp and smtpstarttls, 465 for smtps.</li>
+<li><b>Username</b> and <b>Password</b>, if the server wants a login.</li>
+<li><b>Filename</b>: the attachment name, eg <code>INVOIC_*.edi</code>.</li>
+<li><b>Email specific</b>: <span class="ui">Mime encoding</span> <code>Base64</code> (safe); <span class="ui">As body
+or attachment</span> empty or <code>As attachment</code>.</li>
+<li><b>Save</b> and use it as outgoing channel. After a run, <span class="ui">Outgoing</span> shows the file as
+<code>smtp://user@mail.example.org</code>.</li>
+<li><b>Optional</b>: add a confirm rule <code>ask-email-MDN</code> to ask for a receipt; see
+<a href="#confirm-rules">Confirm rules</a>.</li>
+</ol>
+
+<h3 id="channel-mail--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does for mail types</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Type</td><td>pop3 (plain), pop3s (TLS), pop3apop (APOP login, plain), imap4 (plain), imap4s (TLS), smtp (plain), smtps (TLS from the start), smtpstarttls (STARTTLS).</td><td>-</td><td>-</td></tr>
+<tr><td>Host</td><td>Mail server. Required.</td><td>-</td><td><code>mail.example.org</code></td></tr>
+<tr><td>Port</td><td>Receiving types: required (110, 995, 143, 993). smtp/smtpstarttls: 0 = 25; smtps: 0 = 465.</td><td>0</td><td><code>993</code>, <code>587</code></td></tr>
+<tr><td>Username, Password</td><td>Login. smtp types log in only when both are filled in.</td><td>empty</td><td>-</td></tr>
+<tr><td>Path</td><td>imap4, imap4s: mailbox folder.</td><td>empty (<code>INBOX</code>)</td><td><code>INBOX/EDI</code></td></tr>
+<tr><td>Filename</td><td>smtp types: attachment name pattern (placeholders as in <a href="#channels--filenames">file names</a>). Not used for receiving.</td><td><code>*</code></td><td><code>INVOIC_*.edi</code></td></tr>
+<tr><td>Remove</td><td>Receiving: delete mails after download.</td><td>off</td><td>on</td></tr>
+<tr><td>No check from-address</td><td>Receiving: accept mails from unknown senders.</td><td>off</td><td>on / off</td></tr>
+<tr><td>No check to-address</td><td>Receiving: accept mails to unknown addresses.</td><td>off</td><td>on / off</td></tr>
+<tr><td>Mime encoding</td><td>Sending: <code>Base64</code> always; <code>Base64 if not ascii</code> (plain text if the charset is us-ascii); <code>Never</code>: the file as it is (7bit/8bit; lines are not changed).</td><td>empty = Base64</td><td>-</td></tr>
+<tr><td>As body or attachment</td><td>Sending: <code>As attachment</code> (default); <code>In body of email</code>; <code>multipart</code> (a multipart/mixed mail with the file as a part without Content-Disposition); <code>multipart/attachment</code> (multipart/mixed with the file as attachment).</td><td>empty = attachment</td><td>-</td></tr>
+<tr><td>Verify server certificate, CA certificate file, Certificate chain file, Private key file</td><td>pop3s, imap4s, smtps, smtpstarttls: see <a href="#channels--tls">Certificates</a>.</td><td>verify on</td><td>-</td></tr>
+<tr><td>Debug level</td><td>pop3 0–2, imap4 0–5, smtp 0–1, smtps/smtpstarttls 0–2. Empty: <code>pop3debug</code>, <code>imap4debug</code>, <code>smtpdebug</code>.</td><td>empty</td><td>-</td></tr>
+<tr><td>Archive path, Max days archive, Max seconds, Max failures, Acceptance test path</td><td>See <a href="#channels--reference">Channels</a>. In acceptance tests a mail channel with a test path becomes a <code>mimefile</code> channel.</td><td>-</td><td>-</td></tr>
+<tr><td>Partner fields <span class="ui">Mail</span>, <span class="ui">Cc</span>, <span class="ui">Email address per channel</span></td><td>Addresses used to find partners (receiving) and to address mails (sending). See <a href="#partners">Partners</a>.</td><td>-</td><td><code>orders@partnera.example</code></td></tr>
+</table></div>
+<p>Communication script hooks for mail (see <a href="#communication-scripts">Communication scripts</a>):
+<code>frommail</code>, <code>tomail</code> (or <code>getmailaddressforreceiver</code>; may return
+<code>(to, cc)</code>), <code>subject</code>, <code>headers</code>, <code>filename</code> (attachment name; return
+an empty name to send as body) and <code>accept_incoming_attachment</code>.</p>
+
+<h3 id="channel-mail--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>"From" emailaddress(es) orders@partnera.example not authorised/unknown for channel "mail_in".</code></td><td>No active partner has this address (per channel, Mail or Cc).</td><td>Add the address to the partner, make the partner active; or tick No check from-address.</td></tr>
+<tr><td><code>"To" emailaddress(es) ['edi@mycompany.example'] not authorised/unknown for channel "mail_in".</code></td><td>Your own address is not on a partner.</td><td>Make a partner for your company with this address; or tick No check to-address.</td></tr>
+<tr><td><code>No valid attachment in received email</code></td><td>The mail has only html, images, or empty parts.</td><td>Ask the sender to attach the file as text or application type.</td></tr>
+<tr><td><code>Email header invalid - probably issues with characterset.</code></td><td>A header with characters that can not be decoded (often spam).</td><td>Delete the mail from the mailbox; restrict who can mail this address.</td></tr>
+<tr><td><code>Received email-MDN with errors.</code></td><td>A <code>multipart/report</code> mail that is not a valid MDN.</td><td>Check with the sender; remove the mail.</td></tr>
+<tr><td><code>No mail-address for partner "PARTNERA" (channel "partnera_mail_out").</code></td><td>The receiving (or sending) partner has no mail address.</td><td>Fill in Mail of the partner (or email address per channel). For the sender: the partner of your company.</td></tr>
+<tr><td><code>SMTP server did not accept user/password combination.</code></td><td>Wrong login, or the server wants an app password.</td><td>Check the login with the mail administrator.</td></tr>
+<tr><td><code>SMTP login failed. Error: …</code></td><td>Login not possible, eg the server wants TLS first (<code>SMTP AUTH extension not supported by server</code>).</td><td>Use smtpstarttls or smtps.</td></tr>
+<tr><td><code>Pop3 connection not OK</code> / <code>QUIT command to POP3 server failed</code> / process error <code>Could not fetch emails via POP3; probably communication problems</code></td><td>The connection broke during download. The fetched mails are forgotten and stay on the server.</td><td>Nothing: they come again next run. If it repeats, check the network or lower Max seconds.</td></tr>
+<tr><td><code>INBOX/EDI: Mailbox doesn't exist: INBOX/EDI</code> (text from the server)</td><td>imap4: the folder in Path does not exist (folder separators differ per server: <code>/</code> or <code>.</code>).</td><td>Use the exact folder name.</td></tr>
+<tr><td><code>[Errno 111] Connection refused</code> / <code>[WinError 10061] …</code> or <code>timed out</code></td><td>Wrong port (0 is not valid for pop3/imap4), or a firewall.</td><td>Fill in the right port.</td></tr>
+<tr><td><code>b'-ERR [AUTH] Authentication failed.'</code> or <code>LOGIN failed</code> (texts from the server)</td><td>Wrong login, or the server needs a different login method.</td><td>Check the login; some providers require app passwords.</td></tr>
+<tr><td>Mails are received again every run</td><td>Remove is off.</td><td>Tick Remove.</td></tr>
+<tr><td><code>Error in writing mail without mime-encoding (user exit "headers"?).</code></td><td>Mime encoding <code>Never</code> together with a <code>headers</code> function that rebuilt the mail.</td><td>Use Base64, or let the script return a dict of headers.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-database" data-title="Database channels" data-group="Configure">
+<h2>Database channels</h2>
+<p class="lead">A channel of type <code>db</code> reads data from a database or writes data to it, through a small
+Python script that you write. <span class="badge green">new in 4.0</span> Bots can make the connection for you to
+MySQL/MariaDB, PostgreSQL, SQLite or Microsoft SQL Server.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Instead of files, some systems have the orders
+in database tables. A database channel runs your query, and each result becomes a "file" for Bots. The mapping then
+reads the rows directly. For sending, the mapping builds the data and your script writes it into the tables.</p></div>
+
+<h3 id="channel-database--how">How it works</h3>
+<ol>
+<li>The script is <code>usersys/communicationscripts/&lt;idchannel&gt;.py</code>, eg
+<code>usersys/communicationscripts/erp_db_in.py</code>. It is required.</li>
+<li><b>Connection.</b> If the field <span class="ui">Database</span> (in <span class="ui">Database specific</span>) is
+set <b>and</b> the script has no function <code>connect</code>, Bots connects with Host, Port (0: the standard port:
+MySQL 3306, PostgreSQL 5432, SQL Server 1433), Username, Password; the database name is Path (for SQLite: the
+file), or Filename when Path is empty; driver options from Parameters. Otherwise the script's
+<code>connect(channeldict)</code> returns a connection, and <code>disconnect(channeldict, dbconnection)</code> closes
+it, as in Bots 3.</li>
+<li><b>Incoming:</b> Bots calls <code>incommunicate(channeldict, dbconnection)</code>. What it returns:
+  <ul>
+  <li>a <code>list</code> or <code>tuple</code>: every element becomes one received "file" (one message);</li>
+  <li>anything else that is not empty (a dict, an object): one received file;</li>
+  <li><code>None</code> or empty: nothing received.</li>
+  </ul>
+  Bots stores each element with Python <code>pickle</code>. In the route, use Fromeditype <code>db</code> and a
+  free messagetype (eg <code>orders_db</code>) that a <a href="#translations">translation</a> uses; the mapping gets
+  the object as <code>inn.root</code>. No grammar is needed. See <a href="#editype-other">Other editypes</a>.</li>
+<li><b>Outgoing:</b> the mapping (toeditype <code>db</code>) puts any Python object in <code>out.root</code>; for each
+such file Bots calls <code>outcommunicate(channeldict, dbconnection, db_object)</code>.</li>
+<li><b>Commit and rollback</b> (connection made by Bots): Bots commits after each <code>incommunicate</code> /
+<code>outcommunicate</code> that ends without error and rolls back after an error; the file is then in error and can
+be resent. Do not commit in the script. With your own <code>connect</code> you commit yourself (usually in
+<code>disconnect</code>, or in the functions).</li>
+<li>The connection made by Bots behaves the same for all four databases: <code>cursor.execute(sql, params)</code>
+with <code>%(name)s</code> and a dict, or <code>%s</code> and a list; rows are dicts that also work by position
+(<code>row['po']</code> and <code>row[0]</code>); <code>cursor.fetchone()</code>, <code>fetchall()</code>,
+<code>fetchmany()</code>, <code>executemany()</code>, <code>rowcount</code>, <code>lastrowid</code>. The driver's own
+connection is <code>dbconnection.native</code>.</li>
+</ol>
+
+<h3 id="channel-database--howto">How to read orders from a database</h3>
+<ol class="steps">
+<li><b>Install the driver</b> for your database in the Python of Bots: MySQL/MariaDB <code>pip install
+bots-ediint[mysql]</code> (mysqlclient); PostgreSQL <code>pip install bots-ediint[postgresql]</code> (psycopg; psycopg2
+also works); SQL Server <code>pip install bots-ediint[mssql]</code> (mssql-python, no ODBC driver needed; or pyodbc
+with "ODBC Driver 18/17 for SQL Server"); SQLite needs nothing.</li>
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> →
+<span class="ui">Add incoming channel</span>; Idchannel <code>erp_db_in</code>; Type <code>db</code>.</li>
+<li><b>Host</b> <code>db.example.com</code>; <b>Port</b> <code>0</code>; <b>Username</b> <code>bots</code>,
+<b>Password</b>; <b>Path</b> the database name, eg <code>erp</code>.</li>
+<li><b>Open <span class="ui">Database specific</span></b>; <b>Database</b> <code>PostgreSQL</code>.</li>
+<li><b>Optional, Parameters</b>: driver options, eg <code>sslmode=require</code>.</li>
+<li><b>Save.</b></li>
+<li><b>Write the script</b> <code>usersys/communicationscripts/erp_db_in.py</code>:
+<pre><code class="language-python">def incommunicate(channeldict, dbconnection):
+    cursor = dbconnection.cursor()
+    cursor.execute("SELECT * FROM orders WHERE status = %(status)s", {'status': 'ready'})
+    orders = cursor.fetchall()
+    cursor.execute("UPDATE orders SET status = 'sent' WHERE status = %(status)s", {'status': 'ready'})
+    # one message per order; return [orders] for one message with all rows
+    return [dict(order) for order in orders]</code></pre></li>
+<li><b>Make the route</b> with Incoming channel <code>erp_db_in</code>, Fromeditype <code>db</code>,
+Frommessagetype <code>orders_db</code>, and a translation <code>db</code> / <code>orders_db</code> with a mapping
+that reads <code>inn.root['po']</code> etc.</li>
+<li><b>Run.</b> In <span class="ui">Incoming</span> each order shows as a file named after Path.</li>
+</ol>
+
+<h3 id="channel-database--howto-out">How to write to a database</h3>
+<ol class="steps">
+<li><b>Make an outgoing channel</b> of type <code>db</code>, eg <code>erp_db_out</code>, with the same connection
+fields.</li>
+<li><b>In the mapping</b> (toeditype <code>db</code>), set <code>out.root</code> to the data, eg a list of dicts.</li>
+<li><b>Write the script</b> <code>usersys/communicationscripts/erp_db_out.py</code>:
+<pre><code class="language-python">def outcommunicate(channeldict, dbconnection, db_object):
+    cursor = dbconnection.cursor()
+    for line in db_object:
+        cursor.execute(
+            "INSERT INTO received_orders (po, qty) VALUES (%(po)s, %(qty)s)", line)</code></pre></li>
+<li><b>Run.</b> Bots commits per file; an error rolls back that file only.</li>
+</ol>
+
+<h3 id="channel-database--examples">Connection examples</h3>
+<div class="table-wrap"><table>
+<tr><th>Database</th><th>Database field</th><th>Host / Port</th><th>Path</th><th>Parameters (examples)</th></tr>
+<tr><td>MySQL / MariaDB</td><td><code>MySQL / MariaDB</code></td><td><code>db.example.com</code> / 0 (3306)</td><td><code>erp</code></td><td><code>charset=utf8mb4</code> (the default)</td></tr>
+<tr><td>PostgreSQL</td><td><code>PostgreSQL</code></td><td><code>db.example.com</code> / 0 (5432)</td><td><code>erp</code></td><td><code>sslmode=require</code></td></tr>
+<tr><td>SQLite</td><td><code>SQLite</code></td><td>empty</td><td><code>botssys/erp.sqlite3</code> or <code>C:/edi/erp.sqlite3</code></td><td>-</td></tr>
+<tr><td>SQL Server</td><td><code>Microsoft SQL Server</code></td><td><code>db.example.com</code> / 0 (1433)</td><td><code>erp</code></td><td><code>TrustServerCertificate=yes</code>; <code>python_driver=pyodbc</code>; <code>Driver={ODBC Driver 18 for SQL Server}</code>. Without Username Bots uses <code>Trusted_Connection=yes</code> (Windows login).</td></tr>
+</table></div>
+<p>Parameters are <code>name=value</code> pairs separated by <code>;</code>. <code>true</code>/<code>yes</code> and
+<code>false</code>/<code>no</code> become booleans, whole numbers become numbers. The time-out to connect is 30
+seconds.</p>
+
+<h3 id="channel-database--bots3">Scripts from Bots 3 (own connection)</h3>
+<pre><code class="language-python">import MySQLdb          # driver: pip install bots-ediint[mysql]
+
+def connect(channeldict):
+    return MySQLdb.connect(host=channeldict['host'], user=channeldict['username'],
+                           passwd=channeldict['secret'], db=channeldict['filename'])
+
+def incommunicate(channeldict, dbconnection):
+    ...
+
+def disconnect(channeldict, dbconnection):
+    dbconnection.commit()
+    dbconnection.close()</code></pre>
+<p>A script with <code>connect</code> keeps making its own connection, also when the Database field is set; it must
+then also have <code>disconnect</code>.</p>
+
+<h3 id="channel-database--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does for type db</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Database (<code>dbengine</code>) <span class="badge green">new in 4.0</span></td><td>Kind of database; Bots connects. Empty: the script connects.</td><td>empty</td><td><code>mysql</code>, <code>postgresql</code>, <code>sqlite</code>, <code>mssql</code></td></tr>
+<tr><td>Host</td><td>Database server. Not required by the form.</td><td>empty (localhost)</td><td><code>db.example.com</code></td></tr>
+<tr><td>Port</td><td>0 or empty: standard port.</td><td>0</td><td><code>5433</code></td></tr>
+<tr><td>Username, Password</td><td>Database account.</td><td>empty</td><td><code>bots</code></td></tr>
+<tr><td>Path</td><td>Database name; SQLite: the file (relative to the environment directory). Also shown as file name in reports.</td><td>empty</td><td><code>erp</code></td></tr>
+<tr><td>Filename</td><td>Database name when Path is empty (as Bots 3 scripts used it).</td><td>empty</td><td><code>erp</code></td></tr>
+<tr><td>Parameters</td><td>Driver options, <code>name=value;name=value</code>. Max 70 characters.</td><td>empty</td><td><code>sslmode=require</code></td></tr>
+<tr><td>Archive path, Max days archive, Max failures, Acceptance test path</td><td>See <a href="#channels--reference">Channels</a>. In acceptance tests a db channel with a test path becomes a <code>file</code> channel (it reads/writes the pickled files).</td><td>-</td><td>-</td></tr>
+<tr><td>Remove, Max seconds, FTP/mail fields, locks</td><td>Not used.</td><td>-</td><td>-</td></tr>
+</table></div>
+<p>Script functions: <code>incommunicate(channeldict, dbconnection)</code> (incoming, required),
+<code>outcommunicate(channeldict, dbconnection, db_object)</code> (outgoing, required),
+<code>connect(channeldict)</code> and <code>disconnect(channeldict, dbconnection)</code> (optional with the Database
+field, required without).</p>
+
+<h3 id="channel-database--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Channel "erp_db_in" is type "db", but no communicationscript exists.</code></td><td>No file <code>usersys/communicationscripts/erp_db_in.py</code> (name must equal the Idchannel).</td><td>Make the script.</td></tr>
+<tr><td><code>No function "connect" in imported communicationscript "…", and no database set in channel "erp_db_in".</code></td><td>Neither the script nor the channel makes the connection.</td><td>Set the Database field, or add <code>connect</code>/<code>disconnect</code>.</td></tr>
+<tr><td><code>No function "incommunicate" in imported communicationscript "…".</code> / <code>No function "outcommunicate" …</code></td><td>The function for this direction is missing or misspelled.</td><td>Add it with exactly this name and arguments.</td></tr>
+<tr><td><code>No function "disconnect" in imported communicationscript "…".</code></td><td>The script has <code>connect</code> but no <code>disconnect</code>.</td><td>Add <code>disconnect</code>, or remove <code>connect</code> and set the Database field.</td></tr>
+<tr><td><code>To connect to MySQLdb python library "MySQLdb" is needed: it is not installed.</code></td><td>The driver is missing.</td><td>Install it (see the how-to).</td></tr>
+<tr><td><code>Could not connect to PostgreSQL database "erp" on "db.example.com": OperationalError: …</code></td><td>Host, port, login, database name or network wrong; the text after the colon is from the driver.</td><td>Check the fields; test the login with the database's own tool from the Bots machine.</td></tr>
+<tr><td><code>No ODBC driver for SQL Server is installed (eg "ODBC Driver 18 for SQL Server").</code></td><td>pyodbc is used (mssql-python missing, or <code>python_driver=pyodbc</code>) but no ODBC driver exists.</td><td>Install mssql-python (<code>[mssql]</code>) or the ODBC driver of Microsoft.</td></tr>
+<tr><td>SQL Server: <code>… certificate verify failed …</code> / <code>SSL Provider: … certificate chain was issued by an authority that is not trusted</code></td><td>The server has its own certificate.</td><td>Parameters <code>TrustServerCertificate=yes</code>.</td></tr>
+<tr><td><code>Userscript "…erp_db_in.py": "…ProgrammingError…"</code></td><td>An SQL error in the script. With Bots' connection the work of that call is rolled back.</td><td>Fix the SQL. Use <code>%(name)s</code> or <code>%s</code> placeholders on every database.</td></tr>
+<tr><td>Data is received but the rows are marked as sent twice / not at all</td><td>With an own connection the script did not commit, or committed before an error.</td><td>Let Bots make the connection (it commits per call), or commit in <code>disconnect</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="channel-other" data-title="Other channel types" data-group="Configure">
+<h2>Other channel types</h2>
+<p class="lead">Besides files, FTP, SFTP, mail and databases, Bots has channel types for special cases: mail as
+files (<code>mimefile</code>), throwing files away (<code>trash</code>), your own program
+(<code>communicationscript</code>), web servers (<code>http</code>, <code>https</code>), XML-RPC
+(<code>xmlrpc</code>), and the old <code>database</code> type.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>These types fill the gaps: a folder full of
+saved mails, a bin for files nobody needs, a hook to run your own program, and a way to fetch from or post to a web
+address.</p></div>
+
+<h3 id="channel-other--how">How it works</h3>
+<div class="table-wrap"><table>
+<tr><th>Type</th><th>Incoming</th><th>Outgoing</th></tr>
+<tr><td><code>mimefile</code></td><td>Reads files from a folder (as <code>file</code>), and treats each file as a mail: addresses are checked, attachments saved, MDNs handled, as for <a href="#channel-mail">mail channels</a>.</td><td>Builds a mail of each file (as <code>smtp</code> does) and writes it as a file to a folder, instead of sending it.</td></tr>
+<tr><td><code>trash</code></td><td>-</td><td>Throws the files away. They are registered as sent, so reports count them as done.</td></tr>
+<tr><td><code>communicationscript</code></td><td>Your script fetches the files (into a folder, or file by file).</td><td>Bots writes each file to a folder and then calls your script.</td></tr>
+<tr><td><code>http</code>, <code>https</code></td><td>One GET request per run to the url; the response body (if not empty) is one received file.</td><td>One POST request per file, with the file as body.</td></tr>
+<tr><td><code>xmlrpc</code></td><td>Calls a remote function again and again until it returns nothing; each result is stored as a file (JSON).</td><td>Calls the remote function with the content of each file.</td></tr>
+<tr><td><code>database</code> (old)</td><td colspan="2">Kept in the list for old configurations. Bots 4.0 has no built-in code for it: it works only with a communication script that has a class <code>database</code> (or <code>UserCommunicationClass</code>). Use <a href="#channel-database"><code>db</code></a> for new work.</td></tr>
+</table></div>
+
+<h3 id="channel-other--mimefile">mimefile</h3>
+<ol class="steps">
+<li><b>Add a channel</b> with Type <code>mimefile</code>; Path the folder (eg <code>botssys/infile/mails</code>);
+Filename (in: pattern such as <code>*.eml</code>; out: name pattern such as <code>mail_*.eml</code>).</li>
+<li><b>Fill in the <span class="ui">Email specific</span> fields</b> as for a mail channel (checks of addresses for
+in; Mime encoding and body/attachment for out). Partners need mail addresses.</li>
+<li><b>Optional</b>: Remove, System locks, Lock-file, Tmp-part file name (out), Archive path, as for
+<a href="#channel-file">file</a>.</li>
+<li><b>Save</b> and use it in a route.</li>
+</ol>
+<p>Use it to test mail routes without a mail server, to hand mails to another mail program, or to process mails
+saved as <code>.eml</code> files. In acceptance tests every mail channel with a test path becomes a mimefile
+channel.</p>
+
+<h3 id="channel-other--trash">trash</h3>
+<ol class="steps">
+<li><b>Add an outgoing channel</b> with Type <code>trash/discard</code>, eg <code>discard_out</code>. No other field
+is needed.</li>
+<li><b>Use it as the last part of a route</b>, without filter, to catch files that no other part sends (so they do
+not stay <code>Stuck</code>); or with a filter, eg Tomessagetype for messages you do not need.</li>
+</ol>
+<p><span class="badge orange">changed in 4.0</span> As in Bots 3.x, a trashed file is registered as sent, with an
+empty file name; reports count it as handled.</p>
+
+<h3 id="channel-other--communicationscript">communicationscript</h3>
+<p>Use this type to run your own Python code (or an external program) for the communication. The script is
+<code>usersys/communicationscripts/&lt;idchannel&gt;.py</code>; every function gets the channel fields as the dict
+<code>channeldict</code>.</p>
+<div class="table-wrap"><table>
+<tr><th>Function</th><th>When</th><th>Required</th></tr>
+<tr><td><code>connect(channeldict)</code></td><td>First. Incoming without <code>main</code>: put all files in Path.</td><td>yes</td></tr>
+<tr><td><code>main(channeldict)</code> (incoming)</td><td>A generator: <code>yield</code> the full path of each received file, one by one. Bots copies each; with Remove it deletes it.</td><td>no</td></tr>
+<tr><td><code>main(channeldict, filename, ta)</code> (outgoing)</td><td>Called after Bots wrote each file to Path (name from Filename). With Remove Bots deletes the file after <code>main</code>.</td><td>no</td></tr>
+<tr><td><code>disconnect(channeldict)</code></td><td>Last. Outgoing without <code>main</code>: process all written files here. With Remove and no <code>main</code>, Bots then deletes all files in Path that match Filename.</td><td>yes (it is called if present)</td></tr>
+</table></div>
+<p>Incoming without <code>main</code>: after <code>connect</code>, Bots reads all files in Path matching Filename
+(as a file channel).</p>
+<ol class="steps">
+<li><b>Add the channel</b>: Type <code>communicationscript</code>, eg <code>erp_export_in</code>; Path
+<code>botssys/infile/erp_export</code>; Filename <code>*.csv</code>; Remove on.</li>
+<li><b>Write the script</b> <code>usersys/communicationscripts/erp_export_in.py</code>:
+<pre><code class="language-python">import subprocess
+
+def connect(channeldict):
+    # let the ERP export its files into the folder of the channel
+    subprocess.run(['erp_export', '--to', channeldict['path']], check=True)
+
+def disconnect(channeldict):
+    pass</code></pre></li>
+<li><b>Use it in a route</b> and run. Output of <code>print()</code> goes to the log when Debug level is set.</li>
+</ol>
+<p>For acceptance tests a communicationscript channel with a test path becomes a <code>file</code> channel (the
+script is not run).</p>
+
+<h3 id="channel-other--http">http and https</h3>
+<p>Needs the library <code>requests</code>: <code>pip install bots-ediint[http]</code>.</p>
+<ul>
+<li>The url is <code>http(s)://&lt;Host&gt;[:&lt;Port&gt;]/&lt;Path&gt;</code> (port 0: no port in the url).</li>
+<li>With Username <b>and</b> Password Bots uses HTTP basic authentication.</li>
+<li><b>Parameters</b> are added as query parameters: <code>key=value</code>, several separated by <code>&amp;</code>
+(or <code>;</code>, <code>,</code>, space); values may be url-quoted (<code>%26</code> is <code>&amp;</code>) and may
+contain <code>=</code>. When sending, placeholders such as <code>{botskey}</code> are filled in per file. A leading
+<code>?</code> is ignored.</li>
+<li><b>Incoming</b>: one GET per run. Status other than 200 is an error. An empty body means nothing to receive.</li>
+<li><b>Outgoing</b>: a POST per file with the file as body; headers <code>Content-Type</code> (from the file, with
+charset), <code>Content-Disposition</code> (<code>attachment</code> if <span class="ui">As body or attachment</span> is
+<code>As attachment</code>, else <code>inline</code>; with <code>filename=</code> from the Filename pattern if one is
+set). <span class="ui">Mime encoding</span> <code>Base64</code> (or <code>Base64 if not ascii</code> with a non-ascii
+charset) sends the body Base64-encoded with <code>Content-Transfer-Encoding: base64</code>. A response other than 200
+is an error.</li>
+<li><b>https</b>: the certificate is verified (Verify server certificate, CA certificate file); Certificate chain file
+with Private key file is a client certificate. For <code>http</code> no certificates are used.</li>
+<li>Other headers, parameters and settings: subclass in a communication script (class <code>http</code> or
+<code>https</code> with <code>headers = {...}</code>, <code>params = {...}</code>).</li>
+</ul>
+<ol class="steps">
+<li><b>Add an outgoing channel</b>: Type <code>https</code>, Idchannel <code>partnerc_https_out</code>; Host
+<code>edi.example.com</code>; Port 0; Path <code>api/inbound</code>; Username/Password if needed.</li>
+<li><b>Optional</b>: Parameters <code>sender=MYCOMPANY&amp;ref={botskey}</code>; Filename <code>{botskey}.xml</code>;
+Debug level 1 or 2 to log requests and responses.</li>
+<li><b>Save</b> and use it in a route. <span class="ui">Outgoing</span> shows the url with the file name.</li>
+</ol>
+
+<h3 id="channel-other--xmlrpc">xmlrpc</h3>
+<ul>
+<li>Bots calls <code>http://&lt;Username&gt;&lt;Password&gt;@&lt;Host&gt;:&lt;Port&gt;</code>; the remote function is
+<span class="ui">Path</span>. Note that Bots puts Username and Password together without a separator.</li>
+<li><b>Incoming</b>: calls <code>Path()</code> without arguments until it returns <code>None</code> (or an error);
+each result is written as JSON and received as one file.</li>
+<li><b>Outgoing</b>: calls <code>Path(content)</code> with the text of each file; with Debug level set, the response
+is logged.</li>
+<li>Only http, no https. XML is read safely (<code>defusedxml</code>).</li>
+</ul>
+
+<h3 id="channel-other--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Type</th><th>Fields used</th><th>Notes</th></tr>
+<tr><td><code>mimefile</code></td><td>Path, Filename, Remove, System locks, Lock-file, Tmp-part file name, Email specific fields, Archive, Max seconds, Max failures, Test path</td><td>Host not required.</td></tr>
+<tr><td><code>trash</code></td><td>none</td><td>Outgoing only. Host not required.</td></tr>
+<tr><td><code>communicationscript</code></td><td>Path, Filename, Remove (also outgoing), Debug level (output of the script to the log), Parameters (free use), all fields available to the script via <code>channeldict</code></td><td>Host not required. Append to existing file unless <code>{overwrite}</code>.</td></tr>
+<tr><td><code>http</code>, <code>https</code></td><td>Host (required), Port, Path, Username, Password, Filename (out), Parameters, Mime encoding, As body or attachment, Debug level 0–4 (empty: <code>httpdebug</code>); https also Verify server certificate, CA certificate file, Certificate chain file, Private key file</td><td>Incoming: max one file per run.</td></tr>
+<tr><td><code>xmlrpc</code></td><td>Host (required), Port, Username, Password, Path (function name), Debug level</td><td>-</td></tr>
+<tr><td><code>database</code> (old)</td><td>whatever the communication script uses; Host is required by the form</td><td>Only with a script class; see above.</td></tr>
+</table></div>
+
+<h3 id="channel-other--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Channel "{'idchannel': 'erp_export_in', …}" is type "communicationscript", but no communicationscript exists.</code></td><td>No script for this channel, or the script has no function <code>connect</code>.</td><td>Make <code>usersys/communicationscripts/&lt;idchannel&gt;.py</code> with <code>connect</code>.</td></tr>
+<tr><td><code>Script file "…": "…"</code> or <code>Userscript "…": "…"</code></td><td>An error inside your script (<code>main</code> or another function).</td><td>Fix the script; the Python error follows the name.</td></tr>
+<tr><td><code>Dependency failure: communicationtype "http(s)" requires python library "requests".</code></td><td>requests is not installed.</td><td><code>pip install bots-ediint[http]</code>.</td></tr>
+<tr><td><code>https receive error, response code: "404".</code> / <code>https send error, response code: "401".</code></td><td>Wrong Path (404), login (401/403), or the server refuses the content (400/415).</td><td>Check url and login; set Debug level 2 to see request and response in the log.</td></tr>
+<tr><td><code>… CERTIFICATE_VERIFY_FAILED …</code> (https)</td><td>Server certificate not trusted.</td><td>CA certificate file, or switch Verify server certificate off.</td></tr>
+<tr><td><code>KeyError: 'database'</code> (process error)</td><td>A channel of type <code>database</code> (old) without a script class.</td><td>Change the type to <code>db</code> and use <code>incommunicate</code>/<code>outcommunicate</code>.</td></tr>
+<tr><td>xmlrpc: <code>&lt;ProtocolError for …: 401 Unauthorized&gt;</code></td><td>The login is not accepted; Username and Password are joined without <code>:</code>.</td><td>Put the user with a trailing colon in Username (eg <code>edi:</code>), or use a communication script.</td></tr>
+<tr><td>mimefile: <code>"From" emailaddress(es) … not authorised/unknown …</code></td><td>Same checks as mail channels.</td><td>See <a href="#channel-mail--trouble">Mail channels</a>.</td></tr>
+<tr><td>Files sent to trash still count as "files got stuck"</td><td>No route part selects them for the trash channel (filters).</td><td>Remove the filters of the trash part, or put it last.</td></tr>
+</table></div>
+</section>

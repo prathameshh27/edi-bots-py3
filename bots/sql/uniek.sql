@@ -1,4 +1,4 @@
 CREATE TABLE uniek (
-domein varchar(70) PRIMARY KEY NOT NULL,
+domein varchar(128) PRIMARY KEY NOT NULL,
 nummer integer NOT NULL DEFAULT 1
 );

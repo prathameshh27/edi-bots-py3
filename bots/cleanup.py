@@ -196,9 +196,11 @@ def _deletereport(sql, data):
     reports = [str(row["idta"]) for row in rows]
     if not reports:
         return
-    reportids = f"({', '.join(reports)})"
-    botsglobal.logger.debug('reports to clean: %s', reportids)
-    botslib.changeq(f"DELETE FROM report WHERE idta IN {reportids}")
+    botsglobal.logger.debug('reports to clean: %s', len(reports))
+    # in parts: one statement with all the idta's can be too big for the database (max_allowed_packet)
+    for start in range(0, len(reports), 1000):
+        reportids = f"({', '.join(reports[start:start + 1000])})"
+        botslib.changeq(f"DELETE FROM report WHERE idta IN {reportids}")
     # Clean relative logging/engine/reportidta
     # if botsglobal.ini.get('settings', 'log_when', None) == 'report':
     logdir = botslib.join(botsglobal.ini.get('directories', 'logging'), 'engine')

@@ -44,16 +44,73 @@ Homepage = "attr: bots.__about__.__url__"
 "Bug Reports" = "https://gitlab.com/bots-ediint/bots/issues"
 
 [project.optional-dependencies]
+# editype excel (incoming): .xlsx and .xls
+excel = [
+    "openpyxl",
+    "xlrd>=2.0",
+]
+# preprocessing extractpdf
+pdf = [
+    "pdfminer.six",
+]
+# bots-portusersys: convert user scripts of bots 3 (python 2) to python 3
+port = [
+    "fissix",
+]
+# channels http and https
+http = [
+    "requests",
+]
+# channels sftp
+sftp = [
+    "paramiko>=2",
+]
+# editype templatehtml with genshi templates
+templatehtml = [
+    "Genshi",
+]
+# database of bots, or of communication scripts that "import MySQLdb"
+mysql = [
+    "mysqlclient",
+]
+postgresql = [
+    "psycopg",
+]
+# database of bots, or channels of type db, on Microsoft SQL Server
+mssql = [
+    "mssql-django>=1.6",
+]
+# what an installation that comes from bots 3 usually needs (the conversion tools included)
+bots3 = [
+    "fissix",
+    "Genshi",
+    "paramiko>=2",
+    "requests",
+    "openpyxl",
+    "xlrd>=2.0",
+    "pdfminer.six",
+]
 tools = [
     "Genshi",         # for using templates/mapping to HTML)
     "paramiko>=2",    # SFTP
-    "pdfminer",       # parse pdf-files
-    "xlrd",           # parse excel-files
+    "pdfminer.six",   # parse pdf-files
+    "xlrd>=2.0",      # parse excel-files (.xls)
+    "openpyxl",       # parse excel-files (.xlsx)
 ]
 testing = [
     "pytest",
     "pytest-cov",
     "pytest-django",
+    "pytest-xdist",
+    # tests that are skipped when these are not installed
+    "fissix",         # tests/unit/test_portusersys.py
+    "pyftpdlib",      # ftp server for tests/regression/test_ftp.py
+    "requests",       # tests/regression/test_http.py, test_tls.py
+    "pyopenssl",      # ftps server for tests/regression/test_tls.py
+    "paramiko>=2",    # tests/unit/test_channel_security.py
+    "openpyxl",
+    "xlrd>=2.0",
+    "pdfminer.six",
 ]
 
 [project.scripts]
@@ -65,6 +122,10 @@ bots-grammarcheck = "bots.grammarcheck:start"
 bots-job2queue = "bots.job2queue:start"
 bots-jobqueueserver = "bots.jobqueueserver:start"
 bots-updatedb = "bots.botsupdatedb:start"
+bots-portusersys = "bots.portusersys:start"
+bots-checkusersys = "bots.portusersys:start_check"
+bots-portconfig = "bots.portconfig:start"
+bots-portenv = "bots.portenv:start"
 bots-webserver = "bots.webserver:start"
 bots-xml2botsgrammar = "bots.xml2botsgrammar:start"
 bots-plugoutindex = "bots.plugmanager:plugoutindex"
@@ -88,7 +149,7 @@ excludes = ["bots/botssys", "bots/config", "tests", "*.po"]
 [tool.pdm.version]
 source = "scm"
 version_format = "scripts.bots_packaging:format_version"
-fallback_version = "4.0.0rc4+fallback"
+fallback_version = "4.0.0"
 
 
 [tool.black]
@@ -98,17 +159,14 @@ target-version = ["py310"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--verbose --capture=no"
+addopts = "-ra"
+# tests/unit/        unit tests; run on a private, temporary bots environment (see tests/unit/conftest.py)
+# tests/regression/  the official plugins, compared with the stored results of bots 3.2.0
+# tests/legacy/      the bots 3 unit test scripts; not ported yet, not collected
 testpaths = [
-    "tests",
+    "tests/unit",
+    "tests/regression",
 ]
 python_files = [
-#   "tests/unit*.py",
-    "tests/uniterrorcharsets.py",
-    "tests/uniturl.py",
-#   "tests/unitformats.py",
-#   "tests/unitgrammar.py",
-#   "tests/unitnode.py",
-#   "tests/unitconfirm.py",
+    "test_*.py",
 ]
-

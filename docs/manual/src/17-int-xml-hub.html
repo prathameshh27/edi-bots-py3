@@ -1,0 +1,1212 @@
+<section id="int-xml-hub" data-title="Tutorial: an XML hub" data-group="Integration tutorials">
+<h2>Tutorial: an XML hub</h2>
+<p class="lead">MyCompany's web shop puts all its XML documents in one folder: new orders, cancellations and status updates. In this tutorial Bots recognises each kind of document by itself and translates each with its own mapping: orders become a pick list for the warehouse, rows in a database and an order confirmation for the customer; cancellations and status updates go into the database; and what the warehouse does goes back to the web shop as XML. At the end you add a new kind of document to the hub and handle broken files.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>One folder, many kinds of letters. Bots opens each letter, looks at what kind it is (an order, a cancellation, a status update), and sends it to the right desk. Each desk has its own form to fill in. One order is copied three times: a pick list for the warehouse, a line in the order book (a database table), and a thank-you letter for the customer. When the warehouse marks something in the order book, Bots writes a note back to the web shop.</p></div>
+
+<h3 id="int-xml-hub--build">What you will build</h3>
+<p>The web shop (id <code>SHOP01</code>) and MyCompany exchange XML documents that share one envelope: a root element <code>SHOPMSG</code> with a header <code>MSGHEADER</code>, and then one body element that says what the document is. Bots must find out the kind of each file itself, because they all arrive in the same folder with the same kind of name.</p>
+<div class="diagram"><svg viewBox="0 0 760 380" width="760" role="img" aria-label="The XML hub: the drop folder feeds the mailbag, which sends orders, cancellations and status updates to their own grammars. Orders become a pick list, a confirmation and database rows; cancellations and status updates become database rows. A second route reads changed rows from the database and writes status XML for the web shop.">
+<defs><marker id="arrow-xmlhub-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="105" width="140" height="80" rx="10"/><text x="80" y="138" text-anchor="middle" font-weight="600">1. Drop folder</text><text class="small" x="80" y="160" text-anchor="middle">shop_xml_in</text>
+<path class="arrow" d="M154,145 L176,145" marker-end="url(#arrow-xmlhub-1)"/>
+<rect class="box mid" x="180" y="105" width="140" height="80" rx="10"/><text x="250" y="138" text-anchor="middle" font-weight="600">2. Mailbag</text><text class="small" x="250" y="160" text-anchor="middle">which document?</text>
+<path class="arrow" d="M324,135 L346,52" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M324,145 L346,145" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M324,155 L346,236" marker-end="url(#arrow-xmlhub-1)"/>
+<rect class="box mid" x="350" y="20" width="150" height="60" rx="10"/><text x="425" y="46" text-anchor="middle" font-weight="600">Orders</text><text class="small" x="425" y="66" text-anchor="middle">xml/shoporders</text>
+<rect class="box mid" x="350" y="115" width="150" height="60" rx="10"/><text x="425" y="141" text-anchor="middle" font-weight="600">Cancellations</text><text class="small" x="425" y="161" text-anchor="middle">xml/shopcancel</text>
+<rect class="box mid" x="350" y="205" width="150" height="60" rx="10"/><text x="425" y="231" text-anchor="middle" font-weight="600">Status updates</text><text class="small" x="425" y="251" text-anchor="middle">xml/shopstatus</text>
+<path class="arrow" d="M504,40 L556,30" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M504,52 L556,95" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M504,66 L556,170" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M504,145 L556,195" marker-end="url(#arrow-xmlhub-1)"/>
+<path class="arrow" d="M504,235 L556,220" marker-end="url(#arrow-xmlhub-1)"/>
+<rect class="box out" x="560" y="5" width="190" height="50" rx="10"/><text x="655" y="27" text-anchor="middle" font-weight="600">Pick list (csv)</text><text class="small" x="655" y="45" text-anchor="middle">warehouse_csv_out</text>
+<rect class="box out" x="560" y="70" width="190" height="50" rx="10"/><text x="655" y="92" text-anchor="middle" font-weight="600">Confirmation (HTML)</text><text class="small" x="655" y="110" text-anchor="middle">customer_mail_out</text>
+<rect class="box out" x="560" y="140" width="190" height="120" rx="10"/><text x="655" y="190" text-anchor="middle" font-weight="600">Database</text><text class="small" x="655" y="210" text-anchor="middle">shop_db_out</text><text class="small" x="655" y="228" text-anchor="middle">table edi_order_lines</text>
+<path class="arrow" d="M655,264 L655,284 L110,284 L110,302" marker-end="url(#arrow-xmlhub-1)"/>
+<text class="small" x="380" y="278" text-anchor="middle">the warehouse changes rows (send_flag = Y)</text>
+<rect class="box in" x="10" y="306" width="220" height="64" rx="10"/><text x="120" y="332" text-anchor="middle" font-weight="600">3. Changed rows</text><text class="small" x="120" y="352" text-anchor="middle">shop_db_in (route shop_status_out)</text>
+<path class="arrow" d="M234,338 L266,338" marker-end="url(#arrow-xmlhub-1)"/>
+<rect class="box mid" x="270" y="306" width="220" height="64" rx="10"/><text x="380" y="332" text-anchor="middle" font-weight="600">4. Mapping</text><text class="small" x="380" y="352" text-anchor="middle">db_to_shopstatus</text>
+<path class="arrow" d="M494,338 L556,338" marker-end="url(#arrow-xmlhub-1)"/>
+<rect class="box out" x="560" y="306" width="190" height="64" rx="10"/><text x="655" y="332" text-anchor="middle" font-weight="600">5. Status XML</text><text class="small" x="655" y="352" text-anchor="middle">shop_status_out</text>
+</svg></div>
+<ol>
+<li><b>Orders</b> (<code>SHOPORDERS</code>, one or more orders per file): each order becomes lines in a csv pick list for the warehouse, rows in the table <code>edi_order_lines</code>, and an HTML order confirmation that is mailed to the customer.</li>
+<li><b>Cancellations</b> (<code>SHOPCANCEL</code>): the cancelled order lines are marked <code>CANCELLED</code> in the table, and flagged so that MyCompany confirms the cancellation to the web shop.</li>
+<li><b>Status updates from the web shop</b> (<code>SHOPSTATUS</code>, in an XML namespace): the payment status of an order (<code>PAID</code>, <code>HOLD</code>) is stored in the column <code>shop_status</code>.</li>
+<li><b>Status updates to the web shop</b>: when the warehouse ships, back-orders, or a line is cancelled, the row gets <code>send_flag = 'Y'</code>. A second route reads these rows and writes one status document per order, in the same XML format and namespace as the web shop's own status updates.</li>
+</ol>
+<p>You learn: the XML mailbag (<code>mailbag.py</code>), XML grammars with attributes and namespaces, several documents in one file (<code>nextmessage</code>), chained translations (one order, three results), the database channel in both directions, <code>templatehtml</code> with Genshi, <code>xmlnocheck</code>, how to add a document type, and what Bots does with unknown and broken files.</p>
+<div class="note info"><span class="label">Note</span><p>Everything on this page was run with Bots 4.0.0 on Python 3.13 with Genshi 0.7.11, in a new environment, with SQLite as the database of the hub. The files, outputs, reports and error texts below are the real ones from those runs; only the date and time in the generated ids are those of the test day.</p></div>
+
+<h3 id="int-xml-hub--need">What you need</h3>
+<ul>
+<li>A working environment (<a href="#environments">Environments</a>) and the steps of <a href="#tutorial-first-translation">Tutorial: your first translation</a>: you know how grammars, mappings, translations and routes fit together.</li>
+<li>Background pages: <a href="#editype-xml-json">XML and JSON</a>, <a href="#channel-database">Database channels</a>, <a href="#editype-other--templatehtml">templatehtml</a>, <a href="#translations">Translations</a>, <a href="#routes">Routes</a>.</li>
+<li>Genshi for the HTML confirmation: <code>pip install bots-ediint[templatehtml]</code> (it was installed in the Python used for this page). Genshi is optional: without it, leave out the confirmation of part 5 (the templatehtml grammar and templates, the mapping <code>shoporders_to_html</code>, the translation with alt <code>to_mail</code> and route part 30) and let <code>shoporders_to_db</code> end with <code>return None</code> instead of <code>return 'to_mail'</code>. The rest works the same.</li>
+<li>Nothing for SQLite. For MySQL/MariaDB as the hub database: <code>pip install bots-ediint[mysql]</code>.</li>
+</ul>
+<p>The files you will make, all in the <code>usersys</code> folder of the environment unless a path says otherwise:</p>
+<div class="table-wrap"><table>
+<tr><th>File</th><th>What it is</th><th>Part</th></tr>
+<tr><td><code>grammars/xml/mailbag.py</code></td><td>Rules that tell Bots the kind of each XML file.</td><td>2</td></tr>
+<tr><td><code>grammars/xml/shopheader.py</code></td><td>The header all web shop documents share (imported by the grammars).</td><td>3</td></tr>
+<tr><td><code>grammars/xml/shoporders.py</code></td><td>Grammar of the orders; one message per order.</td><td>3</td></tr>
+<tr><td><code>grammars/xml/shopcancel.py</code></td><td>Grammar of the cancellations.</td><td>3</td></tr>
+<tr><td><code>grammars/xml/shopstatus.py</code></td><td>Grammar of the status documents, both directions, with namespace.</td><td>3</td></tr>
+<tr><td><code>botssys/shopdb.sqlite3</code> (environment folder)</td><td>The hub database with table <code>edi_order_lines</code>.</td><td>4</td></tr>
+<tr><td><code>communicationscripts/shop_db_out.py</code></td><td>Writes orders, cancellations and statuses into the table.</td><td>4</td></tr>
+<tr><td><code>communicationscripts/shop_db_in.py</code></td><td>Reads the rows that have news for the web shop.</td><td>4</td></tr>
+<tr><td><code>grammars/csv/warehouse_orders.py</code></td><td>The pick list for the warehouse.</td><td>5</td></tr>
+<tr><td><code>mappings/xml/shoporders_to_csv.py</code></td><td>Order to pick list lines; first link of the chain.</td><td>5</td></tr>
+<tr><td><code>mappings/xml/shoporders_to_db.py</code></td><td>Order to table rows; second link.</td><td>5</td></tr>
+<tr><td><code>mappings/xml/shoporders_to_html.py</code></td><td>Order to confirmation; last link.</td><td>5</td></tr>
+<tr><td><code>grammars/templatehtml/order_confirmation.py</code>, <code>templates/order_confirmation.html</code>, <code>templates/confirmation_envelope.html</code></td><td>The HTML confirmation (Genshi templates).</td><td>5</td></tr>
+<tr><td><code>mappings/xml/shopcancel_to_db.py</code>, <code>mappings/xml/shopstatus_to_db.py</code></td><td>Cancellations and incoming statuses to the table.</td><td>6</td></tr>
+<tr><td><code>mappings/db/db_to_shopstatus.py</code></td><td>Changed rows to a status document for the web shop.</td><td>7</td></tr>
+<tr><td><code>grammars/xmlnocheck/explore.py</code>, <code>mappings/xmlnocheck/explore_tree.py</code></td><td>A tool to look inside a new kind of document.</td><td>10</td></tr>
+<tr><td><code>grammars/xml/shopreturn.py</code>, <code>mappings/xml/shopreturn_to_db.py</code></td><td>The document type you add later: returns.</td><td>10</td></tr>
+</table></div>
+<p>In the web interface you add six channels, six translations and two routes (part 8), and in part 10 two more channels, two translations and one route.</p>
+
+<h3 id="int-xml-hub--part1">Part 1: The documents of the web shop</h3>
+<p>Look at the three kinds of documents before you write anything. All three have the root <code>SHOPMSG</code> and the header <code>MSGHEADER</code>; the element after the header says what the document is.</p>
+<ol class="steps">
+<li><b>Read an orders file.</b> This file holds two orders. Most data is in <b>attributes</b> (<code>REQNO="…"</code>), some elements have no children and only attributes (<code>&lt;SO_ADDRESS … /&gt;</code>), and <code>SO_NOTE</code> has text:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;SHOPMSG&gt;
+  &lt;MSGHEADER MSGID="SHOP01.20261015.090112.000431" MSGTYPE="ORD" VERSION="2.1"&gt;
+    &lt;MH_FROM ID="SHOP01" NAME="Web shop"&gt;
+      &lt;MH_CONTACT NAME="Shop operations" EMAIL="ops@shop.example.com"/&gt;
+    &lt;/MH_FROM&gt;
+    &lt;MH_TO ID="MYCOMPANY" NAME="MyCompany"/&gt;
+  &lt;/MSGHEADER&gt;
+  &lt;SHOPORDERS&gt;
+    &lt;SO_ORDER REQNO="7700012345601" ORDERNO="WS-261015-0001"&gt;
+      &lt;SO_PLACED YEAR="2026" MONTH="10" DAY="15"/&gt;
+      &lt;SO_NOTE&gt;Please leave the parcel at the back door.&lt;/SO_NOTE&gt;
+      &lt;SO_SHIPTO METHOD="STD"&gt;
+        &lt;SO_ADDRESS NAME="Anna Example" STREET="12 Sample Street" CITY="Springfield" STATE="IL" ZIP="62701" COUNTRY="US"/&gt;
+        &lt;SO_EMAIL ADDRESS="anna@customer.example"/&gt;
+      &lt;/SO_SHIPTO&gt;
+      &lt;SO_LINE LINENO="1" LINEPRICE="25.00"&gt;
+        &lt;SO_ITEM ITEMNO="ITEM-100" SKU="SKU-10001" QTY="2" DESC="Coffee mug, blue"/&gt;
+      &lt;/SO_LINE&gt;
+      &lt;SO_LINE LINENO="2" LINEPRICE="18.50"&gt;
+        &lt;SO_ITEM ITEMNO="ITEM-200" SKU="SKU-20002" QTY="1" DESC="Tea towel set"/&gt;
+      &lt;/SO_LINE&gt;
+    &lt;/SO_ORDER&gt;
+    &lt;SO_ORDER REQNO="7700012345602" ORDERNO="WS-261015-0002"&gt;
+      &lt;SO_PLACED YEAR="2026" MONTH="10" DAY="15"/&gt;
+      &lt;SO_SHIPTO METHOD="EXP"&gt;
+        &lt;SO_ADDRESS NAME="Ben Sample" STREET="4 Example Road" CITY="Riverside" STATE="CA" ZIP="92501" COUNTRY="US"/&gt;
+        &lt;SO_EMAIL ADDRESS="ben@customer.example"/&gt;
+      &lt;/SO_SHIPTO&gt;
+      &lt;SO_LINE LINENO="1" LINEPRICE="42.00"&gt;
+        &lt;SO_ITEM ITEMNO="ITEM-300" SKU="SKU-30003" QTY="3" DESC="Glass bowl"/&gt;
+      &lt;/SO_LINE&gt;
+    &lt;/SO_ORDER&gt;
+  &lt;/SHOPORDERS&gt;
+&lt;/SHOPMSG&gt;</code></pre>
+<code>REQNO</code> is the web shop's own number of the order; <code>ORDERNO</code> is the number the customer sees. <code>LINEPRICE</code> is the amount of the line.</li>
+<li><b>Read a cancellation.</b> The customer cancelled line 2 of the first order:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;SHOPMSG&gt;
+  &lt;MSGHEADER MSGID="SHOP01.20261015.113005.000437" MSGTYPE="CAN" VERSION="2.1"&gt;
+    &lt;MH_FROM ID="SHOP01" NAME="Web shop"/&gt;
+    &lt;MH_TO ID="MYCOMPANY" NAME="MyCompany"/&gt;
+  &lt;/MSGHEADER&gt;
+  &lt;SHOPCANCEL&gt;
+    &lt;SC_LINECANCEL REQNO="7700012345601" LINENO="2" REASON="CUSTOMER"/&gt;
+  &lt;/SHOPCANCEL&gt;
+&lt;/SHOPMSG&gt;</code></pre></li>
+<li><b>Read a status update.</b> The web shop tells whether an order is paid or on hold. This document is in an XML <b>namespace</b>: <code>xmlns="http://shop.example.com/ns/status"</code> on the root means that every element in the file belongs to that namespace, also when no prefix is written:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;SHOPMSG xmlns="http://shop.example.com/ns/status"&gt;
+  &lt;MSGHEADER MSGID="SHOP01.20261015.114511.000440" MSGTYPE="STS" VERSION="2.1"&gt;
+    &lt;MH_FROM ID="SHOP01" NAME="Web shop"/&gt;
+    &lt;MH_TO ID="MYCOMPANY" NAME="MyCompany"/&gt;
+  &lt;/MSGHEADER&gt;
+  &lt;SHOPSTATUS&gt;
+    &lt;SS_ORDERSTATUS REQNO="7700012345601" CODE="PAID"/&gt;
+    &lt;SS_ORDERSTATUS REQNO="7700012345602" CODE="HOLD" NOTE="Payment check"/&gt;
+  &lt;/SHOPSTATUS&gt;
+&lt;/SHOPMSG&gt;</code></pre></li>
+<li><b>See how Bots will read them.</b> Bots turns every element that is a record in the grammar into a record, and every other element into fields of its parent:
+<ul>
+<li>An attribute of a record element is a field <code>element__attribute</code>: <code>REQNO</code> of <code>&lt;SO_ORDER&gt;</code> is <code>SO_ORDER__REQNO</code>.</li>
+<li>An element without children (a "field element") gives one field for its text and one per attribute, all in the parent record: <code>&lt;SO_ADDRESS NAME="…" ZIP="…"/&gt;</code> inside <code>SO_SHIPTO</code> gives the fields <code>SO_ADDRESS__NAME</code> and <code>SO_ADDRESS__ZIP</code> of the record <code>SO_SHIPTO</code>; <code>&lt;SO_NOTE&gt;text&lt;/SO_NOTE&gt;</code> gives the field <code>SO_NOTE</code>.</li>
+<li>In a namespace, Bots sees the names as <code>{http://shop.example.com/ns/status}SHOPMSG</code>. Attributes without a prefix have no namespace, so the field is <code>{http://shop.example.com/ns/status}SS_ORDERSTATUS__REQNO</code>.</li>
+</ul></li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Part 10 shows a small tool that prints how Bots reads any XML file, field by field. Use it when a partner sends a format you do not know yet.</p></div>
+
+<h3 id="int-xml-hub--part2">Part 2: Recognise the kind of document</h3>
+<p>The route that reads the drop folder gets <span class="ui">Fromeditype</span> <code>mailbag</code> and <span class="ui">Frommessagetype</span> <code>mailbag</code>. The mailbag step sees that a file starts with <code>&lt;</code> and gives it editype <code>xml</code> and messagetype <code>mailbag</code>. When Bots then reads the file, it opens <code>usersys/grammars/xml/mailbag.py</code> and tries the rules of <code>mailbagsearch</code> one by one; the first rule that matches gives the messagetype, and that is the name of the grammar Bots reads the file with. See <a href="#editype-xml-json--howto-mailbag">XML and JSON</a>.</p>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/grammars/xml/mailbag.py</code>:
+<pre><code class="language-python"># Rules to recognise the document type of an XML file from the web shop.
+# Bots tries the rules from top to bottom; the first rule that matches
+# gives the messagetype (= the grammar usersys/grammars/xml/&lt;messagetype&gt;.py).
+STATUS_NS = '{http://shop.example.com/ns/status}'
+
+mailbagsearch = [
+    # orders: the root element has a child element SHOPORDERS
+    {'xpath': 'SHOPORDERS', 'messagetype': 'shoporders'},
+    # cancellations: the root element has a child element SHOPCANCEL
+    {'xpath': 'SHOPCANCEL', 'messagetype': 'shopcancel'},
+    # status updates: the root element is SHOPMSG in the status namespace
+    {'xpath': '.', 'tag': STATUS_NS + 'SHOPMSG', 'messagetype': 'shopstatus'},
+]</code></pre></li>
+<li><b>Understand the rules.</b> <code>xpath</code> is searched from the root element with ElementTree's <code>find()</code>:
+<ul>
+<li><code>'SHOPORDERS'</code> finds a child element <code>SHOPORDERS</code> of the root. Use <code>'.//SHOPORDERS'</code> to search at any depth.</li>
+<li><code>'.'</code> is the root element itself. With <code>'tag'</code> the found element must have exactly this name; here the root must be <code>SHOPMSG</code> <b>in the status namespace</b>. An orders file has the root <code>SHOPMSG</code> without namespace, so this rule does not match it.</li>
+<li>With <code>'content'</code> the text of the found element must be equal, eg <code>{'xpath': './/DocType', 'content': 'CANCEL', 'messagetype': 'shopcancel'}</code>.</li>
+<li>To look at an attribute, use an ElementTree predicate in the path: <code>{'xpath': "MSGHEADER[@MSGTYPE='CAN']", 'messagetype': 'shopcancel'}</code>.</li>
+</ul></li>
+<li><b>Put specific rules first.</b> Bots stops at the first match. If one document type contains the element another rule looks for, put the stricter rule above.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>A file that matches no rule is not translated. It gets the error <code>Could not find right xml messagetype for mailbag.</code>; see part 9. A file that is not well-formed XML fails before the rules are tried.</p></div>
+
+<h3 id="int-xml-hub--part3">Part 3: The XML grammars</h3>
+<p>Each kind of document gets its own grammar in <code>usersys/grammars/xml/</code>, named as the messagetype that the mailbag gives. Editype <code>xml</code> checks the file against the grammar: every element must be known, mandatory fields must be there, lengths and formats must fit. (Editype <code>xmlnocheck</code> checks nothing and needs no structure; part 10 uses it. For documents you translate, use <code>xml</code>: errors then show up in Bots and not in the warehouse.)</p>
+<ol class="steps">
+<li><b>Write the shared header</b> <code>usersys/grammars/xml/shopheader.py</code>. It is not a grammar itself: the three grammars import it, so a change in the header is made once.
+<pre><code class="language-python"># The header that every document of the web shop has.
+# Not a grammar of its own: the document grammars import it.
+from bots.botsconfig import *
+
+header_structure = {ID: 'MSGHEADER', MIN: 1, MAX: 1, LEVEL: [
+    {ID: 'MH_FROM', MIN: 1, MAX: 1},
+    {ID: 'MH_TO', MIN: 1, MAX: 1},
+]}
+
+header_recorddefs = {
+    'MSGHEADER': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['MSGHEADER__MSGID', 'M', 40, 'AN'],      # attribute MSGID of &lt;MSGHEADER&gt;
+        ['MSGHEADER__MSGTYPE', 'M', 3, 'AN'],
+        ['MSGHEADER__VERSION', 'C', 10, 'AN'],
+    ],
+    'MH_FROM': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['MH_FROM__ID', 'M', 20, 'AN'],
+        ['MH_FROM__NAME', 'C', 60, 'AN'],
+        ['MH_CONTACT__NAME', 'C', 60, 'AN'],      # attribute NAME of the child element &lt;MH_CONTACT&gt;
+        ['MH_CONTACT__EMAIL', 'C', 80, 'AN'],
+    ],
+    'MH_TO': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['MH_TO__ID', 'M', 20, 'AN'],
+        ['MH_TO__NAME', 'C', 60, 'AN'],
+    ],
+}</code></pre>
+<code>MH_CONTACT</code> has no children, so it is not in the structure: its attributes are fields of <code>MH_FROM</code>. Leave all fields that are attributes in <code>recorddefs</code>; the order in <code>recorddefs</code> does not matter for reading.</li>
+<li><b>Write the orders grammar</b> <code>usersys/grammars/xml/shoporders.py</code>:
+<pre><code class="language-python"># Orders from the web shop: &lt;SHOPMSG&gt; with one &lt;SHOPORDERS&gt; that holds one or more &lt;SO_ORDER&gt;.
+from bots.botsconfig import *
+from .shopheader import header_structure, header_recorddefs
+
+syntax = {
+    'indented': True,
+}
+
+# one message per order: a file with 3 orders gives 3 translations
+nextmessage = ({'BOTSID': 'SHOPMSG'}, {'BOTSID': 'SHOPORDERS'}, {'BOTSID': 'SO_ORDER'})
+
+structure = [
+    {ID: 'SHOPMSG', MIN: 1, MAX: 1, LEVEL: [
+        header_structure,
+        {ID: 'SHOPORDERS', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'SO_ORDER', MIN: 1, MAX: 9999,
+             QUERIES: {
+                 # the order number becomes the reference shown in the web interface
+                 'botskey': ({'BOTSID': 'SO_ORDER', 'SO_ORDER__ORDERNO': None},),
+             },
+             LEVEL: [
+                {ID: 'SO_SHIPTO', MIN: 1, MAX: 1},
+                {ID: 'SO_LINE', MIN: 1, MAX: 999},
+            ]},
+        ]},
+    ]},
+]
+
+recorddefs = dict(header_recorddefs)
+recorddefs.update({
+    'SHOPMSG': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SHOPORDERS': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SO_ORDER': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['SO_ORDER__REQNO', 'M', 20, 'AN'],       # the platform's number of the order
+        ['SO_ORDER__ORDERNO', 'M', 20, 'AN'],     # the order number the customer sees
+        ['SO_PLACED__YEAR', 'M', 4, 'N'],         # &lt;SO_PLACED YEAR="2026" MONTH="10" DAY="15"/&gt;
+        ['SO_PLACED__MONTH', 'M', 2, 'N'],
+        ['SO_PLACED__DAY', 'M', 2, 'N'],
+        ['SO_NOTE', 'C', 200, 'AN'],              # an element with text: &lt;SO_NOTE&gt;...&lt;/SO_NOTE&gt;
+    ],
+    'SO_SHIPTO': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['SO_SHIPTO__METHOD', 'M', 10, 'AN'],
+        ['SO_ADDRESS__NAME', 'M', 60, 'AN'],
+        ['SO_ADDRESS__STREET', 'M', 60, 'AN'],
+        ['SO_ADDRESS__CITY', 'M', 40, 'AN'],
+        ['SO_ADDRESS__STATE', 'C', 10, 'AN'],
+        ['SO_ADDRESS__ZIP', 'M', 10, 'AN'],
+        ['SO_ADDRESS__COUNTRY', 'M', 3, 'AN'],
+        ['SO_EMAIL__ADDRESS', 'C', 80, 'AN'],
+    ],
+    'SO_LINE': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['SO_LINE__LINENO', 'M', 4, 'N'],
+        ['SO_LINE__LINEPRICE', 'M', 12, 'R'],
+        ['SO_ITEM__ITEMNO', 'M', 20, 'AN'],
+        ['SO_ITEM__SKU', 'C', 20, 'AN'],
+        ['SO_ITEM__QTY', 'M', 8, 'R'],
+        ['SO_ITEM__DESC', 'C', 80, 'AN'],
+    ],
+})</code></pre>
+<ul>
+<li><b>Several documents per file:</b> <code>nextmessage</code> gives the path to the record that is one message. Bots translates each <code>SO_ORDER</code> on its own: a file with two orders gives two translations, and an error in one order does not stop the other. In the mapping the message starts at <code>SO_ORDER</code>: <code>inn.get({'BOTSID': 'SO_ORDER', …})</code>.</li>
+<li><code>QUERIES</code> with <code>botskey</code>: the order number becomes the reference of each message in the web interface.</li>
+<li><code>SO_PLACED__YEAR</code> etc. have format <code>N</code>, so Bots checks they are numbers; <code>SO_LINE__LINEPRICE</code> and <code>SO_ITEM__QTY</code> have <code>R</code> (a number with decimals).</li>
+</ul></li>
+<li><b>Write the cancellation grammar</b> <code>usersys/grammars/xml/shopcancel.py</code>. Without <code>nextmessage</code> the whole file is one message:
+<pre><code class="language-python"># Cancellations from the web shop: one or more order lines the customer cancelled.
+from bots.botsconfig import *
+from .shopheader import header_structure, header_recorddefs
+
+syntax = {
+    'indented': True,
+}
+
+structure = [
+    {ID: 'SHOPMSG', MIN: 1, MAX: 1, LEVEL: [
+        header_structure,
+        {ID: 'SHOPCANCEL', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'SC_LINECANCEL', MIN: 1, MAX: 9999},
+        ]},
+    ]},
+]
+
+recorddefs = dict(header_recorddefs)
+recorddefs.update({
+    'SHOPMSG': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SHOPCANCEL': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SC_LINECANCEL': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['SC_LINECANCEL__REQNO', 'M', 20, 'AN'],
+        ['SC_LINECANCEL__LINENO', 'M', 4, 'N'],
+        ['SC_LINECANCEL__REASON', 'C', 20, 'AN'],
+    ],
+})</code></pre></li>
+<li><b>Write the status grammar</b> <code>usersys/grammars/xml/shopstatus.py</code>. It is used for reading (the web shop's statuses) <b>and</b> for writing (MyCompany's statuses), so it has the records of both directions, all optional (<code>MIN: 0</code>):
+<pre><code class="language-python"># Order status documents, in the namespace of the web shop. Used in both directions:
+#  - the web shop sends SS_ORDERSTATUS (payment or hold status of an order);
+#  - MyCompany sends SS_LINESTATUS and SS_PACKAGE (what the warehouse did).
+from bots.botsconfig import *
+
+NS = '{http://shop.example.com/ns/status}'
+
+syntax = {
+    'indented': True,
+    # write the namespace without a prefix (xmlns="..."), as the web shop wants it
+    'namespace_prefixes': [('', 'http://shop.example.com/ns/status')],
+}
+
+structure = [
+    {ID: NS + 'SHOPMSG', MIN: 1, MAX: 1, LEVEL: [
+        {ID: NS + 'MSGHEADER', MIN: 1, MAX: 1, LEVEL: [
+            {ID: NS + 'MH_FROM', MIN: 1, MAX: 1},
+            {ID: NS + 'MH_TO', MIN: 1, MAX: 1},
+        ]},
+        {ID: NS + 'SHOPSTATUS', MIN: 1, MAX: 1, LEVEL: [
+            {ID: NS + 'SS_ORDERSTATUS', MIN: 0, MAX: 9999},
+            {ID: NS + 'SS_LINESTATUS', MIN: 0, MAX: 9999},
+            {ID: NS + 'SS_PACKAGE', MIN: 0, MAX: 9999},
+        ]},
+    ]},
+]
+
+recorddefs = {
+    NS + 'SHOPMSG': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    NS + 'MSGHEADER': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'MSGHEADER__MSGID', 'M', 40, 'AN'],
+        [NS + 'MSGHEADER__MSGTYPE', 'M', 3, 'AN'],
+        [NS + 'MSGHEADER__VERSION', 'C', 10, 'AN'],
+    ],
+    NS + 'MH_FROM': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'MH_FROM__ID', 'M', 20, 'AN'],
+        [NS + 'MH_FROM__NAME', 'C', 60, 'AN'],
+    ],
+    NS + 'MH_TO': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'MH_TO__ID', 'M', 20, 'AN'],
+        [NS + 'MH_TO__NAME', 'C', 60, 'AN'],
+    ],
+    NS + 'SHOPSTATUS': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    NS + 'SS_ORDERSTATUS': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'SS_ORDERSTATUS__REQNO', 'M', 20, 'AN'],
+        [NS + 'SS_ORDERSTATUS__CODE', 'M', 10, 'AN'],
+        [NS + 'SS_ORDERSTATUS__NOTE', 'C', 80, 'AN'],
+    ],
+    NS + 'SS_LINESTATUS': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'SS_LINESTATUS__REQNO', 'M', 20, 'AN'],
+        [NS + 'SS_LINESTATUS__LINENO', 'M', 4, 'N'],
+        [NS + 'SS_LINESTATUS__CODE', 'M', 10, 'AN'],
+        [NS + 'SS_LINESTATUS__QTY', 'C', 8, 'R'],
+    ],
+    NS + 'SS_PACKAGE': [
+        ['BOTSID', 'M', 256, 'AN'],
+        [NS + 'SS_PACKAGE__REQNO', 'M', 20, 'AN'],
+        [NS + 'SS_PACKAGE__LINENO', 'M', 4, 'N'],
+        [NS + 'SS_PACKAGE__CARRIER', 'C', 10, 'AN'],
+        [NS + 'SS_PACKAGE__TRACKINGNO', 'C', 40, 'AN'],
+        [NS + 'SS_SHIPDATE', 'C', 1, 'AN'],         # needed to WRITE the element &lt;SS_SHIPDATE .../&gt;
+        [NS + 'SS_SHIPDATE__YEAR', 'C', 4, 'N'],
+        [NS + 'SS_SHIPDATE__MONTH', 'C', 2, 'N'],
+        [NS + 'SS_SHIPDATE__DAY', 'C', 2, 'N'],
+    ],
+}</code></pre>
+<ul>
+<li><b>Namespace:</b> every record ID and field name starts with <code>{http://shop.example.com/ns/status}</code>; the variable <code>NS</code> keeps that readable.</li>
+<li><code>namespace_prefixes</code> with an empty prefix writes <code>xmlns="…"</code> on the root and no prefix on the elements. Without it, Bots writes <code>ns0:</code> before every element.</li>
+<li><b>Writing attributes of a field element:</b> to write <code>&lt;SS_SHIPDATE YEAR="…" MONTH="…" DAY="…"/&gt;</code>, the element itself (<code>NS + 'SS_SHIPDATE'</code>) must be a field in <code>recorddefs</code>, before its attributes. Reading does not need it. Without it Bots leaves the element out without an error.</li>
+</ul></li>
+<li><b>Check the grammars:</b>
+<pre><code class="language-bash">bots-grammarcheck -c/srv/bots/env/production/config xml shoporders
+bots-grammarcheck -c/srv/bots/env/production/config xml shopcancel
+bots-grammarcheck -c/srv/bots/env/production/config xml shopstatus</code></pre></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Each command ends with <code>OK - no error found in grammar</code>. (<code>shopheader.py</code> is not checked on its own: it has no <code>structure</code>.)</p></div>
+
+<h3 id="int-xml-hub--part4">Part 4: The hub database</h3>
+<p>The database is the "order book" between the web shop and the warehouse: one row per order line. In the test it is a SQLite file in the environment; in production it is often MySQL/MariaDB or PostgreSQL on <code>db.example.com</code> (see the variant at the end of this part).</p>
+<ol class="steps">
+<li><b>Make the table.</b> Save this as <code>shopdb_create.sql</code> and run it, for SQLite with <code>sqlite3 botssys/shopdb.sqlite3 &lt; shopdb_create.sql</code> in the environment folder (or with any SQLite tool). The same statement works on MySQL/MariaDB and PostgreSQL.
+<pre><code class="language-text">CREATE TABLE edi_order_lines (
+    req_no        VARCHAR(20)   NOT NULL,
+    line_seq      INTEGER       NOT NULL,
+    order_no      VARCHAR(20)   NOT NULL,
+    ordered_on    VARCHAR(8)    NOT NULL,
+    article_no       VARCHAR(20)   NOT NULL,
+    qty           DECIMAL(10,2) NOT NULL,
+    line_price    DECIMAL(10,2),
+    shipto_email  VARCHAR(80),
+    line_status   VARCHAR(10)   NOT NULL DEFAULT 'NEW',
+    shop_status   VARCHAR(10),
+    carrier       VARCHAR(10),
+    tracking_no   VARCHAR(40),
+    shipped_on    VARCHAR(10),
+    send_flag     CHAR(1)       NOT NULL DEFAULT 'N',
+    PRIMARY KEY (req_no, line_seq)
+);</code></pre>
+<code>send_flag</code>: <code>N</code> nothing to send, <code>Y</code> news for the web shop, <code>S</code> sent. <code>line_status</code>: <code>NEW</code>, <code>CANCELLED</code>, <code>SHIPPED</code>, <code>BACKORDER</code> (and <code>RETURNED</code> from part 10).</li>
+<li><b>Write the script of the outgoing database channel</b> <code>usersys/communicationscripts/shop_db_out.py</code>. The file name must be the channel name. Every mapping that writes to the database puts a dict <code>{'action': …, 'rows': […]}</code> in <code>out.root</code>; one channel then serves all document types:
+<pre><code class="language-python"># Outgoing database channel shop_db_out: writes what the mappings put in out.root.
+# Bots makes the connection (field Database of the channel) and commits after each call.
+# db_object is {'action': ..., 'rows': [...]}; one call per translated message.
+
+
+def outcommunicate(channeldict, dbconnection, db_object):
+    cursor = dbconnection.cursor()
+    action = db_object['action']
+    for row in db_object['rows']:
+        if action == 'new_order':
+            # the same order sent twice by the web shop: update instead of a second insert
+            cursor.execute('SELECT 1 FROM edi_order_lines WHERE req_no = %(req_no)s AND line_seq = %(line_seq)s',
+                           row)
+            if cursor.fetchone():
+                cursor.execute('UPDATE edi_order_lines SET qty = %(qty)s, line_price = %(line_price)s '
+                               'WHERE req_no = %(req_no)s AND line_seq = %(line_seq)s', row)
+            else:
+                cursor.execute('INSERT INTO edi_order_lines '
+                               '(req_no, line_seq, order_no, ordered_on, article_no, qty, line_price, '
+                               ' shipto_email, line_status, send_flag) '
+                               'VALUES (%(req_no)s, %(line_seq)s, %(order_no)s, %(ordered_on)s, %(article_no)s, '
+                               ' %(qty)s, %(line_price)s, %(shipto_email)s, \'NEW\', \'N\')', row)
+        elif action == 'cancel':
+            # cancelled by the customer: confirm it to the web shop with the next status run
+            cursor.execute('UPDATE edi_order_lines SET line_status = \'CANCELLED\', send_flag = \'Y\' '
+                           'WHERE req_no = %(req_no)s AND line_seq = %(line_seq)s', row)
+        elif action == 'shop_status':
+            cursor.execute('UPDATE edi_order_lines SET shop_status = %(shop_status)s '
+                           'WHERE req_no = %(req_no)s', row)
+        else:
+            raise ValueError('shop_db_out: unknown action "%s"' % action)</code></pre>
+Bots makes the connection (the channel's <span class="ui">Database</span> field), so the script has no <code>connect</code>, does not commit, and uses <code>%(name)s</code> placeholders on every database. A new order that comes twice is updated, not inserted twice.</li>
+<li><b>Write the script of the incoming database channel</b> <code>usersys/communicationscripts/shop_db_in.py</code>:
+<pre><code class="language-python"># Incoming database channel shop_db_in: reads the order lines that have news for the web shop
+# (send_flag = 'Y'), marks them as sent, and returns one list of rows per order.
+# Each list becomes one "file" in Bots, so each order gets its own status document.
+
+
+def incommunicate(channeldict, dbconnection):
+    cursor = dbconnection.cursor()
+    cursor.execute("SELECT * FROM edi_order_lines WHERE send_flag = 'Y' ORDER BY req_no, line_seq")
+    rows = [dict(row) for row in cursor.fetchall()]
+    cursor.execute("UPDATE edi_order_lines SET send_flag = 'S' WHERE send_flag = 'Y'")
+    per_order = {}
+    for row in rows:
+        per_order.setdefault(row['req_no'], []).append(row)
+    return [per_order[req_no] for req_no in sorted(per_order)]</code></pre>
+It returns a list; every element (the rows of one order) becomes one "file" in Bots and one status document. The rows are marked <code>S</code> in the same transaction: if the run fails, Bots rolls back and the rows stay <code>Y</code>.</li>
+<li><b>Make the two channels</b> in <span class="ui">Configuration</span> → <span class="ui">Channels</span>:
+<div class="table-wrap"><table>
+<tr><th>Field</th><th><code>shop_db_out</code></th><th><code>shop_db_in</code></th></tr>
+<tr><td><span class="ui">in/out</span></td><td><code>out</code></td><td><code>in</code></td></tr>
+<tr><td><span class="ui">Type</span></td><td><code>db</code></td><td><code>db</code></td></tr>
+<tr><td><span class="ui">Path</span></td><td><code>botssys/shopdb.sqlite3</code></td><td><code>botssys/shopdb.sqlite3</code></td></tr>
+<tr><td><span class="ui">Database</span> (in <span class="ui">Database specific</span>)</td><td><code>SQLite</code></td><td><code>SQLite</code></td></tr>
+</table></div>
+For SQLite a relative Path is relative to the environment folder.</li>
+</ol>
+<h4 id="int-xml-hub--mysql">Variant: MySQL / MariaDB</h4>
+<p>Make the table in the database <code>shopdb</code> on <code>db.example.com</code> and change both channels:</p>
+<div class="table-wrap"><table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td><span class="ui">Host</span></td><td><code>db.example.com</code></td></tr>
+<tr><td><span class="ui">Port</span></td><td><code>0</code> (3306)</td></tr>
+<tr><td><span class="ui">Username</span> / <span class="ui">Password</span></td><td><code>bots</code> / <code>secret-example</code></td></tr>
+<tr><td><span class="ui">Path</span></td><td><code>shopdb</code> (the database name)</td></tr>
+<tr><td><span class="ui">Database</span></td><td><code>MySQL / MariaDB</code></td></tr>
+<tr><td><span class="ui">Parameters</span></td><td><code>charset=utf8mb4</code> (the default)</td></tr>
+</table></div>
+<p>The scripts stay the same. For PostgreSQL choose <code>PostgreSQL</code> (port 5432). The MySQL variant was not run for this page; the SQLite set-up was.</p>
+
+<h3 id="int-xml-hub--part5">Part 5: Orders: one order, three results</h3>
+<p>One translation gives one result. To get three results from one order, you use a <b>chain of translations</b>: the mapping returns a text, Bots looks for a translation with that text in <span class="ui">Alternative translation</span> (<code>alt</code>) for the same incoming message, and runs it. The result of every link is kept.</p>
+<div class="table-wrap"><table>
+<tr><th>alt</th><th>Mapping</th><th>Result (toeditype / tomessagetype)</th><th>Returns</th></tr>
+<tr><td>(empty)</td><td><code>shoporders_to_csv</code></td><td><code>csv</code> / <code>warehouse_orders</code></td><td><code>'to_db'</code></td></tr>
+<tr><td><code>to_db</code></td><td><code>shoporders_to_db</code></td><td><code>db</code> / <code>shop_orders</code></td><td><code>'to_mail'</code></td></tr>
+<tr><td><code>to_mail</code></td><td><code>shoporders_to_html</code></td><td><code>templatehtml</code> / <code>order_confirmation</code></td><td>nothing (end)</td></tr>
+</table></div>
+<ol class="steps">
+<li><b>Write the pick list grammar</b> <code>usersys/grammars/csv/warehouse_orders.py</code>. All orders of one run go into one file (<code>merge</code>), with a header line (<code>csvheader</code>):
+<pre><code class="language-python"># Pick list for the warehouse: one csv line per order line, with a header line.
+from bots.botsconfig import *
+
+syntax = {
+    'field_sep': ';',
+    'quote_char': '"',
+    'charset': 'utf-8',
+    'merge': True,              # all orders of one run in one file
+    'envelope': 'csvheader',    # first line: the field names
+    'noBOTSID': True,           # the lines have no record ID
+}
+
+structure = [
+    {ID: 'LINE', MIN: 1, MAX: 99999},
+]
+
+recorddefs = {
+    'LINE': [
+        ['BOTSID', 'M', 4, 'A'],
+        ['order_no', 'M', 20, 'A'],
+        ['ordered_on', 'M', 8, 'D'],
+        ['line_seq', 'M', 4, 'N'],
+        ['article_no', 'M', 20, 'A'],
+        ['sku', 'C', 20, 'A'],
+        ['qty', 'M', 8, 'R'],
+        ['description', 'C', 80, 'A'],
+        ['ship_method', 'M', 10, 'A'],
+        ['recipient_name', 'M', 60, 'A'],
+        ['shipto_street', 'M', 60, 'A'],
+        ['recipient_city', 'M', 40, 'A'],
+        ['recipient_state', 'C', 10, 'A'],
+        ['shipto_zip', 'M', 10, 'A'],
+        ['recipient_country', 'M', 3, 'A'],
+        ['note', 'C', 200, 'A'],
+    ],
+}</code></pre></li>
+<li><b>Write the first link</b> <code>usersys/mappings/xml/shoporders_to_csv.py</code>:
+<pre><code class="language-python"># Order from the web shop (one SO_ORDER) -&gt; lines of the warehouse pick list (csv).
+# Returns 'to_db': Bots then runs the translation with alt "to_db" for the same order.
+
+def ordered_on(inn):
+    """Make YYYYMMDD from &lt;SO_PLACED YEAR="2026" MONTH="10" DAY="15"/&gt;."""
+    year = inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__YEAR': None})
+    month = inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__MONTH': None})
+    day = inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__DAY': None})
+    return year + month.zfill(2) + day.zfill(2)
+
+
+def main(inn, out):
+    # Safety net: Bots uses the translation without alt when it finds none for an alt.
+    # Then this mapping runs again, returns 'to_db' again, and the chain never ends.
+    if inn.ta_info['alt']:
+        raise ValueError('No translation for xml/shoporders with alt "%s".' % inn.ta_info['alt'])
+    shipto = {'BOTSID': 'SO_SHIPTO'}
+
+    def ship(field):
+        return inn.get({'BOTSID': 'SO_ORDER'}, dict(shipto, **{field: None}))
+
+    # the values that are the same for every line of the order
+    order = {
+        'order_no': inn.get({'BOTSID': 'SO_ORDER', 'SO_ORDER__ORDERNO': None}),
+        'ordered_on': ordered_on(inn),
+        'ship_method': ship('SO_SHIPTO__METHOD'),
+        'recipient_name': ship('SO_ADDRESS__NAME'),
+        'shipto_street': ship('SO_ADDRESS__STREET'),
+        'recipient_city': ship('SO_ADDRESS__CITY'),
+        'recipient_state': ship('SO_ADDRESS__STATE'),
+        'shipto_zip': ship('SO_ADDRESS__ZIP'),
+        'recipient_country': ship('SO_ADDRESS__COUNTRY'),
+        'note': inn.get({'BOTSID': 'SO_ORDER', 'SO_NOTE': None}),
+    }
+
+    for line in inn.getloop({'BOTSID': 'SO_ORDER'}, {'BOTSID': 'SO_LINE'}):
+        values = dict(order)
+        values.update({
+            'line_seq': line.get({'BOTSID': 'SO_LINE', 'SO_LINE__LINENO': None}),
+            'article_no': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__ITEMNO': None}),
+            'sku': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__SKU': None}),
+            'qty': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__QTY': None}),
+            'description': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__DESC': None}),
+        })
+        # put() writes nothing at all when one of the values is None: leave out the empty ones
+        values = {key: value for key, value in values.items() if value is not None}
+        csv_line = out.putloop({'BOTSID': 'LINE'})
+        csv_line.put(dict(values, BOTSID='LINE'))
+
+    # next translation in the chain: the same order into the database
+    return 'to_db'</code></pre>
+<ul>
+<li><code>put()</code> writes <b>nothing</b> when one of its values is <code>None</code>. An order without <code>SO_NOTE</code> would lose the whole line. That is why the mapping removes empty values first.</li>
+<li>The check on <code>inn.ta_info['alt']</code> at the top is a safety net, see the warning below.</li>
+</ul></li>
+<li><b>Write the second link</b> <code>usersys/mappings/xml/shoporders_to_db.py</code>. For editype <code>db</code> there is no grammar: <code>out.root</code> is passed to <code>shop_db_out.py</code> as it is.
+<pre><code class="language-python"># Order from the web shop -&gt; rows for the table edi_order_lines (database channel).
+# Returns 'to_mail': next, the translation with alt "to_mail" makes the confirmation.
+from .shoporders_to_csv import ordered_on
+
+
+def main(inn, out):
+    req_no = inn.get({'BOTSID': 'SO_ORDER', 'SO_ORDER__REQNO': None})
+    order_no = inn.get({'BOTSID': 'SO_ORDER', 'SO_ORDER__ORDERNO': None})
+    rows = []
+    for line in inn.getloop({'BOTSID': 'SO_ORDER'}, {'BOTSID': 'SO_LINE'}):
+        rows.append({
+            'req_no': req_no,
+            'line_seq': int(line.get({'BOTSID': 'SO_LINE', 'SO_LINE__LINENO': None})),
+            'order_no': order_no,
+            'ordered_on': ordered_on(inn),
+            'article_no': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__ITEMNO': None}),
+            'qty': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__QTY': None}),
+            'line_price': line.get({'BOTSID': 'SO_LINE', 'SO_LINE__LINEPRICE': None}),
+            'shipto_email': inn.get({'BOTSID': 'SO_ORDER'},
+                                    {'BOTSID': 'SO_SHIPTO', 'SO_EMAIL__ADDRESS': None}),
+        })
+    # out.root is what the communication script of the database channel gets
+    out.root = {'action': 'new_order', 'rows': rows}
+    return 'to_mail'</code></pre></li>
+<li><b>Write the confirmation grammar</b> <code>usersys/grammars/templatehtml/order_confirmation.py</code>:
+<pre><code class="language-python"># Order confirmation for the customer, as an HTML page (Genshi templates).
+syntax = {
+    'charset': 'utf-8',
+    'contenttype': 'text/html',
+    'merge': False,                                   # one page per order
+    'template': 'order_confirmation.html',            # the page for one order
+    'envelope-template': 'confirmation_envelope.html',  # the frame around it
+}</code></pre></li>
+<li><b>Write the templates</b> in <code>usersys/grammars/templatehtml/templates/</code>. <code>order_confirmation.html</code> is the page of one order; Genshi fills <code>${…}</code> and repeats the element with <code>py:for</code>:
+<pre><code class="language-xml">&lt;div xmlns:py="http://genshi.edgewall.org/"&gt;
+  &lt;h1&gt;Thank you for your order ${data.order_no}&lt;/h1&gt;
+  &lt;p&gt;Dear ${data.name},&lt;/p&gt;
+  &lt;p&gt;We received your order of ${data.ordered_on}. We will ship it to:&lt;/p&gt;
+  &lt;p&gt;${data.name}&lt;br/&gt;${data.street}&lt;br/&gt;${data.zip} ${data.city} ${data.state}&lt;br/&gt;${data.country}&lt;/p&gt;
+  &lt;table&gt;
+    &lt;tr&gt;&lt;th&gt;Line&lt;/th&gt;&lt;th&gt;Item&lt;/th&gt;&lt;th&gt;Description&lt;/th&gt;&lt;th&gt;Quantity&lt;/th&gt;&lt;th&gt;Price&lt;/th&gt;&lt;/tr&gt;
+    &lt;tr py:for="line in data.lines"&gt;
+      &lt;td&gt;${line['line_seq']}&lt;/td&gt;&lt;td&gt;${line['article_no']}&lt;/td&gt;&lt;td&gt;${line['description']}&lt;/td&gt;
+      &lt;td&gt;${line['qty']}&lt;/td&gt;&lt;td&gt;${line['price']}&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/table&gt;
+  &lt;p&gt;Total: ${data.total}&lt;/p&gt;
+  &lt;p py:if="data.note"&gt;Your note: ${data.note}&lt;/p&gt;
+&lt;/div&gt;</code></pre>
+<code>confirmation_envelope.html</code> is the frame; <code>xi:include</code> puts the page of the order in it:
+<pre><code class="language-xml">&lt;html xmlns="http://www.w3.org/1999/xhtml" xmlns:py="http://genshi.edgewall.org/"
+      xmlns:xi="http://www.w3.org/2001/XInclude"&gt;
+&lt;head&gt;
+  &lt;title&gt;Your order at MyCompany&lt;/title&gt;
+  &lt;style type="text/css"&gt;
+    body { font-family: Arial, sans-serif; }
+    table { border-collapse: collapse; }
+    th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div py:for="message in data"&gt;&lt;xi:include href="${message}" /&gt;&lt;/div&gt;
+  &lt;p&gt;MyCompany customer service, edi@mycompany.example&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre></li>
+<li><b>Write the last link</b> <code>usersys/mappings/xml/shoporders_to_html.py</code>. It fills <code>out.data</code> for the template, and sets the mail addresses for the mail channel:
+<pre><code class="language-python"># Order from the web shop -&gt; order confirmation for the customer (templatehtml).
+# Last translation of the chain: returns nothing.
+from decimal import Decimal
+
+
+def main(inn, out):
+    shipto = {'BOTSID': 'SO_SHIPTO'}
+
+    def address(field):
+        return inn.get({'BOTSID': 'SO_ORDER'}, dict(shipto, **{field: None})) or ''
+
+    d = out.data          # the template gets this object as "data"
+    d.order_no = inn.get({'BOTSID': 'SO_ORDER', 'SO_ORDER__ORDERNO': None})
+    out.ta_info['botskey'] = d.order_no        # for the file name confirm_{botskey}.html
+    d.ordered_on = '%s-%s-%s' % (
+        inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__YEAR': None}),
+        inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__MONTH': None}).zfill(2),
+        inn.get({'BOTSID': 'SO_ORDER', 'SO_PLACED__DAY': None}).zfill(2))
+    d.name = address('SO_ADDRESS__NAME')
+    d.street = address('SO_ADDRESS__STREET')
+    d.zip = address('SO_ADDRESS__ZIP')
+    d.city = address('SO_ADDRESS__CITY')
+    d.state = address('SO_ADDRESS__STATE')
+    d.country = address('SO_ADDRESS__COUNTRY')
+    d.note = inn.get({'BOTSID': 'SO_ORDER', 'SO_NOTE': None})
+    d.lines = []
+    total = Decimal('0')
+    for line in inn.getloop({'BOTSID': 'SO_ORDER'}, {'BOTSID': 'SO_LINE'}):
+        price = line.get({'BOTSID': 'SO_LINE', 'SO_LINE__LINEPRICE': None})
+        total += Decimal(price)
+        d.lines.append({
+            'line_seq': line.get({'BOTSID': 'SO_LINE', 'SO_LINE__LINENO': None}),
+            'article_no': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__ITEMNO': None}),
+            'description': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__DESC': None}) or '',
+            'qty': line.get({'BOTSID': 'SO_LINE', 'SO_ITEM__QTY': None}),
+            'price': price,
+        })
+    d.total = str(total)
+
+    # for the mail channel: to whom, and from whom
+    out.ta_info['tomail'] = address('SO_EMAIL__ADDRESS')
+    out.ta_info['frommail'] = 'edi@mycompany.example'</code></pre></li>
+<li><b>Make the three translations</b> in <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>, all <span class="ui">Active</span>, <span class="ui">Fromeditype</span> <code>xml</code>, <span class="ui">Frommessagetype</span> <code>shoporders</code>, with <span class="ui">Alternative translation</span>, <span class="ui">Mapping Script</span>, <span class="ui">Toeditype</span> and <span class="ui">Tomessagetype</span> as in the table above.</li>
+<li><b>Make the outgoing channels</b> (<span class="ui">Channels</span> → <span class="ui">Out</span>), both type <code>file</code>: <code>warehouse_csv_out</code> with Path <code>botssys/outfile/warehouse</code> and Filename <code>picklist_{datetime:%Y%m%d}_*.csv</code>; <code>customer_mail_out</code> with Path <code>botssys/outfile/customer_mail</code> and Filename <code>confirm_{botskey}.html</code>. (In production <code>customer_mail_out</code> is a mail channel: see Variations.)</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>When Bots finds no translation for an alt, it uses the translation <b>without</b> alt. If the translation <code>to_mail</code> is missing or not active, Bots runs <code>shoporders_to_csv</code> again, which returns <code>to_db</code> again, and so on: the run never ends (the loop check of Bots only stops a mapping that returns the <i>same</i> alt over and over). The check at the top of <code>shoporders_to_csv</code> turns this into a clear error instead: <code>ValueError: No translation for xml/shoporders with alt "to_mail".</code> Put such a check in the first mapping of every chain.</p></div>
+
+<h3 id="int-xml-hub--part6">Part 6: Cancellations and status updates into the database</h3>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/mappings/xml/shopcancel_to_db.py</code>:
+<pre><code class="language-python"># Cancellation from the web shop -&gt; mark the order lines as cancelled in the database.
+
+def main(inn, out):
+    rows = []
+    for cancel in inn.getloop({'BOTSID': 'SHOPMSG'}, {'BOTSID': 'SHOPCANCEL'},
+                              {'BOTSID': 'SC_LINECANCEL'}):
+        rows.append({
+            'req_no': cancel.get({'BOTSID': 'SC_LINECANCEL', 'SC_LINECANCEL__REQNO': None}),
+            'line_seq': int(cancel.get({'BOTSID': 'SC_LINECANCEL', 'SC_LINECANCEL__LINENO': None})),
+        })
+    inn.ta_info['botskey'] = rows[0]['req_no']
+    out.root = {'action': 'cancel', 'rows': rows}</code></pre>
+Setting <code>inn.ta_info['botskey']</code> gives the incoming document a reference in the web interface.</li>
+<li><b>Write</b> <code>usersys/mappings/xml/shopstatus_to_db.py</code>. All names carry the namespace, as in the grammar:
+<pre><code class="language-python"># Status update from the web shop (eg PAID, HOLD) -&gt; column shop_status in the database.
+
+NS = '{http://shop.example.com/ns/status}'     # the same namespace as in the grammar
+
+
+def main(inn, out):
+    rows = []
+    for status in inn.getloop({'BOTSID': NS + 'SHOPMSG'}, {'BOTSID': NS + 'SHOPSTATUS'},
+                              {'BOTSID': NS + 'SS_ORDERSTATUS'}):
+        rows.append({
+            'req_no': status.get({'BOTSID': NS + 'SS_ORDERSTATUS', NS + 'SS_ORDERSTATUS__REQNO': None}),
+            'shop_status': status.get({'BOTSID': NS + 'SS_ORDERSTATUS', NS + 'SS_ORDERSTATUS__CODE': None}),
+        })
+    if rows:
+        inn.ta_info['botskey'] = rows[0]['req_no']
+    out.root = {'action': 'shop_status', 'rows': rows}</code></pre></li>
+<li><b>Make the two translations</b>: <code>xml</code> / <code>shopcancel</code> → <code>shopcancel_to_db</code> → <code>db</code> / <code>shop_cancel</code>, and <code>xml</code> / <code>shopstatus</code> → <code>shopstatus_to_db</code> → <code>db</code> / <code>shop_status</code>. <span class="ui">Alternative translation</span> stays empty.</li>
+</ol>
+
+<h3 id="int-xml-hub--part7">Part 7: Status updates back to the web shop</h3>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/mappings/db/db_to_shopstatus.py</code>. <code>inn.root</code> is the list of rows of one order that <code>shop_db_in.py</code> returned:
+<pre><code class="language-python"># Rows of one order from the database -&gt; a status document for the web shop (XML with namespace).
+from bots.botsconfig import *        # for DONE
+import bots.transform as transform
+
+NS = '{http://shop.example.com/ns/status}'     # the same namespace as in the grammar
+LINE_CODES = {'CANCELLED': 'CXL', 'BACKORDER': 'BO'}
+
+
+def rec(name, **fields):
+    """A new dict for put(): record NS+name with fields NS+field.
+    Make a new dict for every put: Bots changes the dicts you give to put()."""
+    record = {'BOTSID': NS + name}
+    record.update((NS + key, value) for key, value in fields.items())
+    return record
+
+
+def main(inn, out):
+    rows = inn.root                      # the list of rows that shop_db_in returned for one order
+    req_no = rows[0]['req_no']
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = 'STATUS_' + req_no   # used in the file name
+
+    # header: who sends, who receives, a unique id
+    msg_id = 'MYCOMPANY.%s.%s' % (transform.strftime('%Y%m%d.%H%M%S'),
+                                  transform.unique('shopstatus_msgid').zfill(6))
+    out.put(rec('SHOPMSG'), rec('MSGHEADER', MSGHEADER__MSGID=msg_id,
+                                MSGHEADER__MSGTYPE='STS', MSGHEADER__VERSION='2.1'))
+    out.put(rec('SHOPMSG'), rec('MSGHEADER'),
+            rec('MH_FROM', MH_FROM__ID='MYCOMPANY', MH_FROM__NAME='MyCompany'))
+    out.put(rec('SHOPMSG'), rec('MSGHEADER'),
+            rec('MH_TO', MH_TO__ID='SHOP01', MH_TO__NAME='Web shop'))
+    out.put(rec('SHOPMSG'), rec('SHOPSTATUS'))
+
+    has_content = False
+    for row in rows:
+        if row['line_status'] in LINE_CODES:
+            has_content = True
+            line = out.putloop(rec('SHOPMSG'), rec('SHOPSTATUS'), rec('SS_LINESTATUS'))
+            line.put(rec('SS_LINESTATUS',
+                         SS_LINESTATUS__REQNO=req_no,
+                         SS_LINESTATUS__LINENO=row['line_seq'],
+                         SS_LINESTATUS__CODE=LINE_CODES[row['line_status']],
+                         SS_LINESTATUS__QTY=row['qty']))
+        elif row['line_status'] == 'SHIPPED':
+            has_content = True
+            shipped_on = row['shipped_on']            # text YYYY-MM-DD in the table
+            package = out.putloop(rec('SHOPMSG'), rec('SHOPSTATUS'), rec('SS_PACKAGE'))
+            package.put(rec('SS_PACKAGE',
+                            SS_PACKAGE__REQNO=req_no,
+                            SS_PACKAGE__LINENO=row['line_seq'],
+                            SS_PACKAGE__CARRIER=row['carrier'],
+                            SS_PACKAGE__TRACKINGNO=row['tracking_no'],
+                            SS_SHIPDATE__YEAR=shipped_on[0:4],
+                            SS_SHIPDATE__MONTH=shipped_on[5:7],
+                            SS_SHIPDATE__DAY=shipped_on[8:10]))
+
+    if not has_content:
+        # nothing the web shop needs to know (eg only NEW lines): no output file
+        out.ta_info['statust'] = DONE</code></pre>
+<ul>
+<li>The helper <code>rec()</code> makes a <b>new</b> dict for every <code>put()</code>. Bots adds keys to the dicts you pass to <code>put()</code>; a dict kept in a module variable and used again for the next message gives the error <code>MappingFormatError: Section without "BOTSID"</code>.</li>
+<li><code>transform.unique('shopstatus_msgid')</code> is a counter of Bots: every document gets a new <code>MSGID</code>.</li>
+<li><code>out.ta_info['statust'] = DONE</code> says: no output for this message (for example, only lines that are still <code>NEW</code>).</li>
+</ul></li>
+<li><b>Make the translation</b>: <code>db</code> / <code>shop_status_rows</code> → <code>db_to_shopstatus</code> → <code>xml</code> / <code>shopstatus</code>.</li>
+<li><b>Make the outgoing channel</b> <code>shop_status_out</code>: type <code>file</code>, Path <code>botssys/outfile/shop_status</code>, Filename <code>{botskey}_*.xml</code>. The <code>*</code> makes each file name unique: with <code>{botskey}.xml</code> alone, a second status for the same order in a later run is appended to the existing file, which then holds two XML documents.</li>
+</ol>
+
+<h3 id="int-xml-hub--part8">Part 8: Channels and routes</h3>
+<ol class="steps">
+<li><b>Make the incoming channel</b> <code>shop_xml_in</code>: <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> → <span class="ui">Add incoming channel</span>; Type <code>file</code>; Path <code>botssys/infile/shop</code>; Filename <code>*.xml</code>; <span class="ui">Remove</span> ticked.</li>
+<li><b>Check the channels.</b> You now have:
+<div class="table-wrap"><table>
+<tr><th>Idchannel</th><th>in/out</th><th>Type</th><th>Path</th><th>Filename</th></tr>
+<tr><td><code>shop_xml_in</code></td><td>in</td><td>file</td><td><code>botssys/infile/shop</code></td><td><code>*.xml</code> (Remove ticked)</td></tr>
+<tr><td><code>warehouse_csv_out</code></td><td>out</td><td>file</td><td><code>botssys/outfile/warehouse</code></td><td><code>picklist_{datetime:%Y%m%d}_*.csv</code></td></tr>
+<tr><td><code>shop_db_out</code></td><td>out</td><td>db (Database SQLite)</td><td><code>botssys/shopdb.sqlite3</code></td><td></td></tr>
+<tr><td><code>customer_mail_out</code></td><td>out</td><td>file</td><td><code>botssys/outfile/customer_mail</code></td><td><code>confirm_{botskey}.html</code></td></tr>
+<tr><td><code>shop_db_in</code></td><td>in</td><td>db (Database SQLite)</td><td><code>botssys/shopdb.sqlite3</code></td><td></td></tr>
+<tr><td><code>shop_status_out</code></td><td>out</td><td>file</td><td><code>botssys/outfile/shop_status</code></td><td><code>{botskey}_*.xml</code></td></tr>
+</table></div></li>
+<li><b>Make the route <code>shop_in</code></b> with three parts (<span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>, all <span class="ui">Active</span>). Part 10 receives and translates; parts 20 and 30 only send. Each part takes the results with its <span class="ui">Toeditype</span>:
+<div class="table-wrap"><table>
+<tr><th>Sequence</th><th>Incoming channel</th><th>Fromeditype / Frommessagetype</th><th>Translate</th><th>Outgoing channel</th><th>Toeditype (filter)</th></tr>
+<tr><td>10</td><td><code>shop_xml_in</code></td><td><code>mailbag</code> / <code>mailbag</code></td><td>Translate</td><td><code>warehouse_csv_out</code></td><td><code>csv</code></td></tr>
+<tr><td>20</td><td>(none)</td><td></td><td>Nothing</td><td><code>shop_db_out</code></td><td><code>db</code></td></tr>
+<tr><td>30</td><td>(none)</td><td></td><td>Nothing</td><td><code>customer_mail_out</code></td><td><code>templatehtml</code></td></tr>
+</table></div></li>
+<li><b>Make the route <code>shop_status_out</code></b>, one part: Sequence <code>10</code>; Incoming channel <code>shop_db_in</code>; Fromeditype <code>db</code>, Frommessagetype <code>shop_status_rows</code>; Translate; Outgoing channel <code>shop_status_out</code>. Routes run in name order, so <code>shop_in</code> runs first: a cancellation that comes in is confirmed to the web shop in the same run.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>For a test environment you can also enter the configuration with a short Python script instead of the screens. Run it with the Python of Bots: <code>python setup_config.py /srv/bots/env/production/config</code>. This is the script used for this page:</p></div>
+<pre><code class="language-python">"""Put the channels, translations and routes of the XML hub tutorial in the Bots database."""
+import sys
+from bots import botsinit
+botsinit.generalinit(sys.argv[1])
+import django
+django.setup()
+from bots import models as m
+
+CH = m.channel.objects.update_or_create
+CH(idchannel='shop_xml_in', defaults=dict(
+    inorout='in', type='file', path='botssys/infile/shop', filename='*.xml', remove=True))
+CH(idchannel='warehouse_csv_out', defaults=dict(
+    inorout='out', type='file', path='botssys/outfile/warehouse', filename='picklist_{datetime:%Y%m%d}_*.csv'))
+CH(idchannel='shop_db_out', defaults=dict(
+    inorout='out', type='db', dbengine='sqlite', path='botssys/shopdb.sqlite3'))
+CH(idchannel='customer_mail_out', defaults=dict(
+    inorout='out', type='file', path='botssys/outfile/customer_mail', filename='confirm_{botskey}.html'))
+CH(idchannel='shop_db_in', defaults=dict(
+    inorout='in', type='db', dbengine='sqlite', path='botssys/shopdb.sqlite3'))
+CH(idchannel='shop_status_out', defaults=dict(
+    inorout='out', type='file', path='botssys/outfile/shop_status', filename='{botskey}_*.xml'))
+
+TR = m.translate.objects.update_or_create
+for fet, fmt, alt, script, tet, tmt in (
+        ('xml', 'shoporders', '', 'shoporders_to_csv', 'csv', 'warehouse_orders'),
+        ('xml', 'shoporders', 'to_db', 'shoporders_to_db', 'db', 'shop_orders'),
+        ('xml', 'shoporders', 'to_mail', 'shoporders_to_html', 'templatehtml', 'order_confirmation'),
+        ('xml', 'shopcancel', '', 'shopcancel_to_db', 'db', 'shop_cancel'),
+        ('xml', 'shopstatus', '', 'shopstatus_to_db', 'db', 'shop_status'),
+        ('db', 'shop_status_rows', '', 'db_to_shopstatus', 'xml', 'shopstatus')):
+    TR(fromeditype=fet, frommessagetype=fmt, alt=alt, defaults=dict(
+        active=True, tscript=script, toeditype=tet, tomessagetype=tmt))
+
+RT = m.routes.objects.update_or_create
+RT(idroute='shop_in', seq=10, defaults=dict(
+    active=True, fromchannel_id='shop_xml_in', fromeditype='mailbag', frommessagetype='mailbag',
+    translateind=1, tochannel_id='warehouse_csv_out', toeditype='csv'))
+RT(idroute='shop_in', seq=20, defaults=dict(
+    active=True, translateind=0, tochannel_id='shop_db_out', toeditype='db'))
+RT(idroute='shop_in', seq=30, defaults=dict(
+    active=True, translateind=0, tochannel_id='customer_mail_out', toeditype='templatehtml'))
+RT(idroute='shop_status_out', seq=10, defaults=dict(
+    active=True, fromchannel_id='shop_db_in', fromeditype='db', frommessagetype='shop_status_rows',
+    translateind=1, tochannel_id='shop_status_out'))
+print('configuration ok')</code></pre>
+
+<h3 id="int-xml-hub--run">Run it end to end</h3>
+<ol class="steps">
+<li><b>Drop the orders file</b> of part 1 in <code>botssys/infile/shop/</code> and run <span class="ui">Run</span> → <span class="ui">Run (only new)</span>, or <code>bots-engine -c/srv/bots/env/production/config --new</code>. The log shows the route parts one after the other:
+<pre><code class="language-text">2026.10.15 21:32:26 INFO      [bots.engine] Run "new".
+2026.10.15 21:32:26 INFO      [bots.engine] Run active routes from database that are in default run: "['shop_in', 'shop_status_out']".
+2026.10.15 21:32:26 START     [bots.engine] Running route: shop_in 10
+2026.10.15 21:32:26 START     [bots.engine] Start communication channel in: shop_xml_in (file)
+2026.10.15 21:32:26 DONE      [bots.engine] Finished communication channel in: shop_xml_in (file)
+2026.10.15 21:32:27 START     [bots.engine] Start communication channel out: warehouse_csv_out (file)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished communication channel out: warehouse_csv_out (file)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished route: shop_in 10
+2026.10.15 21:32:27 START     [bots.engine] Running route: shop_in 20
+2026.10.15 21:32:27 START     [bots.engine] Start communication channel out: shop_db_out (db)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished communication channel out: shop_db_out (db)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished route: shop_in 20
+2026.10.15 21:32:27 START     [bots.engine] Running route: shop_in 30
+2026.10.15 21:32:27 START     [bots.engine] Start communication channel out: customer_mail_out (file)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished communication channel out: customer_mail_out (file)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished route: shop_in 30
+2026.10.15 21:32:27 START     [bots.engine] Running route: shop_status_out 10
+2026.10.15 21:32:27 START     [bots.engine] Start communication channel in: shop_db_in (db)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished communication channel in: shop_db_in (db)
+2026.10.15 21:32:27 DONE      [bots.engine] Finished route: shop_status_out 10
+2026.10.15 21:32:27 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:32:26, duration: 0:00:01.258876
+    1 files received/processed in run.
+    1 files without errors,
+    5 files send in run.</code></pre>
+"5 files send": one pick list (both orders merged), two database writes and two confirmations.</li>
+<li><b>Open the pick list</b> <code>botssys/outfile/warehouse/picklist_20261015_1.csv</code>:
+<pre><code class="language-text">"order_no";"ordered_on";"line_seq";"article_no";"sku";"qty";"description";"ship_method";"recipient_name";"shipto_street";"recipient_city";"recipient_state";"shipto_zip";"recipient_country";"note"
+"WS-261015-0001";"20261015";"1";"ITEM-100";"SKU-10001";"2";"Coffee mug, blue";"STD";"Anna Example";"12 Sample Street";"Springfield";"IL";"62701";"US";"Please leave the parcel at the back door."
+"WS-261015-0001";"20261015";"2";"ITEM-200";"SKU-20002";"1";"Tea towel set";"STD";"Anna Example";"12 Sample Street";"Springfield";"IL";"62701";"US";"Please leave the parcel at the back door."
+"WS-261015-0002";"20261015";"1";"ITEM-300";"SKU-30003";"3";"Glass bowl";"EXP";"Ben Sample";"4 Example Road";"Riverside";"CA";"92501";"US";""</code></pre></li>
+<li><b>Open a confirmation</b> <code>botssys/outfile/customer_mail/confirm_WS-261015-0001.html</code>:
+<pre><code class="language-xml">&lt;html xmlns="http://www.w3.org/1999/xhtml"&gt;
+&lt;head&gt;
+  &lt;title&gt;Your order at MyCompany&lt;/title&gt;
+  &lt;style type="text/css"&gt;
+    body { font-family: Arial, sans-serif; }
+    table { border-collapse: collapse; }
+    th, td { border: 1px solid #999; padding: 4px 8px; text-align: left; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div&gt;&lt;div&gt;
+  &lt;h1&gt;Thank you for your order WS-261015-0001&lt;/h1&gt;
+  &lt;p&gt;Dear Anna Example,&lt;/p&gt;
+  &lt;p&gt;We received your order of 2026-10-15. We will ship it to:&lt;/p&gt;
+  &lt;p&gt;Anna Example&lt;br /&gt;12 Sample Street&lt;br /&gt;62701 Springfield IL&lt;br /&gt;US&lt;/p&gt;
+  &lt;table&gt;
+    &lt;tr&gt;&lt;th&gt;Line&lt;/th&gt;&lt;th&gt;Item&lt;/th&gt;&lt;th&gt;Description&lt;/th&gt;&lt;th&gt;Quantity&lt;/th&gt;&lt;th&gt;Price&lt;/th&gt;&lt;/tr&gt;
+    &lt;tr&gt;
+      &lt;td&gt;1&lt;/td&gt;&lt;td&gt;ITEM-100&lt;/td&gt;&lt;td&gt;Coffee mug, blue&lt;/td&gt;
+      &lt;td&gt;2&lt;/td&gt;&lt;td&gt;25.00&lt;/td&gt;
+    &lt;/tr&gt;&lt;tr&gt;
+      &lt;td&gt;2&lt;/td&gt;&lt;td&gt;ITEM-200&lt;/td&gt;&lt;td&gt;Tea towel set&lt;/td&gt;
+      &lt;td&gt;1&lt;/td&gt;&lt;td&gt;18.50&lt;/td&gt;
+    &lt;/tr&gt;
+  &lt;/table&gt;
+  &lt;p&gt;Total: 43.50&lt;/p&gt;
+  &lt;p&gt;Your note: Please leave the parcel at the back door.&lt;/p&gt;
+&lt;/div&gt;&lt;/div&gt;
+  &lt;p&gt;MyCompany customer service, edi@mycompany.example&lt;/p&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre></li>
+<li><b>Look in the table</b> (<code>SELECT req_no, line_seq, order_no, article_no, qty, line_status, shop_status, carrier, tracking_no, shipped_on, send_flag FROM edi_order_lines</code>):
+<pre><code class="language-text">req_no         line_seq  order_no        article_no  qty  line_status  shop_status  carrier  tracking_no  shipped_on  send_flag
+7700012345601  1         WS-261015-0001  ITEM-100    2    NEW                                                         N
+7700012345601  2         WS-261015-0001  ITEM-200    1    NEW                                                         N
+7700012345602  1         WS-261015-0002  ITEM-300    3    NEW                                                         N</code></pre></li>
+<li><b>Check the web interface.</b> <span class="ui">Incoming</span> shows <code>orders_20261015_0901.xml</code> with route <code>shop_in</code>, channel <code>shop_xml_in</code>, editype <code>xml</code>, messagetype <code>shoporders</code> (found by the mailbag), 2 messages; the outgoing columns show <code>(several values)</code> because one file gave several results. <span class="ui">Document-in</span> shows the two orders with references <code>WS-261015-0001</code> and <code>WS-261015-0002</code> (the <code>botskey</code> of the grammar's <code>QUERIES</code>).</li>
+<li><b>Drop the cancellation and the status update</b> and run again:
+<pre><code class="language-text">2026.10.15 21:32:29 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:32:28, duration: 0:00:01.281660
+    3 files received/processed in run.
+    3 files without errors,
+    3 files send in run.</code></pre>
+Three files: two XML files and one "file" from <code>shop_db_in</code> (the rows of the cancelled line). The table now has the payment status and the cancellation:
+<pre><code class="language-text">req_no         line_seq  order_no        article_no  qty  line_status  shop_status  carrier  tracking_no  shipped_on  send_flag
+7700012345601  1         WS-261015-0001  ITEM-100    2    NEW          PAID                                           N
+7700012345601  2         WS-261015-0001  ITEM-200    1    CANCELLED    PAID                                           S
+7700012345602  1         WS-261015-0002  ITEM-300    3    NEW          HOLD                                           N</code></pre>
+and the web shop gets <code>botssys/outfile/shop_status/STATUS_7700012345601_1.xml</code>:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;SHOPMSG xmlns="http://shop.example.com/ns/status"&gt;
+    &lt;MSGHEADER MSGID="MYCOMPANY.20261015.213229.000001" MSGTYPE="STS" VERSION="2.1"&gt;
+        &lt;MH_FROM ID="MYCOMPANY" NAME="MyCompany" /&gt;
+        &lt;MH_TO ID="SHOP01" NAME="Web shop" /&gt;
+    &lt;/MSGHEADER&gt;
+    &lt;SHOPSTATUS&gt;
+        &lt;SS_LINESTATUS CODE="CXL" LINENO="2" QTY="1" REQNO="7700012345601" /&gt;
+    &lt;/SHOPSTATUS&gt;
+&lt;/SHOPMSG&gt;</code></pre></li>
+<li><b>Let the warehouse work.</b> In real life the warehouse system updates the table; here you do it by hand:
+<pre><code class="language-text">UPDATE edi_order_lines SET line_status = 'SHIPPED', carrier = 'EXPR', tracking_no = 'TRK0012345678',
+       shipped_on = '2026-10-16', send_flag = 'Y' WHERE req_no = '7700012345601' AND line_seq = 1;
+UPDATE edi_order_lines SET line_status = 'BACKORDER', send_flag = 'Y' WHERE req_no = '7700012345602' AND line_seq = 1;</code></pre></li>
+<li><b>Run again.</b> Only <code>shop_status_out</code> has work:
+<pre><code class="language-text">2026.10.15 21:32:31 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:32:31, duration: 0:00:00.305580
+    2 files received/processed in run.
+    2 files without errors,
+    2 files send in run.</code></pre>
+<code>STATUS_7700012345601_2.xml</code>, with the shipment:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;SHOPMSG xmlns="http://shop.example.com/ns/status"&gt;
+    &lt;MSGHEADER MSGID="MYCOMPANY.20261015.213231.000002" MSGTYPE="STS" VERSION="2.1"&gt;
+        &lt;MH_FROM ID="MYCOMPANY" NAME="MyCompany" /&gt;
+        &lt;MH_TO ID="SHOP01" NAME="Web shop" /&gt;
+    &lt;/MSGHEADER&gt;
+    &lt;SHOPSTATUS&gt;
+        &lt;SS_PACKAGE CARRIER="EXPR" LINENO="1" REQNO="7700012345601" TRACKINGNO="TRK0012345678"&gt;
+            &lt;SS_SHIPDATE DAY="16" MONTH="10" YEAR="2026" /&gt;
+        &lt;/SS_PACKAGE&gt;
+    &lt;/SHOPSTATUS&gt;
+&lt;/SHOPMSG&gt;</code></pre>
+<code>STATUS_7700012345602_3.xml</code>, with the back-order:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8" ?&gt;
+&lt;SHOPMSG xmlns="http://shop.example.com/ns/status"&gt;
+    &lt;MSGHEADER MSGID="MYCOMPANY.20261015.213231.000003" MSGTYPE="STS" VERSION="2.1"&gt;
+        &lt;MH_FROM ID="MYCOMPANY" NAME="MyCompany" /&gt;
+        &lt;MH_TO ID="SHOP01" NAME="Web shop" /&gt;
+    &lt;/MSGHEADER&gt;
+    &lt;SHOPSTATUS&gt;
+        &lt;SS_LINESTATUS CODE="BO" LINENO="1" QTY="3" REQNO="7700012345602" /&gt;
+    &lt;/SHOPSTATUS&gt;
+&lt;/SHOPMSG&gt;</code></pre>
+All rows now have <code>send_flag</code> <code>S</code>; a next run sends nothing until the warehouse changes a row again.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Each run ends with exit code 0 and "files without errors". The namespace is written as <code>xmlns="…"</code> on the root, the attributes are in alphabetical order (as Bots always writes them), and the file names have the counter from the <code>*</code>.</p></div>
+
+<h3 id="int-xml-hub--part9">Part 9: Unknown and broken documents</h3>
+<p>Sooner or later the web shop sends something the hub does not expect. Bots then marks the file as an error, translates nothing of it, and the run ends with exit code 2. These are the four cases from the test, with the text shown in <span class="ui">Incoming</span> (column error) and in the log:</p>
+<div class="table-wrap"><table>
+<tr><th>The file</th><th>What Bots says</th></tr>
+<tr><td>A new kind of document (a return, see part 10) that no mailbag rule knows</td><td><code>MessageError: Could not find right xml messagetype for mailbag.</code></td></tr>
+<tr><td>Broken XML: <code>&lt;SO_LINE&gt;</code> is not closed</td><td><code>MessageError: mismatched tag: line 15, column 6</code></td></tr>
+<tr><td>Two XML documents in one file (one after the other)</td><td><code>MessageError: junk after document element: line 11, column 0</code></td></tr>
+<tr><td>An order without the mandatory attribute <code>ZIP</code></td><td><code>MessageError: [F02]: Record "SHOPMSG-SHOPORDERS-SO_ORDER-SO_SHIPTO" field "SO_ADDRESS__ZIP" is mandatory.</code></td></tr>
+</table></div>
+<p>The run report of each was:</p>
+<pre><code class="language-text">2026.10.15 21:32:33 INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:32:33, duration: 0:00:00.910626
+    1 files received/processed in run.
+    1 files with errors,
+    0 files send in run.</code></pre>
+<ol class="steps">
+<li><b>Find the error</b> in <span class="ui">Incoming</span>: filter on status error, or click the run in <span class="ui">Reports</span>. The line and column of a parse error count from the top of the file.</li>
+<li><b>Fix the cause</b>: ask the web shop for a correct file, or change the mailbag rules, grammar or mapping.</li>
+<li><b>Process the file again</b>: in <span class="ui">Incoming</span> select the file and choose <span class="ui">Rereceive</span>, then <span class="ui">Run</span> → <span class="ui">Run user-indicated rereceives</span> (<code>bots-engine --rereceive</code>). Bots keeps a copy of every received file, so you do not need the original. See <a href="#web-reports">Reports</a>.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>With <code>nextmessage</code> in the orders grammar, a missing <code>ZIP</code> is a problem of one order, but it is found while the whole file is read, so the whole file is in error. Errors found in a mapping (for example a missing translation) are per order: the other orders of the file are translated.</p></div>
+
+<h3 id="int-xml-hub--part10">Part 10: Add a new document type</h3>
+<p>The web shop announces returns: a new document with <code>SHOPRETURN</code>. Before the hub knows it, such a file fails with <code>Could not find right xml messagetype for mailbag.</code> (part 9). You add the type in five steps, and then process the failed file again.</p>
+<ol class="steps">
+<li><b>Look inside the new document with <code>xmlnocheck</code>.</b> Editype <code>xmlnocheck</code> reads any XML without a structure; a small mapping prints what Bots sees. Make the grammar <code>usersys/grammars/xmlnocheck/explore.py</code>:
+<pre><code class="language-python"># xmlnocheck: no structure, no recorddefs, nothing is checked.
+syntax = {}</code></pre>
+and the mapping <code>usersys/mappings/xmlnocheck/explore_tree.py</code> (output editype <code>raw</code>: the mapping writes bytes):
+<pre><code class="language-python"># Writes how Bots sees an XML file: every record with its fields, indented by level.
+# Use it to find the record and field names for a new grammar.
+
+def show(node, level, lines):
+    record = dict(node.record)
+    lines.append('    ' * level + 'record ' + record.pop('BOTSID'))
+    record.pop('BOTSIDnr', None)
+    for field in sorted(record):
+        lines.append('    ' * level + '    ' + field + ' = ' + str(record[field]))
+    for child in node.children:
+        show(child, level + 1, lines)
+
+
+def main(inn, out):
+    lines = []
+    show(inn.root, 0, lines)
+    out.root = ('\n'.join(lines) + '\n').encode('utf-8')     # editype raw: bytes, written as they are</code></pre>
+Then a channel <code>explore_in</code> (in, file, Path <code>botssys/infile/explore</code>, Filename <code>*.xml</code>, Remove ticked), a channel <code>explore_out</code> (out, file, Path <code>botssys/outfile/explore</code>, Filename <code>{infile:name}.txt</code>), a translation <code>xmlnocheck</code> / <code>explore</code> → <code>explore_tree</code> → <code>raw</code> / <code>raw</code>, and a route <code>shop_explore</code> (incoming <code>explore_in</code>, Fromeditype <code>xmlnocheck</code>, Frommessagetype <code>explore</code>, Translate, outgoing <code>explore_out</code>) with <span class="ui">Not in default run</span> ticked, so it only runs when you ask for it.</li>
+<li><b>Run the tool on the return file.</b> Put the file in <code>botssys/infile/explore/</code> and run <code>bots-engine -c/srv/bots/env/production/config shop_explore</code>. The file:
+<pre><code class="language-xml">&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;SHOPMSG&gt;
+  &lt;MSGHEADER MSGID="SHOP01.20261020.081502.000512" MSGTYPE="RET" VERSION="2.1"&gt;
+    &lt;MH_FROM ID="SHOP01" NAME="Web shop"/&gt;
+    &lt;MH_TO ID="MYCOMPANY" NAME="MyCompany"/&gt;
+  &lt;/MSGHEADER&gt;
+  &lt;SHOPRETURN&gt;
+    &lt;SR_RETURN REQNO="7700012345601" LINENO="1" QTY="1"&gt;
+      &lt;SR_REASON CODE="DAMAGED"&gt;Handle broken on arrival&lt;/SR_REASON&gt;
+    &lt;/SR_RETURN&gt;
+  &lt;/SHOPRETURN&gt;
+&lt;/SHOPMSG&gt;</code></pre>
+gives <code>botssys/outfile/explore/return_20261020_0815.txt</code>:
+<pre><code class="language-text">record SHOPMSG
+    record MSGHEADER
+        MH_FROM__ID = SHOP01
+        MH_FROM__NAME = Web shop
+        MH_TO__ID = MYCOMPANY
+        MH_TO__NAME = MyCompany
+        MSGHEADER__MSGID = SHOP01.20261020.081502.000512
+        MSGHEADER__MSGTYPE = RET
+        MSGHEADER__VERSION = 2.1
+    record SHOPRETURN
+        record SR_RETURN
+            SR_REASON = Handle broken on arrival
+            SR_REASON__CODE = DAMAGED
+            SR_RETURN__LINENO = 1
+            SR_RETURN__QTY = 1
+            SR_RETURN__REQNO = 7700012345601</code></pre>
+Two things to note: <code>SR_REASON</code> has text and an attribute, so it gives two fields; and in <code>xmlnocheck</code> an element without children is always a field element, so here <code>MH_FROM</code> and <code>MH_TO</code> are fields of <code>MSGHEADER</code>. In your <code>xml</code> grammar they are records, because the structure says so.</li>
+<li><b>Write the grammar</b> <code>usersys/grammars/xml/shopreturn.py</code>, with the shared header:
+<pre><code class="language-python"># Returns from the web shop: order lines the customer sent back.
+from bots.botsconfig import *
+from .shopheader import header_structure, header_recorddefs
+
+syntax = {
+    'indented': True,
+}
+
+structure = [
+    {ID: 'SHOPMSG', MIN: 1, MAX: 1, LEVEL: [
+        header_structure,
+        {ID: 'SHOPRETURN', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'SR_RETURN', MIN: 1, MAX: 9999},
+        ]},
+    ]},
+]
+
+recorddefs = dict(header_recorddefs)
+recorddefs.update({
+    'SHOPMSG': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SHOPRETURN': [
+        ['BOTSID', 'M', 256, 'AN'],
+    ],
+    'SR_RETURN': [
+        ['BOTSID', 'M', 256, 'AN'],
+        ['SR_RETURN__REQNO', 'M', 20, 'AN'],
+        ['SR_RETURN__LINENO', 'M', 4, 'N'],
+        ['SR_RETURN__QTY', 'M', 8, 'R'],
+        ['SR_REASON', 'C', 200, 'AN'],           # the text of &lt;SR_REASON&gt;
+        ['SR_REASON__CODE', 'M', 20, 'AN'],      # its attribute CODE
+    ],
+})</code></pre>
+Check it: <code>bots-grammarcheck -c/srv/bots/env/production/config xml shopreturn</code> gives <code>OK - no error found in grammar</code>.</li>
+<li><b>Add a rule to the mailbag</b> in <code>usersys/grammars/xml/mailbag.py</code>, below the cancellation rule:
+<pre><code class="language-python">    # returns (added later): the root element has a child element SHOPRETURN
+    {'xpath': 'SHOPRETURN', 'messagetype': 'shopreturn'},</code></pre></li>
+<li><b>Write the mapping</b> <code>usersys/mappings/xml/shopreturn_to_db.py</code>:
+<pre><code class="language-python"># Return from the web shop -&gt; mark the order lines as returned in the database.
+
+def main(inn, out):
+    rows = []
+    for ret in inn.getloop({'BOTSID': 'SHOPMSG'}, {'BOTSID': 'SHOPRETURN'}, {'BOTSID': 'SR_RETURN'}):
+        rows.append({
+            'req_no': ret.get({'BOTSID': 'SR_RETURN', 'SR_RETURN__REQNO': None}),
+            'line_seq': int(ret.get({'BOTSID': 'SR_RETURN', 'SR_RETURN__LINENO': None})),
+            'reason': ret.get({'BOTSID': 'SR_RETURN', 'SR_REASON__CODE': None}),
+        })
+    inn.ta_info['botskey'] = rows[0]['req_no']
+    out.root = {'action': 'return', 'rows': rows}</code></pre>
+add the action to <code>shop_db_out.py</code>, before the <code>else:</code>:
+<pre><code class="language-python">        elif action == 'return':
+            cursor.execute('UPDATE edi_order_lines SET line_status = \'RETURNED\' '
+                           'WHERE req_no = %(req_no)s AND line_seq = %(line_seq)s', row)</code></pre>
+and make the translation <code>xml</code> / <code>shopreturn</code> → <code>shopreturn_to_db</code> → <code>db</code> / <code>shop_return</code>. The route does not change: route part 20 takes every result with toeditype <code>db</code>.</li>
+<li><b>Process the failed file again</b>: <span class="ui">Incoming</span> → select <code>return_20261020_0815.xml</code> → <span class="ui">Rereceive</span>, then <span class="ui">Run</span> → <span class="ui">Run user-indicated rereceives</span>:
+<pre><code class="language-text">2026.10.15 21:32:43 INFO      [bots.engine] Bots Report; type: rereceive, time: 2026-10-15 21:32:43, duration: 0:00:00.882932
+    1 files received/processed in run.
+    1 files without errors,
+    1 files send in run.</code></pre>
+<span class="ui">Incoming</span> now shows the file with messagetype <code>shopreturn</code>, and the line is returned:
+<pre><code class="language-text">req_no         line_seq  order_no        article_no  qty  line_status  shop_status  carrier  tracking_no    shipped_on  send_flag
+7700012345601  1         WS-261015-0001  ITEM-100    2    RETURNED     PAID         EXPR     TRK0012345678  2026-10-16  S
+7700012345601  2         WS-261015-0001  ITEM-200    1    CANCELLED    PAID                                             S
+7700012345602  1         WS-261015-0002  ITEM-300    3    BACKORDER    HOLD                                             S</code></pre></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>A new type needs four things: a mailbag rule, a grammar, a mapping and a translation. Existing documents are not affected, and the route stays the same as long as the result goes to a channel that a route part already serves.</p></div>
+
+<h3 id="int-xml-hub--variations">Variations</h3>
+<h4 id="int-xml-hub--mail">Mail the confirmation to the customer</h4>
+<p>In production <code>customer_mail_out</code> is a mail channel instead of a folder. Change it to:</p>
+<div class="table-wrap"><table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td><span class="ui">Type</span></td><td><code>smtpstarttls</code> (or <code>smtps</code>, <code>smtp</code>)</td></tr>
+<tr><td><span class="ui">Host</span> / <span class="ui">Port</span></td><td><code>mail.example.org</code> / <code>0</code> (587 for smtpstarttls)</td></tr>
+<tr><td><span class="ui">Username</span> / <span class="ui">Password</span></td><td><code>edi@mycompany.example</code> / <code>secret-example</code></td></tr>
+<tr><td><span class="ui">As body or attachment</span></td><td><code>In body of email</code>: the customer sees the page, not an attachment</td></tr>
+<tr><td><span class="ui">Filename</span></td><td><code>confirm_{botskey}.html</code> (used as attachment name when sent as attachment)</td></tr>
+</table></div>
+<p>The mail goes to <code>out.ta_info['tomail']</code> and comes from <code>out.ta_info['frommail']</code>, which the mapping <code>shoporders_to_html</code> sets; no partners are needed. For a subject, add <code>usersys/communicationscripts/customer_mail_out.py</code> (named as the channel):</p>
+<pre><code class="language-python">def subject(channeldict, ta, subjectstring, content):
+    return 'Your order ' + (ta.botskey or subjectstring) + ' at MyCompany'</code></pre>
+<p>Checked against a local test mail server (with Type <code>smtp</code>), the mail for one order had these headers, and the confirmation page as body:</p>
+<pre><code class="language-text">From: edi@mycompany.example
+To: ben@customer.example
+Subject: Your order WS-261016-0004 at MyCompany
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: base64</code></pre>
+<h4 id="int-xml-hub--more">More ideas</h4>
+<ul>
+<li><b>SFTP instead of folders.</b> Real web shops drop and pick up files on an SFTP server: make <code>shop_xml_in</code> and <code>shop_status_out</code> of type <code>sftp</code> on <code>sftp.example.net</code> (see <a href="#channel-sftp">SFTP channels</a>). Nothing else changes.</li>
+<li><b>Confirm receipt to the web shop.</b> Add a fourth link to the order chain (return <code>'to_receipt'</code> from <code>shoporders_to_html</code>) with an XML grammar for a receipt document and a route part with toeditype <code>xml</code>.</li>
+<li><b>Mail the operator about errors.</b> Set up <code>sendreportiferror</code> in <code>bots.ini</code> so that a file in error (part 9) is noticed the same day. See <a href="#bots-ini">bots.ini</a>.</li>
+<li><b>Different web shops.</b> When a second shop sends the same formats, read the shop id with <code>QUERIES</code> (<code>frompartner</code> from <code>MH_FROM__ID</code>) and give translations a <span class="ui">Frompartner</span> where the shops differ. See <a href="#translations">Translations</a>.</li>
+<li><b>Schedule it.</b> Run <code>bots-engine --new</code> every few minutes (see <a href="#scheduling">Scheduling runs</a>); the status route then reports warehouse changes within minutes.</li>
+<li><b>Test before every change.</b> Keep the sample files of this page and compare the outputs after each change (see <a href="#acceptance-testing">Acceptance testing</a>).</li>
+</ul>
+
+<h3 id="int-xml-hub--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>MessageError: Could not find right xml messagetype for mailbag.</code></td><td>No rule of <code>mailbagsearch</code> matches the file: a new document type, or a rule with a wrong path, tag or namespace.</td><td>Add or fix the rule (part 2, part 10); test the path with the tool of part 10. Then rereceive the file.</td></tr>
+<tr><td><code>MessageError: mismatched tag: line 15, column 6</code> (or <code>not well-formed (invalid token)</code>)</td><td>The file is not valid XML.</td><td>Ask the sender for a correct file. Bots cannot read any part of it.</td></tr>
+<tr><td><code>MessageError: junk after document element: line 11, column 0</code></td><td>The file holds more than one XML document one after the other. Also happens with your own outgoing files when a file channel writes several documents to the same file name.</td><td>Ask the sender for one document per file or one root around all. For your own files use a unique name, eg <code>{botskey}_*.xml</code>.</td></tr>
+<tr><td><code>MessageError: [F02]: Record "SHOPMSG-SHOPORDERS-SO_ORDER-SO_SHIPTO" field "SO_ADDRESS__ZIP" is mandatory.</code></td><td>A mandatory element or attribute is missing in the incoming file.</td><td>Ask for a correct file, or make the field <code>C</code> in the grammar if it really may be empty.</td></tr>
+<tr><td><code>MessageError: [F02]: Record "LINE" field "order_no" is mandatory.</code> (and more F02 lines) for one order only</td><td>In the mapping a <code>put()</code> had one value <code>None</code> (eg an order without note), so it wrote nothing at all.</td><td>Leave out empty values before <code>put()</code>, or put optional fields in their own <code>put()</code> (as <code>shoporders_to_csv</code> does).</td></tr>
+<tr><td><code>MappingFormatError: Section without "BOTSID": put(({'BOTSID': '{http://shop.example.com/ns/status}SHOPMSG', 'BOTSIDnr': '1'}, {}))</code> on the second message of a run</td><td>A dict in a module variable was passed to <code>put()</code>; Bots changed it during the first message.</td><td>Make new dicts for every <code>put()</code> (the helper <code>rec()</code> in part 7).</td></tr>
+<tr><td>The run does not end; the log stops after <code>Finished communication channel in: shop_xml_in</code> and the database grows</td><td>A chained translation for an alt is missing or inactive; Bots falls back to the translation without alt and the chain starts again.</td><td>Stop the engine; activate or add the translation. Add the alt check of <code>shoporders_to_csv</code> to the first mapping of a chain: it gives <code>ValueError: No translation for xml/shoporders with alt "to_mail".</code></td></tr>
+<tr><td><code>TranslationNotFoundError: Translation not found for editype "xml", messagetype "shopcancel", frompartner "", topartner "", alt "".</code></td><td>The mailbag found the type, but there is no active translation for it.</td><td>Add or activate the translation (part 6).</td></tr>
+<tr><td>Outgoing status XML has no <code>&lt;SS_SHIPDATE … /&gt;</code> although the mapping puts the date</td><td>To write attributes of a field element, the element itself must be a field in <code>recorddefs</code>.</td><td>Add <code>[NS + 'SS_SHIPDATE', 'C', 1, 'AN']</code> before its attribute fields.</td></tr>
+<tr><td>Every element of the status XML has a prefix <code>ns0:</code></td><td>No prefix registered for the namespace.</td><td>Set <code>'namespace_prefixes': [('', 'http://shop.example.com/ns/status')]</code> in the grammar (or your own prefix).</td></tr>
+<tr><td><code>Dependency failure: editype "templatehtml" requires python library "genshi".</code></td><td>Genshi is not installed in the Python of Bots.</td><td><code>pip install bots-ediint[templatehtml]</code>, or leave out the confirmation (translation <code>to_mail</code> and route part 30; let <code>shoporders_to_db</code> return nothing).</td></tr>
+<tr><td>A cancellation is in the table, but no status XML is made</td><td><code>shop_db_in</code> only reads rows with <code>send_flag = 'Y'</code>; or the mapping made no records and set <code>DONE</code>.</td><td>Check the row with <code>SELECT req_no, line_seq, line_status, send_flag FROM edi_order_lines</code>; only <code>CANCELLED</code>, <code>BACKORDER</code> and <code>SHIPPED</code> give output.</td></tr>
+<tr><td>Results stay in status <code>Stuck</code>; "files got stuck" in the report</td><td>No route part takes them: a toeditype filter does not match (eg a new result editype).</td><td>Add a route part with that toeditype, or a last part without filter.</td></tr>
+<tr><td><code>Channel "shop_db_out" is type "db", but no communicationscript exists.</code></td><td>The script file name differs from the channel name.</td><td>Name it <code>usersys/communicationscripts/shop_db_out.py</code>.</td></tr>
+</table></div>
+</section>

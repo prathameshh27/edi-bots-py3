@@ -71,6 +71,8 @@ class new:
         for each route (as in self.routestorun).
         a route can have multiple parts (seq)
         """
+        # the idta of the route; for user scripts, see get_minta4query_route()
+        self.minta4query_route = botslib._Transaction.processlist[-1]  # pylint: disable=protected-access
         # is there a user routescript?
         try:
             self.userscript, self.scriptname = botslib.botsimport('routescripts', route)
@@ -116,9 +118,9 @@ class new:
             botsglobal.logger.log(
                 LOG_LEVELS['DONE'], _('Finished route: %(idroute)s %(seq)s'), routedict)
         if not foundroute:
-            message = _('There is no (active) route "%(route)s".')
-            botsglobal.logger.critical(message, {'route': route})
-            botslib.sendbotserrorreport(message, {'route': route})
+            message = _('There is no (active) route "%(route)s".') % {'route': route}
+            botsglobal.logger.critical(message)
+            botslib.sendbotserrorreport(_('[Bots Error Report] unknown route'), message)
 
     @botslib.log_session
     def routepart(self, routedict):
@@ -131,6 +133,8 @@ class new:
          - at several points functions from a routescript are called - if function is in routescript
         """
         # pylint: disable=too-many-branches, too-many-statements
+        # the idta of the route-part; for user scripts, see get_minta4query_routepart()
+        self.minta4query_routepart = botslib._Transaction.processlist[-1]  # pylint: disable=protected-access
         # if routescript has function 'main': communication.run 'main' (and do nothing else)
         if botslib.tryrunscript(self.userscript, self.scriptname, 'main', routedict=routedict):
             # so: if function ' main' : communication.run only the routescript, nothing else.
@@ -301,11 +305,13 @@ class new:
                 botslib.set_asked_confirmrules(routedict, rootidta=rootidta)
                 # **zip outgoing
                 # for files in this route-part for this out-channel
+                # (only the files made in this route-part, as in bots 3: a file that is zipped in an earlier
+                # route-part to the same channel, or that is send again, is not zipped a 2nd time.)
                 if routedict['zip_outgoing'] == 1:
                     preprocess.postprocess(
                         routedict=routedict,
                         function=preprocess.botszip,
-                        rootidta=rootidta,
+                        rootidta=self.get_minta4query_routepart(),
                     )
 
             # actual communication: run outgoing channel (if not deferred)
@@ -360,6 +366,14 @@ class new:
         """get the first idta for queries etc in whole run."""
         return self.minta4query
 
+    def get_minta4query_route(self):
+        """get the first idta for queries etc in route. Not used by bots itself; for route scripts (as in bots 3)."""
+        return self.minta4query_route
+
+    def get_minta4query_routepart(self):
+        """get the first idta for queries etc in route-part. Not used by bots itself; for route scripts (as in bots 3)."""
+        return self.minta4query_routepart
+
 
 class crashrecovery(new):
     """a crashed run is rerun."""
@@ -397,7 +411,8 @@ class crashrecovery(new):
                 WHERE idta > %(rootofcrashedrun)s
                 AND statust = %(statust)s
                 AND status != %(status)s
-                AND child != 0""",
+                AND child != 0
+                ORDER BY idta""",
                 {'rootofcrashedrun': rootofcrashedrun.idta, 'status': PROCESS, 'statust': OK}):
             mergedidtatodelete.add(row["child"])
         for idta in mergedidtatodelete:
@@ -409,7 +424,8 @@ class crashrecovery(new):
                 WHERE idta > %(rootofcrashedrun)s
                 AND ( statust = %(statust1)s OR statust = %(statust2)s )
                 AND status != %(status)s
-                AND child = 0""", {
+                AND child = 0
+                ORDER BY idta""", {
                     'rootofcrashedrun': rootofcrashedrun.idta,
                     'status': PROCESS,
                     'statust1': OK,
@@ -423,6 +439,25 @@ class crashrecovery(new):
     def get_minta4query(self):
         """get the first idta for queries etc in whole run."""
         return self.minta4query_crash
+
+    def get_minta4query_route(self):
+        """
+        find out where route was started.
+        if not started in crashed run, value for recovery run will be found.
+        """
+        for row in botslib.query(
+                """SELECT MIN(idta) as route_idta
+                FROM ta
+                WHERE idta > %(rootidta_of_current_run)s
+                AND script = %(rootidta_of_current_run)s
+                AND idroute = %(idroute)s """,
+                {'rootidta_of_current_run': self.get_minta4query(), 'idroute': botslib.getrouteid()}):
+            return row["route_idta"]
+        return None
+
+    def get_minta4query_routepart(self):
+        """as seq is not logged, use start-point for whole route."""
+        return self.get_minta4query_route()
 
 
 class automaticretrycommunication(new):
@@ -456,7 +491,8 @@ class automaticretrycommunication(new):
                 FROM ta
                 WHERE idta > %(startidta)s
                 AND status = %(status)s
-                AND statust = %(statust)s """,
+                AND statust = %(statust)s
+                ORDER BY idta""",
                 {'statust': ERROR, 'status': EXTERNOUT, 'startidta': startidta}):
             do_retransmit = True
             ta_outgoing = botslib.OldTransaction(row["idta"])
@@ -499,7 +535,8 @@ class resend(new):
                 """SELECT idta,parent,numberofresends
                 FROM ta
                 WHERE retransmit = %(retransmit)s
-                AND status = %(status)s""",
+                AND status = %(status)s
+                ORDER BY idta""",
                 {'retransmit': True, 'status': EXTERNOUT}):
             do_retransmit = True
             # resend transaction
@@ -523,7 +560,7 @@ class resend(new):
             ta_resend = botslib.OldTransaction(row["parent"])
             ta_resend.synall()
             # pylint: disable=no-member
-            if ta_resend.rsrv2 == 1:
+            if ta_resend.rsrv2 == 1 or self.is_mail_made_by_bots3(ta_resend):
                 # mimefile...use parent
                 ta_resend2 = botslib.OldTransaction(ta_resend.parent)
                 # inject; status is DONE so this ta is not used further
@@ -541,6 +578,25 @@ class resend(new):
         if do_retransmit:
             return super().run()
         # no run
+        return False
+
+
+    @staticmethod
+    def is_mail_made_by_bots3(ta_resend):
+        """
+        Bots 3 did not mark the ta of an assembled mail (rsrv2). It is one if it was made from another
+        outgoing file (FILEOUT -> FILEOUT) for a channel that sends mail.
+        """
+        # pylint: disable=no-member
+        if not ta_resend.parent or not ta_resend.tochannel:
+            return False
+        for parent in botslib.query(
+                """SELECT status FROM ta WHERE idta=%(idta)s""", {'idta': ta_resend.parent}):
+            if parent["status"] != FILEOUT:
+                return False
+        for channel in botslib.query(
+                """SELECT type FROM channel WHERE idchannel=%(idchannel)s""", {'idchannel': ta_resend.tochannel}):
+            return channel["type"] in ('smtp', 'smtps', 'smtpstarttls', 'mimefile')
         return False
 
 
@@ -581,7 +637,7 @@ class rereceive(new):
             ta_org_EXTERNIN = botslib.OldTransaction(row["idta"])
             ta_new_EXTERNIN = ta_org_EXTERNIN.copyta(status=EXTERNIN, statust=DONE, parent=0)
             for row2 in botslib.query(
-                    """SELECT idta FROM ta WHERE parent = %(parent)s """,
+                    """SELECT idta FROM ta WHERE parent = %(parent)s ORDER BY idta""",
                     {"parent": row["idta"]}):
                 ta_org_FILEIN = botslib.OldTransaction(row2['idta'])
                 # ta_new_FILEIN

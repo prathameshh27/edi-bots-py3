@@ -1,0 +1,50 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "3.json",
+   3
+  ],
+  [
+   "4.json",
+   3
+  ],
+  [
+   "invoic01.edi",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "edifactinvoic2json/edifact/1.edi": "22e95b6e53aee696c56ad90448edee9e140eadc7a2ca534a532b34c18b312a69",
+  "edifactinvoic2json/json/1.json": "370a5082127cfbb14897e266a2a0a37c1897bb33a03fdbb4b40ce3be8209a914",
+  "edifactinvoic2json/json/2.json": "705e36ba930b3bdb3ea2ec25466908bc97a9cff76f5a1c77b745b80aa0c97b1d"
+ },
+ "plugin": "edifact2json_invoic_20130711",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 7201,
+  "lastdone": 3,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 3,
+  "processerrors": 0,
+  "send": 3,
+  "status": false
+ },
+ "routes": [
+  [
+   "edifactinvoic2json",
+   9999,
+   true,
+   false
+  ],
+  [
+   "jsoninvoic2edifact",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

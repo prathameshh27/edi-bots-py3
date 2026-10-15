@@ -1,0 +1,93 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "orders01.edi",
+   3
+  ],
+  [
+   "orders02.edi",
+   3
+  ],
+  [
+   "orders03.edi",
+   3
+  ],
+  [
+   "orders04.edi",
+   3
+  ],
+  [
+   "orders05.edi",
+   3
+  ],
+  [
+   "slsrpt01.edi",
+   3
+  ],
+  [
+   "slsrpt02.edi",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "demo_composite_route/csv_slsrpt/1.csv": "b5633e57633806229fcb88e1ca3a82e9ef9ad23c2c6683bafe5073d7a0a24e27",
+  "demo_composite_route/csv_slsrpt/2.csv": "b5633e57633806229fcb88e1ca3a82e9ef9ad23c2c6683bafe5073d7a0a24e27",
+  "demo_composite_route/fixed_orders/1.fix": "7dd29ed494a0323a51a008449cc9ae4f54a2ab6a0adb31362be103276855e0a7",
+  "demo_composite_route/fixed_orders/2.fix": "e8a920f6022a585f4a0b3a72d1991e67a5ed4b0d96f7cc719f83c81d3b872b45",
+  "demo_composite_route/print_orders/1.html": "313919123e7274fa88575726118b77f2feeec5e35e067d0532278796181117e3",
+  "demo_composite_route/print_orders/2.html": "09ac793b38ad75dcf35c56070481fe6ddc2cbe0b5b506a1d811378fd7dda44ed"
+ },
+ "plugin": "demo_composite_route_20121213",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 63750,
+  "lastdone": 7,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 7,
+  "processerrors": 0,
+  "send": 6,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound_edifact",
+   10,
+   true,
+   false
+  ],
+  [
+   "inbound_edifact",
+   20,
+   true,
+   false
+  ],
+  [
+   "inbound_edifact",
+   100,
+   true,
+   false
+  ],
+  [
+   "inbound_edifact",
+   1000,
+   true,
+   false
+  ],
+  [
+   "inbound_edifact",
+   1010,
+   true,
+   false
+  ],
+  [
+   "inbound_edifact",
+   1020,
+   true,
+   false
+  ]
+ ]
+}

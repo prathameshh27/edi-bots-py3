@@ -1,0 +1,125 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "0T0000000004.edi",
+   3
+  ],
+  [
+   "0T0000000015.edi",
+   3
+  ],
+  [
+   "T0000000001.edi",
+   3
+  ],
+  [
+   "T0000000002.edi",
+   3
+  ],
+  [
+   "desadv1923.xml",
+   3
+  ],
+  [
+   "desadvfull01.xml",
+   3
+  ],
+  [
+   "desadvtest01.xml",
+   3
+  ],
+  [
+   "desadvtest5-1.xml",
+   3
+  ],
+  [
+   "desadvtest5-2.xml",
+   3
+  ],
+  [
+   "desadvtest6-1.xml",
+   3
+  ],
+  [
+   "desadvtest6-2.xml",
+   3
+  ],
+  [
+   "invoicfull01.xml",
+   3
+  ],
+  [
+   "invoictest01.xml",
+   3
+  ],
+  [
+   "invoictest5-1.xml",
+   3
+  ],
+  [
+   "invoictest5-2.xml",
+   3
+  ],
+  [
+   "invoictest6-1.xml",
+   3
+  ],
+  [
+   "invoictest6-2.xml",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "edifact_xml/edifact/desadv1.edi": "ef5e85b1a0f2234547147358afa71bc5b859b2a6243661c819302a6df31cd63a",
+  "edifact_xml/edifact/desadv2.edi": "84d0405b44623eee09b0fa4cdd067a09bc5670d0db0fb105fb2b6a615c741144",
+  "edifact_xml/edifact/desadv3.edi": "8d85c03e9614f79228373c10ace232022da55ecb1fc154c90667bb0622ccbb93",
+  "edifact_xml/edifact/desadv4.edi": "ecb3b17dc7f91670a539b65d5910dde622e4c0a163382653ce4baa3a7dc8f992",
+  "edifact_xml/edifact/desadv5.edi": "03a247c8859c3d18e98400b65e23e5cdfa18861dce54d9c880e7a7f38bae73e7",
+  "edifact_xml/edifact/invoic1.edi": "3d72de8186be5dacfcfe625483fc4d92b3531811b7b3740bac7cebcf97b43b8a",
+  "edifact_xml/edifact/invoic2.edi": "27a78e652b9c08a6478bb50b4c0d173c0adae80ae9a5f26b128c6f648f20e46d",
+  "edifact_xml/edifact/invoic3.edi": "c48d5dac1387d5001bab372a4365721fcafc76054141ae41c3ea46fc6666d159",
+  "edifact_xml/edifact/invoic4.edi": "cd22bbaf8a578667d433422c8142b589128ecb7f1c6c450448b645768df62839",
+  "edifact_xml/edifact/invoic5.edi": "981d6f86ac24842b03f7578f31a589788a8c03b37904c4bfa4669d8f4219f87b",
+  "edifact_xml/xml/orders_1.xml": "5a82d953d3676109320760f7d16a0fca49e5b4a4481457f28345c4cf3347dad8",
+  "edifact_xml/xml/orders_2.xml": "af5ff99e393f91263afaeffc81513b533788972420adf371ff80281aba1a86cc",
+  "edifact_xml/xml/orders_3.xml": "72413fbecc435c0404fefc6516da8e5f252038187f70880d4ff690db8d6aaeac",
+  "edifact_xml/xml/orders_4.xml": "d7edbc2c805fdfe0da388486af69cae9c2c17010428af404c4818e43ffe8f884",
+  "edifact_xml/xml/orders_5.xml": "a8bf9c83670c0aa7d23acd8e70b0d7b423a2f454f3d3540b3d9f7cdfa4b2607d",
+  "edifact_xml/xml/orders_6.xml": "996ce7532211afa8a7c233a4e21326632e6885721d52306f37eee26a914553e7"
+ },
+ "plugin": "edifact2xml_ordersdesadvinvoice_20130123",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 38874,
+  "lastdone": 17,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 17,
+  "processerrors": 0,
+  "send": 16,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound_orders",
+   1,
+   true,
+   false
+  ],
+  [
+   "outbound_desadv",
+   1,
+   true,
+   false
+  ],
+  [
+   "outbound_invoice",
+   1,
+   true,
+   false
+  ]
+ ]
+}

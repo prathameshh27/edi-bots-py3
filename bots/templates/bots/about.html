@@ -7,11 +7,12 @@
 <table id="about">
   <tr>
     <td>
-    <h1>{% trans 'Bots Open Source EDI Translator' %}</h1>
+    <h1>{% if bots_about_title %}{{ bots_about_title }}{% else %}{% trans 'Bots Open Source EDI Translator' %}{% endif %}</h1>
     <br/>
-    <a target="_blank" href="https://bots.readthedocs.io">{% trans 'Bots documentation' %}</a><br/>
+    {% if bots_support_url %}<a target="_blank" rel="noopener" href="{{ bots_support_url }}">{{ bots_support_text }}</a><br/>
+    {% else %}<a target="_blank" href="https://bots.readthedocs.io">{% trans 'Bots documentation' %}</a><br/>
     <a target="_blank" href="https://bots-edi.org/">{% trans 'Bots project website' %}</a><br/>
-    <a target="_blank" href="https://www.edi-intelligentsia.com">{% trans 'Commercial support by edi-intelligentsia' %}</a><br/>
+    <a target="_blank" href="https://www.edi-intelligentsia.com">{% trans 'Commercial support by edi-intelligentsia' %}</a><br/>{% endif %}
     <br/>
     </td>
     <td></td>

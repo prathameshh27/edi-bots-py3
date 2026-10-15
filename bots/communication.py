@@ -16,21 +16,26 @@ import email.utils
 import ftplib
 import fnmatch
 import glob
+import inspect
+import io
 import json as simplejson
 import logging
 import os
 import posixpath
+import re
 import shutil
 import smtplib
 import socket
 import ssl
 import sys
 import time
+import urllib.parse
 import zipfile
 
 # bots-modules
 from . import botsglobal
 from . import botslib
+from . import dbconnect
 from .botsconfig import (
     OK,
     DONE,
@@ -99,8 +104,15 @@ def run(idchannel, command, idroute, rootidta=None):
             LOG_LEVELS['START'],
             _('Start communication channel %(inorout)s: %(idchannel)s (%(type)s)'), channeldict
         )
-        # for acceptance testing bots has an option to turn of external communication in channels
-        if botsglobal.ini.getboolean('acceptance', 'runacceptancetest', False):
+        # for acceptance testing bots has an option to turn of external communication in channels.
+        # bots.ini [settings] channels_use_testpath = True does only that (for a test environment): every channel
+        # uses its testpath; a channel that would connect to another machine and has no testpath is not run.
+        local_only = botsglobal.ini.getboolean('settings', 'channels_use_testpath', False)
+        if local_only and not channeldict['testpath'] and channeldict['type'] not in ['file', 'mimefile', 'trash']:
+            raise CommunicationError(
+                _('Channel "%(idchannel)s" (type %(type)s) is not run: bots.ini [settings] channels_use_testpath is '
+                  'set and the channel has no testpath.'), channeldict)
+        if local_only or botsglobal.ini.getboolean('acceptance', 'runacceptancetest', False):
             # override values in channels for acceptance testing.
             # testpath is used to 'trigger' this: if testpath has value, use acceptance.
             if channeldict['testpath']:
@@ -207,6 +219,35 @@ class _comsession:
         self.listoftamarkedfordelete = None
         self.maxsecondsperchannel = None
         self.debug = channeldict.get('debug')
+
+    def tls_context(self):
+        """
+        ssl context for the connection of this channel (pop3s, imap4s, smtps, smtpstarttls, ftps, ftpis).
+        - 'verify_cert' (default: on): certificate of the server must be valid, for the host of the channel,
+          and from a known CA: the CA's of the system, or 'cafile' if that is set.
+          Off: any certificate is accepted (as bots 3 did).
+        - 'certfile' with 'keyfile': certificate the client identifies itself with.
+        - 'certfile' without 'keyfile': as 'cafile' (as before 'cafile' existed).
+        """
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        certfile = self.channeldict.get('certfile')
+        keyfile = self.channeldict.get('keyfile')
+        cafile = self.channeldict.get('cafile')
+        if certfile and keyfile:
+            context.load_cert_chain(certfile=botslib.join(certfile), keyfile=botslib.join(keyfile))
+        elif certfile and not cafile:
+            cafile = certfile
+        if cafile:
+            context.load_verify_locations(botslib.join(cafile))
+        if not self.verify_certificate():
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        return context
+
+    def verify_certificate(self):
+        """True: certificate of server is verified. Not set (eg channel made in a script): verify."""
+        verify = self.channeldict.get('verify_cert')
+        return True if verify is None else bool(verify)
 
     def stderr2log(self):
         """Catch stdout and stderr to botsglobal.logger"""
@@ -393,7 +434,8 @@ class _comsession:
                 WHERE idta>%(rootidta)s
                 AND status=%(status)s
                 AND statust=%(statust)s
-                AND {channel}=%(idchannel)s""",
+                AND {channel}=%(idchannel)s
+                ORDER BY idta""",
                 {
                     'idchannel': self.channeldict['idchannel'],
                     'status': status,
@@ -500,8 +542,11 @@ class _comsession:
                 charset = row["charset"]
 
                 if row["editype"] == "email-confirmation" \
-                        or self.command == "automaticretrycommunication":
+                        or self.command == "automaticretrycommunication" \
+                        or row["contenttype"] == "message/rfc822":
                     # outgoing MDN: message is already assembled
+                    # a mail that is send again (eg resend of a mail that was send in an automatic retry):
+                    # the file is the mail as assembled before; do not put it in another mail.
                     outfilename = row["filename"]
                 else:
                     # assemble message: headers and payload.
@@ -610,14 +655,17 @@ class _comsession:
                     filename_mask = self.channeldict['filename'] or '*'
                     attachmentfilename = self.filename_formatter(filename_mask, ta_to)
 
+                    # channel field 'sendmdn' is in the interface: 'as body or as attachment'
+                    as_body_or_attachment = self.channeldict['sendmdn'] or ''
+
                     # set multipart message ?
                     filemessage = message
-                    if 'multipart' in self.channeldict['sendmdn']:
+                    if 'multipart' in as_body_or_attachment:
                         message.add_header('Content-Type', 'multipart/mixed')
                         filemessage = email.message.Message()
 
                     # is message send as body or attachment ?
-                    if attachmentfilename and 'body' not in self.channeldict['sendmdn']:
+                    if attachmentfilename and 'body' not in as_body_or_attachment:
                         # there is an field in channel for this:
                         #    'sendmdn' (in interface this is called: 'as body or as attachment')
                         # another option is to use user scripting (set attachmentfilename - or not)
@@ -629,7 +677,9 @@ class _comsession:
                         #     if 'As body or attachment' is 'body' or if there is not attachmentfilename
                         # attachmentfilename can be set to None or '' via user exit 'filename'
 
-                        if 'attach' in self.channeldict['sendmdn']:
+                        # not set (default) is: as attachment, like bots 3.x.
+                        # Only value 'multipart' is: a part without Content-Disposition.
+                        if not as_body_or_attachment or 'attach' in as_body_or_attachment:
                             filemessage.add_header(
                                 'Content-Disposition', 'attachment', filename=attachmentfilename
                             )
@@ -646,10 +696,16 @@ class _comsession:
                     # do not use charset; this lead to unwanted encodings...bots always uses base64
                     filemessage.set_payload(content)
 
+                    raw_payload = None
                     if self.channeldict['askmdn'] == 'never':
                         # channeldict['askmdn'] is the Mime encoding
                         # no encoding; but the Content-Transfer-Encoding is set to 7-bit or 8-bt
                         email.encoders.encode_7or8bit(filemessage)
+                        # the content is written as it is (as in bots 3). Writing a mail changes every line end
+                        # in the content to CRLF: so the mail is written with a mark, the mark is replaced
+                        # by the content.
+                        raw_payload = f'=bots-content-of-{ta_to.idta}-comes-here='
+                        filemessage.set_payload(raw_payload)
                     elif self.channeldict['askmdn'] == 'ascii' and charset == 'us-ascii':
                         # do nothing: ascii is default encoding
                         pass
@@ -658,7 +714,7 @@ class _comsession:
                         # and charset!='us-ascii'): use base64
                         email.encoders.encode_base64(filemessage)
 
-                    if 'multipart' in self.channeldict['sendmdn']:
+                    if 'multipart' in as_body_or_attachment:
                         message.attach(filemessage)
 
                     # set/change email header in user scripting
@@ -682,11 +738,18 @@ class _comsession:
                     # *******write email to file***************************
                     outfilename = str(ta_to.idta)
                     with botslib.opendata_bin(outfilename, 'wb') as outfile:
+                        mailfile = io.BytesIO() if raw_payload else outfile
                         generator = email.generator.BytesGenerator(
-                            outfile, mangle_from_=False, maxheaderlen=78,
+                            mailfile, mangle_from_=False, maxheaderlen=78,
                             policy=email.policy.SMTP,
                         )
                         generator.flatten(message, unixfrom=False)
+                        if raw_payload:
+                            mail = mailfile.getvalue()
+                            if mail.count(raw_payload.encode('ascii')) != 1:
+                                raise CommunicationOutError(
+                                    _('Error in writing mail without mime-encoding (user exit "headers"?).'))
+                            outfile.write(mail.replace(raw_payload.encode('ascii'), content))
             except Exception:
                 txt = txtexc()
                 ta_to.update(statust=ERROR, errortext=txt)
@@ -919,6 +982,7 @@ class _comsession:
                    AND status=%(status)s
                    AND statust=%(statust)s
                    AND fromchannel=%(fromchannel)s
+                   ORDER BY idta
                 """,
                 {
                     'status': FILEIN,
@@ -937,8 +1001,10 @@ class _comsession:
                 # read & parse email
                 ta_from = botslib.OldTransaction(row["idta"])
                 with botslib.opendata_bin(row["filename"], "rb") as infile:
-                    # read and parse mail
-                    msg = email.message_from_binary_file(infile)
+                    # read and parse mail.
+                    # Parse from bytes, not from the file object: parsing a file translates CRLF to LF
+                    # (universal newlines), which changes the content of text/8bit attachments.
+                    msg = email.message_from_bytes(infile.read())
 
                 # ******get information from email (sender, receiver etc)*************************
                 reference = self.checkheaderforcharset(msg['message-id']) or ''
@@ -1053,11 +1119,13 @@ class _comsession:
     def checkheaderforcharset(org_header):
         """correct handling of charset for email headers that are saved in database."""
         # for subjects with non-ascii content special notation exists in MIME-standard
-        header, encoding = email.header.decode_header(org_header)[0]
+        if not org_header:
+            # header is not in the email (eg no Subject, no Message-ID): not an error
+            return ''
         try:
-            if encoding is not None:
-                # decode (to unicode)
-                return header.decode(encoding)
+            # a header can be a mix of plain text and encoded words ('RE: =?utf-8?q?caf=C3=A9?= order');
+            # decode all parts (to unicode).
+            header = str(email.header.make_header(email.header.decode_header(str(org_header))))
             # test if valid; use case: spam...
             # need to test because database-storage will give errors otherwise.
             header.encode('utf8')
@@ -1084,14 +1152,20 @@ class _comsession:
                     'mail': mailaddress_lower
                 }):
             return row["idpartner"]
-        # if not found, check in partner-tabel (is less specific).
-        for row in botslib.query(
-                """SELECT idpartner
-                   FROM partner
-                   WHERE active=%(active)s
-                   AND LOWER(mail) = %(mail)s """,
-                {'active': True, 'mail': mailaddress_lower}):
-            return row["idpartner"]
+        # if not found, check in partner-tabel (is less specific): first the address(es) of the partners,
+        # than the addresses in their CC field (as bots 3.2.0 does).
+        # LIKE only preselects; an address has to be equal to one of the addresses in the field.
+        candidates = list(botslib.query(
+            """SELECT idpartner,mail,cc
+               FROM partner
+               WHERE active=%(active)s
+               AND ( LOWER(mail) LIKE %(maillike)s OR LOWER(cc) LIKE %(maillike)s )
+               ORDER BY idpartner""",
+            {'active': True, 'maillike': '%' + mailaddress_lower + '%'}))
+        for field in ('mail', 'cc'):
+            for row in candidates:
+                if mailaddress_lower in re.split(r'[,;\s]+', (row[field] or '').lower()):
+                    return row["idpartner"]
         # indicate email address is unknown
         return None
 
@@ -1508,15 +1582,7 @@ class pop3s(pop3):
     def connect(self):
         """Init pop3 session"""
         self._connect()
-        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
+        context = self.tls_context()
         self.session = self.poplib.POP3_SSL(
             host=self.channeldict['host'],
             port=int(self.channeldict['port']),
@@ -1645,15 +1711,7 @@ class imap4s(imap4):
 
         self._connect()
         imaplib.Debug = self.debug
-        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
+        context = self.tls_context()
         self.session = imaplib.IMAP4_SSL(
             host=self.channeldict['host'],
             port=int(self.channeldict['port']),
@@ -1717,6 +1775,7 @@ class smtp(_comsession):
                    AND status=%(status)s
                    AND statust=%(statust)s
                    AND tochannel=%(tochannel)s
+                   ORDER BY idta
                 """,
                 {
                     'status': FILEOUT,
@@ -1770,15 +1829,7 @@ class smtps(smtp):
     def connect(self):
         """Init smpts connection"""
         self._connect()
-        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
+        context = self.tls_context()
         self.session = smtplib.SMTP_SSL(
             host=self.channeldict['host'],
             port=int(self.channeldict['port']),
@@ -1800,15 +1851,7 @@ class smtpstarttls(smtp):
         # if used, gives information about session (on screen), for debugging smtp
         self.session.set_debuglevel(self.debug)
         self.session.ehlo()
-        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
+        context = self.tls_context()
         self.session.starttls(context=context)
         self.session.ehlo()
         self.login()
@@ -1865,6 +1908,43 @@ class ftp(_comsession):
                 # set right path on ftp-server
                 self.session.cwd(self.dirpath)
 
+    def retr_ascii(self, fromfilename, tofile):
+        """
+        Receive a file in ASCII mode (ftp 'TYPE A'); tofile is a binary file.
+        The bytes are written as received, without decoding: any character set can be received.
+        As in bots 3: line end CRLF is written as LF, the last line gets a line end, a CR on its own is kept.
+        """
+        self.session.voidcmd('TYPE A')
+        conn = self.session.transfercmd('RETR ' + fromfilename)
+        try:
+            pending = last = b''
+            while True:
+                data = conn.recv(8192)
+                if not data:
+                    break
+                data = pending + data
+                pending = b''
+                if data.endswith(b'\r'):
+                    # CR LF can be in 2 blocks
+                    data, pending = data[:-1], b'\r'
+                data = data.replace(b'\r\n', b'\n')
+                tofile.write(data)
+                last = data[-1:] or last
+            tofile.write(pending)
+            if (pending or last) and (pending or last) != b'\n':
+                tofile.write(b'\n')
+            end_tls_of_data_connection(conn)
+        except Exception:
+            conn.close()
+            try:
+                # read the answer of the server to this transfer: next command gets its own answer
+                self.session.voidresp()
+            except ftplib.all_errors:
+                pass
+            raise
+        conn.close()
+        return self.session.voidresp()
+
     @botslib.log_session
     def incommunicate(self):
         """
@@ -1872,11 +1952,6 @@ class ftp(_comsession):
         each to be imported file is transaction.
         each imported file is transaction.
         """
-
-        def writeline_callback(line):
-            """inline function to write to file for non-binary ftp"""
-            tofile.write(line + '\n')
-
         startdatetime = datetime.datetime.now()
         files = []
         try:
@@ -1902,19 +1977,18 @@ class ftp(_comsession):
                 remove_ta = True
                 tofilename = str(ta_to.idta)
                 try:
+                    tofile = botslib.opendata_bin(tofilename, 'wb')
                     if self.channeldict['ftpbinary']:
-                        tofile = botslib.opendata_bin(tofilename, 'wb')
                         self.session.retrbinary('RETR ' + fromfilename, tofile.write)
                     else:
-                        # python3 gives back a 'string'.
-                        tofile = botslib.opendata(tofilename, "w", charset="latin-1")
-                        self.session.retrlines('RETR ' + fromfilename, writeline_callback)
+                        self.retr_ascii(fromfilename, tofile)
                 except ftplib.error_perm as exc:
                     if str(exc)[:3] in ["550"]:
                         # we are trying to download a directory...
                         raise BotsError("To be catched") from exc
                     raise
-                tofile.close()
+                finally:
+                    tofile.close()
                 filesize = os.path.getsize(botslib.abspathdata(tofilename))
                 if not filesize:
                     raise BotsError("To be catched; directory (or empty file)")
@@ -2033,16 +2107,8 @@ class ftps(ftp):
     def connect(self):
         """Init ftps session"""
         self._connect()
-        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
-        self.session = ftplib.FTP_TLS(context=context)
+        context = self.tls_context()
+        self.session = Ftp_tls(context=context)
         # set debug level (0=no, 1=medium, 2=full debug)
         self.session.set_debuglevel(min(self.debug, 2))
         # active or passive ftp
@@ -2061,8 +2127,58 @@ class ftps(ftp):
         self.set_cwd()
 
 
+def end_tls_of_data_connection(conn, wait=2):
+    """End TLS on a ftp data connection after a transfer: send 'close notify', wait shortly for the one of the
+    server. Not every server sends it (after an upload); ftplib waits for it for the full time-out and than
+    fails, with the answers of the server out of step for every next file. The file itself has arrived."""
+    if isinstance(conn, ssl.SSLSocket):
+        timeout = conn.gettimeout()
+        conn.settimeout(wait if timeout is None else min(timeout, wait))
+        try:
+            conn.unwrap()
+        except (OSError, ValueError):       # also: time-out, ssl.SSLError
+            pass
+
+
+class Ftp_tls(ftplib.FTP_TLS):
+    """ftplib.FTP_TLS; sending a file does not depend on the server closing TLS on the data connection
+    (see end_tls_of_data_connection). The two methods are as in ftplib (python 3.13) but for that."""
+
+    def storbinary(self, cmd, fp, blocksize=8192, callback=None, rest=None):
+        self.voidcmd('TYPE I')
+        with self.transfercmd(cmd, rest) as conn:
+            while True:
+                buf = fp.read(blocksize)
+                if not buf:
+                    break
+                conn.sendall(buf)
+                if callback:
+                    callback(buf)
+            end_tls_of_data_connection(conn)
+        return self.voidresp()
+
+    def storlines(self, cmd, fp, callback=None):
+        self.voidcmd('TYPE A')
+        with self.transfercmd(cmd) as conn:
+            while True:
+                buf = fp.readline(self.maxline + 1)
+                if len(buf) > self.maxline:
+                    raise ftplib.Error('got more than %d bytes' % self.maxline)
+                if not buf:
+                    break
+                if buf[-2:] != b'\r\n':
+                    if buf[-1] in b'\r\n':
+                        buf = buf[:-1]
+                    buf = buf + b'\r\n'
+                conn.sendall(buf)
+                if callback:
+                    callback(buf)
+            end_tls_of_data_connection(conn)
+        return self.voidresp()
+
+
 # sub classing of ftplib for ftpis
-class Ftp_tls_implicit(ftplib.FTP_TLS):
+class Ftp_tls_implicit(Ftp_tls):
     """
     FTPS implicit is not directly supported by python; python>=2.7 supports only ftps explicit.
     So class ftplib.FTP_TLS is sub-classed here, with the needed modifications.
@@ -2088,7 +2204,7 @@ class Ftp_tls_implicit(ftplib.FTP_TLS):
             source_address=self.source_address,
         )
         self.af = self.sock.family
-        self.sock = self.context.wrap_socket(self.sock)
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
         self.file = self.sock.makefile("r", encoding=self.encoding)
         self.welcome = self.getresp()
         return self.welcome
@@ -2119,44 +2235,30 @@ class ftpis(ftp):
     Tested with Inovis and VSFTPd.
     Python library FTP_TLS uses ssl_version = ssl.PROTOCOL_TLSv1
     Inovis seems to need PROTOCOL_SSLv3
-    This is 'solved' by using 'parameters' in the channel.
-    ~ ssl.PROTOCOL_SSLv2      = 0 (removed py >= 3.10)
-    ~ ssl.PROTOCOL_SSLv3      = 1 (removed py >= 3.10)
-    ~ ssl.PROTOCOL_SSLv23     = 2
-    ~ ssl.PROTOCOL_TLS        = 2
-    ~ ssl.PROTOCOL_TLSv1      = 3
-    ~ ssl.PROTOCOL_TLSv1_1    = 4
-    ~ ssl.PROTOCOL_TLSv1_2    = 5
-    ~ ssl.PROTOCOL_TLS_CLIENT = 16
-    ~ ssl.PROTOCOL_TLS_SERVER = 17
+    The TLS version is negotiated with the server.
+    'parameters' of the channel can be used to demand one version: 5 = TLS 1.2 (the number is
+    ssl.PROTOCOL_TLSv1_2, as in bots 3). Empty, 2 or 16: negotiate (default).
+    Other values of bots 3 (0, 1, 3, 4: SSL 2, SSL 3, TLS 1.0, TLS 1.1) are no longer possible in
+    python / openssl: a warning is given and the version is negotiated.
     """
-    ssl_versions = [2, 3, 4, 5, 16, 17]
+    ssl_versions = [2, 5, 16]
 
     def connect(self):
         """Init ftpis session"""
         self._connect()
-        ssl_version = 2
-        if self.channeldict["parameters"]:
-            try:
-                ssl_version = int(self.channeldict["parameters"])
-                # Verify if ssl_version is valid
-                if ssl_version not in self.ssl_versions:
-                    raise ValueError(ssl_version)
-            except ValueError:
-                botsglobal.logger.warning(_("Invalid ssl_version set in channel parameter: '%s'"), ssl_version)
-                botsglobal.logger.warning(_("Valid ssl_version values: %s"), self.ssl_versions)
-                ssl_version = 2
-        context = ssl.SSLContext(ssl_version)
+        context = self.tls_context()
+        parameters = (self.channeldict["parameters"] or '').strip()
+        if parameters:
+            if parameters == '5':
+                context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
+            elif parameters not in ('2', '16'):
+                botsglobal.logger.warning(
+                    _("ssl_version '%(value)s' in channel parameter can not be used; valid values: %(valid)s."
+                      " The version is negotiated with the server."),
+                    {'value': parameters, 'valid': self.ssl_versions})
         if self.debug:
-            botsglobal.logger.log(LOG_LEVELS["COM"], "SSLContext protocol: %s", context.protocol)
-        if self.channeldict.get("keyfile") and self.channeldict.get("certfile"):
-            context.load_cert_chain(
-                keyfile=self.channeldict["keyfile"],
-                certfile=self.channeldict["certfile"],
-            )
-        elif self.channeldict.get("certfile"):
-            # self-signed server certificate
-            context.load_verify_locations(self.channeldict["certfile"])
+            botsglobal.logger.log(
+                LOG_LEVELS["COM"], "TLS versions: %s - %s", context.minimum_version, context.maximum_version)
         self.session = Ftp_tls_implicit(context=context)
         # set debug level (0=no, 1=medium, 2=full debug)
         self.session.set_debuglevel(min(self.debug, 2))
@@ -2171,6 +2273,50 @@ class ftpis(ftp):
         )
         self.session.prot_p()
         self.set_cwd()
+
+
+def botslib_version_tuple(version):
+    """'3.10.1' -> (3, 10, 1); for comparing versions"""
+    parts = []
+    for part in str(version).split('.'):
+        # leading digits: '0rc1' -> 0
+        digits = part[:len(part) - len(part.lstrip('0123456789'))]
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def load_private_key(filename, passphrase=None, keytype=None):
+    """
+    Read a private key for sftp. The type of key is found by trying the types paramiko knows
+    (RSA, ECDSA, Ed25519; DSA if paramiko still has it); keytype ('RSA', 'DSA', ...) is tried first.
+    """
+    import paramiko  # pylint: disable=import-outside-toplevel
+    names = ['RSAKey', 'ECDSAKey', 'Ed25519Key', 'DSSKey']
+    first = {'RSA': 'RSAKey', 'DSA': 'DSSKey', 'DSS': 'DSSKey', 'ECDSA': 'ECDSAKey',
+             'ED25519': 'Ed25519Key'}.get(str(keytype or '').upper())
+    if first:
+        names.remove(first)
+        names.insert(0, first)
+    errors = []
+    for name in names:
+        keyclass = getattr(paramiko, name, None)
+        if keyclass is None:
+            # eg DSA: removed in paramiko 4
+            errors.append(f'{name}: not in this version of paramiko')
+            continue
+        try:
+            return keyclass.from_private_key_file(filename=filename, password=passphrase or None)
+        except paramiko.PasswordRequiredException as exc:
+            raise CommunicationError(
+                _('sftp: private key "%(filename)s" is encrypted, but there is no passphrase.'),
+                {'filename': filename}) from exc
+        except (paramiko.SSHException, ValueError, TypeError, IndexError, UnicodeError) as exc:
+            errors.append(f'{name}: {exc}')
+    raise CommunicationError(
+        _('sftp: can not read private key "%(filename)s" (wrong passphrase?): %(errors)s'),
+        {'filename': filename, 'errors': '; '.join(errors)})
 
 
 class sftp(_comsession):
@@ -2196,7 +2342,7 @@ class sftp(_comsession):
                     'Dependency failure: communicationtype "sftp"'
                     ' requires python library "paramiko".'
                 )) from exc
-        if paramiko.__version__ < '2.0':
+        if botslib_version_tuple(paramiko.__version__) < (2, 0):
             raise ImportError(
                 'Dependency failure: communicationtype "sftp" requires python library'
                 f' "paramiko" version 2.0 or higher (version {paramiko.__version__} installed)')
@@ -2253,17 +2399,10 @@ class sftp(_comsession):
                 "privatekey",
                 channeldict=self.channeldict,
             )
-            if pkeytype == 'RSA':
-                pkey = paramiko.RSAKey.from_private_key_file(
-                    filename=privatekeyfile, password=passphrase)
-            else:
-                pkey = paramiko.DSSKey.from_private_key_file(
-                    filename=privatekeyfile, password=passphrase)
+            pkey = load_private_key(privatekeyfile, passphrase, pkeytype)
         elif self.channeldict['keyfile']:
-            # keyfile is indicated in channel.
-            # for now: always RSAKey.
-            pkey = paramiko.RSAKey.from_private_key_file(
-                filename=self.channeldict['keyfile'], password=secret)
+            # keyfile is indicated in channel; any type of key paramiko knows (RSA, ECDSA, Ed25519).
+            pkey = load_private_key(botslib.join(self.channeldict['keyfile']), secret)
             # if keyfile, secret is used as passphrase.
             # So clear secret for login (assuming: if keyfile, no password is used)
             secret = None
@@ -2276,6 +2415,14 @@ class sftp(_comsession):
                 parameters = simplejson.loads(self.channeldict["parameters"])
             except simplejson.decoder.JSONDecodeError:
                 botsglobal.logger.error(_("Invalid sftp channel parameters, must be a valid json format."))
+        if not isinstance(parameters, dict):
+            parameters = {}
+        # 'parameters' is also used for user scripting: pass only what paramiko knows
+        known = inspect.signature(paramiko.Transport.__init__).parameters
+        ignored = sorted(key for key in parameters if key not in known)
+        if ignored:
+            botsglobal.logger.debug('sftp channel parameters not used for the connection: %s', ignored)
+        parameters = dict((key, value) for key, value in parameters.items() if key in known)
         # connect and use paramiko Transport to negotiate SSH2 across the connection
         self.transport = paramiko.Transport((hostname, port), **parameters)
         self.transport.connect(
@@ -2364,6 +2511,17 @@ class sftp(_comsession):
                 break
 
     @botslib.log_session
+    def open_mode(self, tofilename, mode):
+        """Mode to open a file on the server with. Append ('a') is only needed when the file is there: a new
+        file is opened with 'w'. To append the library asks the server for the size of the file; not every
+        server gives a size for a file it has just made, and than nothing is written (TypeError, file of 0 bytes)."""
+        if mode == 'a':
+            try:
+                self.session.stat(tofilename)
+            except IOError:
+                return 'w'
+        return mode
+
     def outcommunicate(self):
         """
         do ftp: send files. To be used via receive-dispatcher.
@@ -2399,7 +2557,7 @@ class sftp(_comsession):
                 tofilename = self.filename_formatter(filename_mask, ta_from)
                 with botslib.opendata_bin(row["filename"], "rb") as fromfile:
                     # SSH treats all files as binary. paramiko doc says: b-flag is ignored
-                    with self.session.open(tofilename, mode) as tofile:
+                    with self.session.open(tofilename, self.open_mode(tofilename, mode)) as tofile:
                         tofile.write(fromfile.read())
                 # Rename filename after writing file.
                 # Function: safe file writing: do not want another process
@@ -2552,16 +2710,20 @@ class xmlrpc(_comsession):
 class db(_comsession):
     """
     communicate with a database; directly read or write from a database.
-    the user HAS to provide a userscript file in usersys/communicationscripts
-    that does the actual import/export using **some** python database library.
-    the userscript file should contain:
-     - connect
-     - (for incoming) incommunicate
-     - (for outgoing) outcommunicate
-     - disconnect
-    Other parameters are passed, use them for your own convenience.
+    the user HAS to provide a userscript file in usersys/communicationscripts with
+     - (for incoming) incommunicate(channeldict, dbconnection): returns what is read
+     - (for outgoing) outcommunicate(channeldict, dbconnection, db_object): writes it
+    The connection:
+     - field 'Database' of the channel is set (MySQL/MariaDB, PostgreSQL, SQLite, SQL Server): bots connects,
+       with host, port, username, secret; database from field path (SQLite: the file) or else filename; driver
+       options from field parameters (eg sslmode=require, or TrustServerCertificate=yes). Bots commits when
+       incommunicate/outcommunicate end without error, rolls back otherwise, and closes the connection.
+       The connection is the same for every database (see dbconnect): %(name)s parameters, rows as dicts.
+     - or the userscript has connect(channeldict) and disconnect(channeldict, dbconnection), as in bots 3: these
+       are used, also when the field is set.
     Bots 'pickles' the results returned from the userscript (and unpickles for the translation).
     """
+    own_connection = False
 
     def connect(self):
         if self.userscript is None:
@@ -2570,13 +2732,14 @@ class db(_comsession):
                 {'idchannel': self.channeldict['idchannel']},
             )
         # check functions bots assumes to be present in userscript:
-        if not hasattr(self.userscript, 'connect'):
+        self.own_connection = not hasattr(self.userscript, 'connect')
+        if self.own_connection and not self.channeldict.get('dbengine'):
             raise ScriptImportError(
                 _(
                     'No function "connect" in imported communicationscript'
-                    ' "%(communicationscript)s".'
+                    ' "%(communicationscript)s", and no database set in channel "%(idchannel)s".'
                 ),
-                {'communicationscript': self.scriptname},
+                {'communicationscript': self.scriptname, 'idchannel': self.channeldict['idchannel']},
             )
         if self.channeldict['inorout'] == 'in' and not hasattr(self.userscript, 'incommunicate'):
             raise ScriptImportError(
@@ -2593,7 +2756,7 @@ class db(_comsession):
                     ' "%(communicationscript)s".'),
                 {'communicationscript': self.scriptname},
             )
-        if not hasattr(self.userscript, 'disconnect'):
+        if not self.own_connection and not hasattr(self.userscript, 'disconnect'):
             raise ScriptImportError(
                 _(
                     'No function "disconnect" in imported communicationscript'
@@ -2601,10 +2764,25 @@ class db(_comsession):
                 ),
                 {'communicationscript': self.scriptname},
             )
+        if self.own_connection:
+            self.dbconnection = dbconnect.connect_channel(self.channeldict)
+        else:
+            self.dbconnection = botslib.runscript(
+                self.userscript, self.scriptname, 'connect', channeldict=self.channeldict
+            )
 
-        self.dbconnection = botslib.runscript(
-            self.userscript, self.scriptname, 'connect', channeldict=self.channeldict
-        )
+    def run_script(self, function, **kwargs):
+        """run incommunicate/outcommunicate; with the connection of bots: commit, or rollback on an error"""
+        try:
+            result = botslib.runscript(self.userscript, self.scriptname, function, channeldict=self.channeldict,
+                                       dbconnection=self.dbconnection, **kwargs)
+        except Exception:
+            if self.own_connection:
+                self.dbconnection.rollback()
+            raise
+        if self.own_connection:
+            self.dbconnection.commit()
+        return result
 
     @botslib.log_session
     def incommunicate(self):
@@ -2620,13 +2798,7 @@ class db(_comsession):
         So if you want all information from userscript to be passed as one edi message:
             pass as dict, eg {'data': <list of queries>}
         """
-        db_objects = botslib.runscript(
-            self.userscript,
-            self.scriptname,
-            'incommunicate',
-            channeldict=self.channeldict,
-            dbconnection=self.dbconnection,
-        )
+        db_objects = self.run_script('incommunicate')
         if not db_objects:
             # there should be a useful db_objects; if not just return (do nothing)
             return
@@ -2688,14 +2860,7 @@ class db(_comsession):
                 ta_from = botslib.OldTransaction(row["idta"])
                 ta_to = ta_from.copyta(status=EXTERNOUT)
                 db_object = botslib.readdata_pickled(filename=row["filename"])
-                botslib.runscript(
-                    self.userscript,
-                    self.scriptname,
-                    'outcommunicate',
-                    channeldict=self.channeldict,
-                    dbconnection=self.dbconnection,
-                    db_object=db_object,
-                )
+                self.run_script('outcommunicate', db_object=db_object)
             except Exception:
                 txt = txtexc()
                 if ta_to:
@@ -2717,6 +2882,10 @@ class db(_comsession):
                 ta_from.update(statust=DONE)
 
     def disconnect(self):
+        if self.own_connection:
+            if self.dbconnection is not None:
+                self.dbconnection.close()
+            return
         botslib.runscript(
             self.userscript,
             self.scriptname,
@@ -2958,7 +3127,7 @@ class trash(_comsession):
         """outcommunicate files to 'nothing' (trash it)."""
         # select the db-ta's for this channel
         for row in botslib.query(
-                """SELECT idta
+                """SELECT idta, numberofresends
                    FROM ta
                    WHERE idta>%(rootidta)s
                    AND status=%(status)s
@@ -2973,8 +3142,12 @@ class trash(_comsession):
                     'statust': OK,
                 }):
             try:
-                # for each db-ta:
+                # for each db-ta: register the file as send (EXTERNOUT), as bots 3.x did;
+                # reports count the file as handled and the trace of the file is complete.
                 ta_from = botslib.OldTransaction(row["idta"])
+                ta_to = ta_from.copyta(status=EXTERNOUT)
+                ta_to.update(
+                    statust=DONE, filename='', numberofresends=(row["numberofresends"] or 0) + 1)
                 ta_from.update(statust=DONE)
             except Exception:
                 txt = txtexc()
@@ -3011,6 +3184,12 @@ class http(_comsession):
             ) from exc
         if self.channeldict['username'] and self.channeldict['secret']:
             self.auth = (self.channeldict['username'], self.channeldict['secret'])
+        # headers and params of this channel: copies of what is set in the class (or communicationscript),
+        # so one channel does not get headers or parameters of another channel.
+        self.headers = dict(self.headers)
+        self.params = dict(self.params)
+        self.base_headers = dict(self.headers)
+        self.base_params = dict(self.params)
         self.url = botslib.Uri(
             scheme=self.scheme,
             hostname=self.channeldict['host'],
@@ -3023,26 +3202,25 @@ class http(_comsession):
         logging.addLevelName(LOG_LEVELS['COM'], self.__class__.__name__.upper())
 
     def get_params(self, ta_from=None):
-        """Set self.params from self.channeldict['parameters']"""
-        parameters = self.channeldict['parameters'].strip('?')
+        """
+        Set self.params from self.channeldict['parameters']: 'key=value', more than one separated
+        by '&' (or ';' or ',' or space); a value can contain '=' and can be url-quoted ('%26' is '&').
+        """
+        self.params = dict(getattr(self, 'base_params', self.params))
+        parameters = (self.channeldict['parameters'] or '').strip().lstrip('?')
         if parameters:
             if ta_from:
                 parameters = self.filename_formatter(parameters, ta_from, runuserscript=False)
-            sep = None
-            if '&' in parameters:
-                sep = '&'
-            elif ';' in parameters:
-                sep = ';'
-            elif ',' in parameters:
-                sep = ','
-            elif ' ' in parameters:
-                sep = ' '
-            if sep:
-                parameters = parameters.split(sep)
-                for param in parameters:
-                    if '=' in param:
-                        param = param.split('=')
-                        self.params[param[0]] = param[1]
+            for sep in ('&', ';', ',', ' '):
+                if sep in parameters:
+                    parameters = parameters.split(sep)
+                    break
+            else:
+                parameters = [parameters]
+            for param in parameters:
+                key, found, value = param.strip().partition('=')
+                if found and key:
+                    self.params[urllib.parse.unquote_plus(key)] = urllib.parse.unquote_plus(value)
         return self.params
 
     @botslib.log_session
@@ -3158,6 +3336,9 @@ class http(_comsession):
                 with botslib.opendata_bin(filename, 'rb') as fromfile:
                     content = fromfile.read()
                 filename = self.filename_formatter(self.channeldict['filename'], ta_from)
+                # headers for this file only
+                self.headers = dict(self.base_headers)
+                charset = None
                 disposition = self.channeldict['sendmdn']
                 if disposition != 'attachment':
                     disposition = 'inline'
@@ -3202,7 +3383,7 @@ class http(_comsession):
                     if self.debug > 1:
                         botsglobal.logger.log(
                             LOG_LEVELS['COM'],
-                            'POST Request: content: "%s".', response.request.content)
+                            'POST Request: content: "%s".', response.request.body)
                     botsglobal.logger.log(
                         LOG_LEVELS['COM'], 'POST Response: status: %s', response.status_code)
                     botsglobal.logger.log(
@@ -3267,7 +3448,14 @@ class https(http):
         use if https server has an unrecognized CA
         """
         super().connect()
-        if self.ca_cert:
-            os.environ["REQUESTS_CA_BUNDLE"] = self.ca_cert
+        # 'caCert' is the name used in bots 3 (in communicationscripts)
+        ca_cert = self.ca_cert or getattr(self, 'caCert', None) or self.channeldict.get('cafile')
+        if ca_cert and ca_cert == self.channeldict.get('cafile'):
+            ca_cert = botslib.join(ca_cert)
+        if not self.verify_certificate():
+            self.verify = False
+        if ca_cert and self.verify in (True, None):
+            # verify with this CA; for this channel only (not via environment: that is for the whole process)
+            self.verify = ca_cert
         if self.channeldict.get("certfile") and self.channeldict.get("keyfile"):
             self.cert = (self.channeldict["certfile"], self.channeldict["keyfile"])

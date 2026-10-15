@@ -1,0 +1,52 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "2",
+   3
+  ],
+  [
+   "3",
+   3
+  ],
+  [
+   "dummymessage.txt",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {},
+ "plugin": "demo_mdn_confirmations_20111207",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 993,
+  "lastdone": 3,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 3,
+  "processerrors": 0,
+  "send": 2,
+  "status": false
+ },
+ "routes": [
+  [
+   "testmdn",
+   11,
+   true,
+   false
+  ],
+  [
+   "testmdn",
+   21,
+   true,
+   false
+  ],
+  [
+   "testmdn",
+   31,
+   true,
+   false
+  ]
+ ]
+}

@@ -45,12 +45,15 @@ def plugoutindex():
 
     # find locating of bots, configfiles, init paths etc.
     botsinit.generalinit(configdir)
+    botsglobal.logger = botsinit.initserverlogging(__name__)
+    atexit.register(logging.shutdown)
 
     # import here, import at start of file gives error; first initialize.
     from . import pluglib
 
     filename = os.path.join(botsglobal.ini.get("directories", "usersysabs"), "index.json")
     pluglib.make_index(filename)
+    print("Bots index written:", filename)
 
 
 def index2json():

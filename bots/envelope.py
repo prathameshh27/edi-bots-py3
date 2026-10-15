@@ -90,7 +90,7 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
     # envelope: envelope to use
     # rsrv3 : user defined enveloping criterium
     # frompartner,topartner,testindicator,charset,nrmessages: needed for envelope (edifact, x12)
-    for row in botslib.query(
+    for row in sorted_groups(botslib.query(
             """SELECT editype,messagetype,envelope,rsrv3,frompartner,topartner,
                       testindicator,charset,rsrv5,sum(nrmessages) as nrmessages
                FROM ta
@@ -100,7 +100,6 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                AND merge=%(merge)s
                AND idroute=%(idroute)s
                GROUP BY editype,messagetype,envelope,rsrv3,frompartner,topartner,testindicator,charset,rsrv5
-               ORDER BY editype,messagetype,envelope,rsrv3,frompartner,topartner,testindicator,charset,rsrv5
             """,
             {
                 'rootidta': rootidta,
@@ -108,11 +107,14 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                 'statust': OK,
                 'merge': True,
                 'idroute': idroute,
-            }):
+            })):
+        ta2_tofile = None
         try:
             ta_info = dict(row)
             ta_info['idroute'] = idroute
             # do another query to gather individual idta and filenames
+            # rsrv5 (envelope data set in mapping) is part of the group: messages with different
+            # envelope data are not merged into one interchange.
             filename_list = []
             for row2 in botslib.query(
                     """SELECT idta, filename
@@ -121,6 +123,7 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                        AND status=%(status)s
                        AND statust=%(statust)s
                        AND merge=%(merge)s
+                       AND idroute=%(idroute)s
                        AND editype=%(editype)s
                        AND messagetype=%(messagetype)s
                        AND (frompartner=%(frompartner)s OR frompartner IS NULL)
@@ -129,6 +132,7 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                        AND envelope=%(envelope)s
                        AND rsrv3=%(rsrv3)s
                        AND charset=%(charset)s
+                       AND """ + ('rsrv5 IS NULL' if ta_info['rsrv5'] is None else 'rsrv5=%(rsrv5)s') + """
                        ORDER BY idta
                     """,
                     {
@@ -143,7 +147,9 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                         'testindicator': ta_info['testindicator'],
                         'charset': ta_info['charset'],
                         'rsrv3': ta_info['rsrv3'],
+                        'rsrv5': ta_info['rsrv5'],
                         'envelope': ta_info['envelope'],
+                        'idroute': idroute,
                     }):
                 ta_fromfile = botslib.OldTransaction(row2["idta"])
                 # edi message to be merged/envelope
@@ -164,9 +170,25 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
             ta_info['filesize'] = os.path.getsize(botslib.abspathdata(ta_info['filename']))
         except Exception:
             txt = txtexc()
-            ta2_tofile.update(statust=ERROR, errortext=txt)
+            if ta2_tofile is None:
+                # nothing was collected for this group; do not touch the result of another group
+                botsglobal.logger.error('Error in merging/enveloping: %(txt)s', {'txt': txt})
+            else:
+                ta2_tofile.update(statust=ERROR, errortext=txt)
         else:
             ta2_tofile.update(statust=OK, **ta_info)
+
+
+GROUP_COLUMNS = ('editype', 'messagetype', 'envelope', 'rsrv3', 'frompartner', 'topartner', 'testindicator',
+                 'charset', 'rsrv5')
+
+
+def sorted_groups(rows):
+    """The groups of messages to merge, in the order of their values, as SQLite sorts them (and bots 3 on
+    SQLite did): an empty value (NULL) first, texts by their characters (upper case before lower case).
+    The order is the order (and numbering) of the interchanges. Sorted here, not in the database: PostgreSQL
+    puts NULL last, and MySQL, SQL Server and PostgreSQL ignore case by default."""
+    return sorted(rows, key=lambda row: [(row[name] is not None, str(row[name] or '')) for name in GROUP_COLUMNS])
 
 
 def envelope(ta_info, ta_list, **kwargs):
@@ -269,6 +291,67 @@ class Envelope:
         if not self.ta_info['topartner']:
             raise OutMessageError(_('In enveloping "topartner" unknown.'))
 
+    PARTNERKEYS = ('frompartner_outer', 'frompartner_inner', 'frompartner_qualifier',
+                   'topartner_outer', 'topartner_inner', 'topartner_qualifier')
+
+    def convert_partners(self):
+        """
+        Convert partnerIDs according to syntax parameter IDmode (as in bots 3):
+        - not set: outer (ISA/UNB) and inner (GS) ID are the partnerID;
+        - 'ISA_qualifier_GS': partnerID is 'ISA-ID|qualifier|GS-ID';
+        - 'ISA_qualifier', 'UNB_qualifier': partnerID is 'ID|qualifier'.
+        Sets frompartner_outer, frompartner_inner, (frompartner_qualifier) in ta_info; same for topartner.
+        """
+        for key in self.PARTNERKEYS:
+            self.ta_info.pop(key, None)
+        IDmode = self.ta_info.get('IDmode')
+        if not IDmode:
+            for partner in ('frompartner', 'topartner'):
+                self.ta_info[partner + '_outer'] = self.ta_info[partner + '_inner'] = self.ta_info[partner]
+            return
+        if IDmode == 'ISA_qualifier_GS':
+            parts, inner = 3, 2
+        elif IDmode in ('ISA_qualifier', 'UNB_qualifier'):
+            parts, inner = 2, 0
+        else:
+            raise OutMessageError(_('In enveloping: unknown value "%(IDmode)s" for syntax parameter "IDmode".'), self.ta_info)
+        for partner in ('frompartner', 'topartner'):
+            splitted = self.ta_info[partner].split('|')
+            if len(splitted) != parts:
+                raise OutMessageError(
+                    _('In enveloping "%(partner)s" is expected to have format "%(IDmode)s", but is "%(value)s".'),
+                    {'partner': partner, 'IDmode': IDmode, 'value': self.ta_info[partner]})
+            self.ta_info[partner + '_outer'] = splitted[0]
+            self.ta_info[partner + '_qualifier'] = splitted[1]
+            self.ta_info[partner + '_inner'] = splitted[inner]
+
+    def run_ta_infocontent(self):
+        """
+        Convert the partnerIDs and run user exit 'ta_infocontent'.
+        The exit can change frompartner/topartner or the converted values (*_outer, *_inner, *_qualifier).
+        """
+        self.convert_partners()
+        before = dict((key, self.ta_info.get(key)) for key in self.PARTNERKEYS + ('frompartner', 'topartner'))
+        botslib.tryrunscript(
+            self.userscript, self.scriptname, 'ta_infocontent', ta_info=self.ta_info
+        )
+        if (before['frompartner'], before['topartner']) != (self.ta_info['frompartner'], self.ta_info['topartner']) \
+                and all(before[key] == self.ta_info.get(key) for key in self.PARTNERKEYS):
+            # exit changed the partnerID but not the converted values: convert again
+            self.convert_partners()
+
+    def interchange_reference(self, counter, sender, receiver, partner_bots3):
+        """
+        Interchange control reference: a counter per sender; with interchangecontrolperpartner
+        per sender and receiver. Returned as string (as in bots 3).
+        Bots 3 used a counter per frompartner (with interchangecontrolperpartner: per topartner);
+        a counter that is used for the first time continues where that counter was.
+        """
+        # pylint: disable=consider-using-f-string
+        perpartner = botsglobal.ini.getboolean('settings', 'interchangecontrolperpartner', False)
+        domain = '%s_%s%s' % (counter, sender, '_%s' % receiver if perpartner else '')
+        return str(botslib.unique(domain, seedfrom='%s_%s' % (counter, partner_bots3)))
+
 
 class noenvelope(Envelope):
     """Only copies the input files to one output file."""
@@ -322,21 +405,23 @@ class edifact(Envelope):
         self.check_envelope_partners()
         self._openoutenvelope()
         self.ta_info.update(self.out.ta_info)
-        botslib.tryrunscript(
-            self.userscript, self.scriptname, 'ta_infocontent', ta_info=self.ta_info
-        )
+        self.run_ta_infocontent()
 
         # frompartner
         UNBsender = self.envelope_content[0].get('S002.0004') \
             or self.ta_info.get('S002.0004') \
-            or self.ta_info['frompartner']
-        UNBsender_qualifier = self.envelope_content[0].get('S002.0007') or self.ta_info['UNB.S002.0007']
+            or self.ta_info['frompartner_outer']
+        UNBsender_qualifier = self.envelope_content[0].get('S002.0007') \
+            or self.ta_info.get('frompartner_qualifier') \
+            or self.ta_info['UNB.S002.0007']
 
         # topartner
         UNBreceiver = self.envelope_content[0].get('S003.0010') \
             or self.ta_info.get('S003.0010') \
-            or self.ta_info['topartner']
-        UNBreceiver_qualifier = self.envelope_content[0].get('S003.0007') or self.ta_info['UNB.S003.0007']
+            or self.ta_info['topartner_outer']
+        UNBreceiver_qualifier = self.envelope_content[0].get('S003.0007') \
+            or self.ta_info.get('topartner_qualifier') \
+            or self.ta_info['UNB.S003.0007']
 
         # version dependent enveloping
         self.ta_info['version'] = self.envelope_content[0].get('S001.0002') or self.ta_info['version']
@@ -349,9 +434,10 @@ class edifact(Envelope):
 
         # UNB reference: set from mapping or (counter per sender or receiver)
         # pylint: disable=consider-using-f-string
-        self.ta_info['reference'] = self.envelope_content[0].get('0020') or botslib.unique(
-            'unbcounter_%s%s' % (UNBsender, '_%s' % UNBreceiver if botsglobal.ini.getboolean(
-                'settings', 'interchangecontrolperpartner', False) else ''))
+        self.ta_info['reference'] = self.envelope_content[0].get('0020') or self.interchange_reference(
+            'unbcounter', UNBsender, UNBreceiver,
+            self.ta_info['topartner'] if botsglobal.ini.getboolean(
+                'settings', 'interchangecontrolperpartner', False) else self.ta_info['frompartner'])
 
         # testindicator:
         testindicator = ''
@@ -454,9 +540,10 @@ class tradacoms(Envelope):
 
         # reference
         # pylint: disable=consider-using-f-string
-        self.ta_info['reference'] = self.envelope_content[0].get('SNRF') or botslib.unique(
-            'stxcounter_%s%s' % (sender, '_%s' % receiver if botsglobal.ini.getboolean(
-                'settings', 'interchangecontrolperpartner', False) else ''))
+        self.ta_info['reference'] = self.envelope_content[0].get('SNRF') or self.interchange_reference(
+            'stxcounter', sender, receiver,
+            self.ta_info['topartner'] if botsglobal.ini.getboolean(
+                'settings', 'interchangecontrolperpartner', False) else self.ta_info['frompartner'])
 
         # build the envelope segments (that is, the tree from which the segments will be generated)
         self.out.put(
@@ -589,10 +676,8 @@ class x12(Envelope):
         self._openoutenvelope()
         self.ta_info.update(self.out.ta_info)
 
-        # user exit to change ta_info
-        botslib.tryrunscript(
-            self.userscript, self.scriptname, 'ta_infocontent', ta_info=self.ta_info
-        )
+        # convert partnerIDs (syntax parameter IDmode); user exit to change ta_info
+        self.run_ta_infocontent()
 
         # test indicator can either be from configuration (self.ta_info['ISA15'])
         # or by mapping (self.ta_info['testindicator']); mapping overrules.
@@ -603,20 +688,22 @@ class x12(Envelope):
             testindicator = self.envelope_content[0].get('ISA15') or self.ta_info['ISA15']
 
         # frompartner
-        ISAsender_qualifier = self.envelope_content[0].get('ISA05') or self.ta_info['ISA05']
-        ISAsender = self.envelope_content[0].get('ISA06') or self.ta_info.get('ISA06') or self.ta_info['frompartner']
-        GS02sender = self.envelope_content[1].get('GS02') or self.ta_info.get('GS02') or self.ta_info['frompartner']
+        ISAsender_qualifier = self.envelope_content[0].get('ISA05') \
+            or self.ta_info.get('frompartner_qualifier') or self.ta_info['ISA05']
+        ISAsender = self.envelope_content[0].get('ISA06') or self.ta_info.get('ISA06') or self.ta_info['frompartner_outer']
+        GS02sender = self.envelope_content[1].get('GS02') or self.ta_info.get('GS02') or self.ta_info['frompartner_inner']
 
         # topartner
-        ISAreceiver_qualifier = self.envelope_content[0].get('ISA07') or self.ta_info['ISA07']
-        ISAreceiver = self.envelope_content[0].get('ISA08') or self.ta_info.get('ISA08') or self.ta_info['topartner']
-        GS03receiver = self.envelope_content[1].get('GS03') or self.ta_info.get('GS03') or self.ta_info['topartner']
+        ISAreceiver_qualifier = self.envelope_content[0].get('ISA07') \
+            or self.ta_info.get('topartner_qualifier') or self.ta_info['ISA07']
+        ISAreceiver = self.envelope_content[0].get('ISA08') or self.ta_info.get('ISA08') or self.ta_info['topartner_outer']
+        GS03receiver = self.envelope_content[1].get('GS03') or self.ta_info.get('GS03') or self.ta_info['topartner_inner']
 
         # ISA/GS reference: set from mapping or (counter per sender or receiver)
-        # pylint: disable=consider-using-f-string
-        self.ta_info['reference'] = self.envelope_content[0].get('ISA13') or botslib.unique(
-            'isacounter_%s%s' % (ISAsender, '_%s' % ISAreceiver if botsglobal.ini.getboolean(
-                'settings', 'interchangecontrolperpartner', False) else ''))
+        self.ta_info['reference'] = self.envelope_content[0].get('ISA13') or self.interchange_reference(
+            'isacounter', ISAsender, ISAreceiver,
+            self.ta_info['topartner_outer'] if botsglobal.ini.getboolean(
+                'settings', 'interchangecontrolperpartner', False) else self.ta_info['frompartner_outer'])
 
         # date and time
         senddate, sendtime = botslib.strftime('%Y%m%d %H%M').split(' ')
@@ -625,14 +712,10 @@ class x12(Envelope):
         version = self.envelope_content[0].get('ISA12') or self.ta_info['version']
 
         # ISA14 - Ask Acknowledgment
-        ask_confirm = self.envelope_content[0].get('ISA14') or '1' if botslib.checkconfirmrules(
-            'ask-x12-997',
-            idroute=self.ta_info.get('idroute'),
-            idchannel=self.routedict.get('tochannel'),
-            frompartner=self.ta_info.get('frompartner'),
-            topartner=self.ta_info.get('topartner'),
-            messagetype=self.ta_info.get('messagetype')
-        ) else self.ta_info['ISA14']
+        # priority: value set in mapping; syntax (grammar/partner), as bots 3.
+        # A confirmrule 'ask-x12-997' does not change it (4.0 did): the rule is about the 997 bots expects,
+        # ISA14 asks the receiver for a TA1. An installation with ISA14 '0' in its syntax keeps sending '0'.
+        ask_confirm = self.envelope_content[0].get('ISA14') or self.ta_info['ISA14']
 
         # build the envelope segments (generate tree from which the segments will be generated)
         self.out.put(
@@ -672,8 +755,8 @@ class x12(Envelope):
                 'GS01': self.envelope_content[1].get('GS01') or self.ta_info['functionalgroup'],
                 'GS02': GS02sender,
                 'GS03': GS03receiver,
-                "GS04": (
-                    self.envelope_content[1].get("GS04") or
+                # value from mapping; else date: 8 positions as of version 004010, before that 6
+                "GS04": self.envelope_content[1].get("GS04") or (
                     senddate if gs08messagetype[:6] >= "004010" else senddate[2:]
                 ),
                 'GS05': self.envelope_content[1].get('GS05') or sendtime,

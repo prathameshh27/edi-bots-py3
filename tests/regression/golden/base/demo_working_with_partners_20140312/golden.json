@@ -1,0 +1,77 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "856_PARTNER1_03.xml",
+   3
+  ],
+  [
+   "856_PARTNER2_01.xml",
+   3
+  ],
+  [
+   "856_PARTNER2_04.xml",
+   3
+  ],
+  [
+   "856_PARTNER3_02.xml",
+   3
+  ],
+  [
+   "frompartner1_topartner1_1.x12",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "demo_work_with_partners/outbound_856/PARTNER1_20130123_1.x12": "b773c72deb32b8ec20b94d4f46775dde502b14d3a8982d8484aca28541d2eef1",
+  "demo_work_with_partners/outbound_856/PARTNER2_20130123_1.x12": "0df82dd19cc397da7deaf3197b48136fa76c041acb87c7bb27ea19e82395df09",
+  "demo_work_with_partners/outbound_856/PARTNER3_pgroupA_20130123_1.x12": "473ba77e5c8f46f1a855ed3df325cf571587ce4ae51e37be22c8cd7c5aa0bc58",
+  "demo_work_with_partners/partner_conversion/frompartner1_topartner1_1.x12": "cf0ee5e63517055d180a9e8140152fd34ebdd49ce6bcc8c043fd4cfc2c96e57a"
+ },
+ "plugin": "demo_working_with_partners_20140312",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 26806,
+  "lastdone": 5,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 5,
+  "processerrors": 0,
+  "send": 4,
+  "status": false
+ },
+ "routes": [
+  [
+   "demo_partner_conversion",
+   1,
+   true,
+   false
+  ],
+  [
+   "outbound_asn",
+   1,
+   true,
+   false
+  ],
+  [
+   "outbound_asn",
+   101,
+   true,
+   false
+  ],
+  [
+   "outbound_asn",
+   102,
+   true,
+   false
+  ],
+  [
+   "outbound_asn",
+   103,
+   true,
+   false
+  ]
+ ]
+}

@@ -87,9 +87,10 @@ def read_index(filename: str = "") -> dict[str, list]:
         plugreport["warning"].append(warn)
         return plugreport
 
-    # write content of index file to the bots database
+    # write content of index file to the bots database; all-or-nothing.
     try:
-        read_index2database(pluglist)
+        with transaction.atomic():
+            read_index2database(pluglist)
     except Exception as exc:
         txt = txtexc()
         raise PluginError(
@@ -115,6 +116,115 @@ def listplugsinplugins(plugins: dict, plugreport: dict = None) -> list[dict]:
     return pluglist
 
 
+def parse_python_botsindex(source: str) -> dict:
+    """
+    Read a python bots index (botsindex.py / index.py as written by bots 2 and 3) without executing it.
+
+    Such a file only contains assignments of literals::
+
+        import datetime
+        version = '3.2.0'
+        plugins = [{'plugintype': 'channel', 'idchannel': 'x', 'port': 0, ...}, ...]
+
+    The file is parsed and only literals and calls of datetime.datetime/date/time are evaluated;
+    anything else raises PluginError. Python 2 long literals (``10L``, as written for integer columns
+    read from MySQL/PostgreSQL) are accepted.
+
+    :return: dict with the names assigned in the file (normally 'version' and 'plugins')
+    """
+    # pylint: disable=import-outside-toplevel
+    import ast
+    import datetime as python_datetime
+    import io
+    import tokenize
+
+    # python 2 long literals: NUMBER directly followed by NAME 'L'/'l'. Done on tokens, so strings are untouched.
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError) as exc:
+        raise PluginError(_('Bots index is not a valid python file: %(txt)s'), {'txt': exc}) from exc
+    cleaned = []
+    for token in tokens:
+        if (token.type == tokenize.NAME and token.string in ('L', 'l') and cleaned
+                and cleaned[-1].type == tokenize.NUMBER and cleaned[-1].end == token.start):
+            continue
+        cleaned.append(token)
+    if len(cleaned) != len(tokens):
+        source = tokenize.untokenize((token.type, token.string) for token in cleaned)
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.List):
+            return [evaluate(item) for item in node.elts]
+        if isinstance(node, ast.Tuple):
+            return tuple(evaluate(item) for item in node.elts)
+        if isinstance(node, ast.Dict):
+            return dict((evaluate(key), evaluate(value)) for key, value in zip(node.keys, node.values))
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            value = evaluate(node.operand)
+            return -value if isinstance(node.op, ast.USub) else value
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == 'datetime'
+                and node.func.attr in ('datetime', 'date', 'time') and not node.keywords):
+            return getattr(python_datetime, node.func.attr)(*[evaluate(arg) for arg in node.args])
+        raise PluginError(
+            _('Bots index contains an expression that is not allowed (line %(line)s).'),
+            {'line': getattr(node, 'lineno', '?')})
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise PluginError(_('Bots index is not a valid python file: %(txt)s'), {'txt': exc}) from exc
+    result = {}
+    for statement in tree.body:
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            continue
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+            # docstring
+            continue
+        if (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)):
+            result[statement.targets[0].id] = evaluate(statement.value)
+            continue
+        raise PluginError(
+            _('Bots index contains a statement that is not allowed (line %(line)s).'),
+            {'line': statement.lineno})
+    if not isinstance(result.get('plugins'), list):
+        raise PluginError(_('Bots index contains no list "plugins".'))
+    return result
+
+
+def version_tuple(version) -> tuple:
+    """'3.10.1rc2' -> (3, 10, 1); for comparing versions (comparing the strings gives '3.10' < '3.4')."""
+    numbers = []
+    for part in str(version).split('.'):
+        digits = ''
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            break
+        numbers.append(int(digits))
+    return tuple(numbers)
+
+
+def target_in_directory(targetpath: str, *directories: str) -> bool:
+    """True if (normalised) targetpath is inside one of the directories; used to refuse plugin files
+    whose name would let them be written outside the bots environment ('usersys/../../x.py')."""
+    target = os.path.normcase(os.path.realpath(targetpath))
+    for directory in directories:
+        directory = os.path.normcase(os.path.realpath(directory))
+        try:
+            if os.path.commonpath([directory, target]) == directory:
+                return True
+        except ValueError:
+            # different drives
+            continue
+    return False
+
+
 # if no exception raised: commit, else rollback.
 @django.db.transaction.non_atomic_requests
 def read_plugin(pathzipfile: str) -> dict[str, list]:
@@ -138,23 +248,14 @@ def read_plugin(pathzipfile: str) -> dict[str, list]:
             plugreport["bots_version"] = plugin_version = str(importedbotsindex["bots_version"])
             pluglist = listplugsinplugins(importedbotsindex["plugins"], plugreport)
         except OSError:
-            # botsindex.py
-            # Importing python bots index will be removed
-            # pylint: disable=deprecated-method  # zipimport.load_module() will be removed in python 3.15
-            importedbotsindex = myzipimport.load_module("botsindex")
-            plugreport["bots_version"] = plugin_version = str(getattr(importedbotsindex, "version", 0))
-            pluglist = importedbotsindex.plugins[:]
-            if "botsindex" in sys.modules:
-                del sys.modules["botsindex"]
-
-            warn = _(
-                "Bots plugin with python botsindex is deprecated and will be removed in python 3.15.\n"
-                "Make a new bots plugin to save it with a botsindex in json format.")
-            plugreport["warning"].append(warn)
-            botsglobal.logger.warning(warn)
+            # botsindex.py: index as written by bots 2 and bots 3. The file is parsed, not executed.
+            importedbotsindex = parse_python_botsindex(
+                myzipimport.get_data("botsindex.py").decode("utf-8-sig"))
+            plugreport["bots_version"] = plugin_version = str(importedbotsindex.get("version", 0))
+            pluglist = importedbotsindex["plugins"][:]
 
         # Check plugin version compatibility
-        if plugin_version < "3.4":
+        if version_tuple(plugin_version) < (3, 4):
             warn = _(
                 "Bots plugin target an older version of Bots: '%s'\n"
                 "Please check if the code is Python 3 compatible."
@@ -175,7 +276,15 @@ def read_plugin(pathzipfile: str) -> dict[str, list]:
         botsglobal.logger.info(_('Plugin %s is OK.'), pathzipfile)
     botsglobal.logger.info(_('Start writing to database.'))
 
-    # write content of index file to the bots database
+    # Database and files are written inside one database transaction:
+    # if anything fails, nothing is left in the database (all-or-nothing, as in bots 3.x).
+    with transaction.atomic():
+        return _write_plugin(pathzipfile, pluglist, plugreport)
+
+
+def _write_plugin(pathzipfile: str, pluglist: list, plugreport: dict) -> dict:
+    """write content of a plugin to the bots database and to the file system; called by read_plugin."""
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     try:
         read_index2database(pluglist)
     except Exception as exc:
@@ -189,6 +298,8 @@ def read_plugin(pathzipfile: str) -> dict[str, list]:
     # write files to the file system.
     botsglobal.logger.info(_('Start writing to files'))
     try:
+        usersysabs = botsglobal.ini.get("directories", "usersysabs")
+        botssysabs = botslib.join(botsglobal.ini.get("directories", "botssys"))
         orgtargetpath = botsglobal.ini.get("directories", "botsenv")
         if orgtargetpath[-1:] in (os.path.sep, os.path.altsep) and len(os.path.splitdrive(orgtargetpath)[1]) > 1:
             orgtargetpath = orgtargetpath[:-1]
@@ -206,8 +317,11 @@ def read_plugin(pathzipfile: str) -> dict[str, list]:
                     # Skip dir and root files
                     continue
                 targetpath = zipfileobject.filename[1:] if zipfileobject.filename[0] == "/" else zipfileobject.filename
+                targetpath = targetpath.replace("\\", "/")
                 if targetpath.startswith("usersys/"):
-                    if not targetpath.endswith((".py", ".html", "/index.json")):
+                    # all files in usersys are installed (mappings can use data files: xsd, xsl, csv, ...),
+                    # except compiled python.
+                    if targetpath.endswith((".pyc", ".pyo")) or "/__pycache__/" in targetpath:
                         plugreport["skipped"].append(zipfileobject.filename)
                         botsglobal.logger.warning(_("Skipping file: %s"), zipfileobject.filename)
                         continue
@@ -229,6 +343,13 @@ def read_plugin(pathzipfile: str) -> dict[str, list]:
                     continue
                 # format targetpath with botsenv path
                 targetpath = botslib.join(orgtargetpath, targetpath)
+                # a file name in a plugin may not point outside usersys/botssys (eg 'usersys/../../x.py')
+                if not target_in_directory(targetpath, usersysabs, botssysabs):
+                    botsglobal.logger.warning(
+                        _("Skipping plugin file with a path outside the bots environment: %s"),
+                        zipfileobject.filename)
+                    plugreport["skipped"].append(zipfileobject.filename)
+                    continue
                 botsglobal.logger.info(
                     _('    Start writing file: "%(targetpath)s".'), {"targetpath": targetpath}
                 )
@@ -489,6 +610,9 @@ def make_index(filename: str = "", cleaned_data: dict = None) -> bool:
 
     :return bool:
     """
+    if isinstance(filename, dict) and isinstance(cleaned_data, str):
+        # called as in bots 3: make_index(cleaned_data, filename)
+        filename, cleaned_data = cleaned_data, filename
     if not filename.endswith(".json"):
         raise PluginError(_("Bots index extension must be '.json'"))
 

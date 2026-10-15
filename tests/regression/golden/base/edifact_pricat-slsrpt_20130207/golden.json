@@ -1,0 +1,46 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "articledata01.csv",
+   3
+  ],
+  [
+   "slsrpt01.edi",
+   3
+  ]
+ ],
+ "index_version": "3.0.0",
+ "outfiles": {
+  "consignment/pricat/pricat1.edi": "e4960cfb12053783b5a38f3893f5ca8078ffe6bb358f1bde305376951a17216e",
+  "consignment/slsrpt/slsrpt1.csv": "07ec6908ec9cee0f6a7a8fe196f4f77e6280497f98e66d95d17fb8eae568806d",
+  "consignment/slsrpt/slsrpt2.csv": "07ec6908ec9cee0f6a7a8fe196f4f77e6280497f98e66d95d17fb8eae568806d"
+ },
+ "plugin": "edifact_pricat-slsrpt_20130207",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 31122,
+  "lastdone": 2,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 2,
+  "processerrors": 0,
+  "send": 3,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound_slsrpt",
+   9999,
+   true,
+   false
+  ],
+  [
+   "outbound_pricat",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

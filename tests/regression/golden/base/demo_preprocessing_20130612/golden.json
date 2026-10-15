@@ -1,0 +1,34 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "0T0000000004.edi",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "edifact_xml/xml/orders_1.xml": "5a82d953d3676109320760f7d16a0fca49e5b4a4481457f28345c4cf3347dad8"
+ },
+ "plugin": "demo_preprocessing_20130612",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 286,
+  "lastdone": 1,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 1,
+  "processerrors": 0,
+  "send": 1,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound_orders",
+   1,
+   true,
+   false
+  ]
+ ]
+}

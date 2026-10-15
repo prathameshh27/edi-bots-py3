@@ -35,11 +35,23 @@ class BotsConfig(configparser.RawConfigParser):
     """As ConfigParser, but with defaults."""
     # pylint: disable=arguments-differ
 
-    def get(self, section, option, default='', **kwargs):
+    _required = object()
+
+    def __init__(self, *args, **kwargs):
+        # as in python 2 (bots 3): a section or option that is in bots.ini twice is not an error,
+        # the last value is used
+        kwargs.setdefault('strict', False)
+        super().__init__(*args, **kwargs)
+
+    def get(self, section, option, default=_required, **kwargs):
+        """Value of option; if option is missing (or empty): default.
+        Without a default a missing option is an error; an explicit default (also '') never is."""
         if self.has_option(section, option):
             result = super().get(section, option, **kwargs)
-            return result or default
-        if default == '':
+            if result or default is self._required:
+                return result
+            return default
+        if default is self._required:
             raise BotsConfigError(f'No entry "{option}" in section "{section}" in "bots.ini"')
         return default
 
@@ -179,6 +191,11 @@ def generalinit(configdir=None):
             configdir = os.path.join(botsenv_path, 'config')
             initbotsenv(**locals())
 
+    if os.path.isfile(os.path.join(configdir, 'settings.py')):
+        # an existing directory (eg relative: '-cconfig', '-cenv/config'): use it, as an absolute path.
+        # (else: configdir is a name to import, like 'config' for bots/config inside the bots package)
+        configdir = os.path.abspath(configdir)
+        botsenv_path = botsenv_path or os.path.dirname(configdir)
     botsglobal.configdir = configdir = configdir.rstrip(os.path.sep)
 
     ##########################################################################
@@ -191,14 +208,14 @@ def generalinit(configdir=None):
             os.path.join(configdir, 'settings')
         ).replace(os.sep, '.')
         settings = botslib.botsbaseimport(importnameforsettings)
-    except ImportError:
+    except (ImportError, ValueError):  # ValueError: an absolute path (C:\...) is not a module name
         # normal: configdir is in bots directory: import bots.configdir.settings.py
         try:
             os.environ['DJANGO_SETTINGS_MODULE'] = importnameforsettings = os.path.normpath(
                 os.path.join('bots', configdir, 'settings')
             ).replace(os.sep, '.')
             settings = botslib.botsbaseimport(importnameforsettings)
-        except ImportError as exc:
+        except (ImportError, ValueError) as exc:
             # set pythonpath to config directory first
             # check if configdir exists.
             if not os.path.exists(configdir):
@@ -214,13 +231,20 @@ def generalinit(configdir=None):
             os.environ['DJANGO_SETTINGS_MODULE'] = importnameforsettings
             # print('importnameforsettings:', importnameforsettings)
             settings = botslib.botsbaseimport(importnameforsettings)
-            if not settings.__file__.startswith(configdir):
+            if os.path.normcase(os.path.abspath(os.path.dirname(settings.__file__))) != os.path.normcase(
+                    os.path.abspath(configdir)):
                 raise BotsInitError(
                     f'Initilisation: settings file imported "{settings.__file__}" '
                     f'not in BOTS_CONFIG_DIR: "{configdir}"'
                     f'Fixe PYTHON_PATH or rename BOTS_CONFIG_DIR folder "{moduletoimport}"'
                 ) from exc
 
+    if hasattr(settings, 'MIDDLEWARE_CLASSES') and not hasattr(settings, 'MIDDLEWARE'):
+        # django does not use this file (no middleware, no templates): nothing in the web interface would work
+        raise BotsInitError(
+            f'"{settings.__file__}" is a settings.py of bots 3; it can not be used with this version of bots.\n'
+            f'Use a copy of "{os.path.join(os.path.dirname(os.path.abspath(__file__)), "install", "settings.py")}"'
+            ' and set in it what was set in the old file: DATABASES, the EMAIL_... settings, TIME_ZONE.')
     # settings is imported, so now we know where to find settings.py: importnameforsettings
     # note: the imported settings.py itself is NOT used, this is doen via django.conf.settings
     configdirectory = os.path.abspath(os.path.dirname(settings.__file__))
@@ -240,16 +264,22 @@ def generalinit(configdir=None):
     # usersys MUST be importable. So usersys is relative to PYTHONPATH.
     # Try several options for this import.
     usersys = os.path.normpath(botsglobal.ini.get('directories', 'usersys', 'usersys'))
+    if not os.path.isabs(usersys):
+        # a relative path (as 'usersys' in a bots.ini of bots 3): the usersys of the environment,
+        # not the (empty) usersys that is in the bots package.
+        usersys_in_env = os.path.join(botsglobal.ini.get('directories', 'botsenv'), usersys)
+        if os.path.isfile(os.path.join(usersys_in_env, '__init__.py')):
+            usersys = usersys_in_env
     try:
         # usersys outside bots-directory: import usersys
         importnameforusersys = usersys.replace(os.sep, '.')
         importedusersys = botslib.botsbaseimport(importnameforusersys)
-    except ImportError:
+    except (ImportError, ValueError):  # ValueError: an absolute path (C:\...) is not a module name
         try:
             # usersys is in bots directory: import bots.usersys
             importnameforusersys = os.path.join('bots', usersys).replace(os.sep, '.')
             importedusersys = botslib.botsbaseimport(importnameforusersys)
-        except ImportError as exc:
+        except (ImportError, ValueError) as exc:
             # set pythonpath to usersys directory first
             if not os.path.exists(usersys):  # check if configdir exists.
                 raise BotsInitError(
@@ -261,6 +291,11 @@ def generalinit(configdir=None):
             if addtopythonpath not in sys.path:
                 sys.path.append(addtopythonpath)
             importedusersys = botslib.botsbaseimport(importnameforusersys)
+
+    if importnameforusersys != 'bots.usersys':
+        # user scripts written for bots 3 can import from usersys as 'bots.usersys': keep that working
+        sys.modules['bots.usersys'] = importedusersys
+        setattr(sys.modules[__package__], 'usersys', importedusersys)
 
     # 'directories', 'usersysabs': absolute path for config usersysabs
     # Find pathname usersys using imported usersys
@@ -285,6 +320,27 @@ def generalinit(configdir=None):
     botsglobal.ini.set('directories', 'data', botslib.join(botssys, 'data'))
     botsglobal.ini.set('directories', 'logging', botslib.join(botssys, 'logging'))
     botsglobal.ini.set('directories', 'users', botslib.join(botssys, '.users'))
+    # accept a bots.ini as used with bots 3.x:
+    # - 'log_file_number = daily' is now 'log_when = daily'
+    if str(botsglobal.ini.get('settings', 'log_file_number', '')).strip().lower() == 'daily':
+        botsglobal.ini.set('settings', 'log_when', 'daily')
+        botsglobal.ini.remove_option('settings', 'log_file_number')
+    # - 'use_email_address_validation' is now 'validate_email_address'
+    for section in ('webserver', 'settings'):
+        if botsglobal.ini.has_option(section, 'use_email_address_validation') \
+                and not botsglobal.ini.has_option('webserver', 'validate_email_address'):
+            if not botsglobal.ini.has_section('webserver'):
+                botsglobal.ini.add_section('webserver')
+            botsglobal.ini.set(
+                'webserver', 'validate_email_address', botsglobal.ini.get(section, 'use_email_address_validation'))
+    # - log levels in lower case
+    for section in botsglobal.ini.sections():
+        for option in ('log_level', 'log_file_level', 'log_console_level'):
+            if botsglobal.ini.has_option(section, option):
+                botsglobal.ini.set(section, option, botsglobal.ini.get(section, option, 'INFO').strip().upper())
+    # - no section [dirmonitor]
+    if not botsglobal.ini.has_section('dirmonitor'):
+        botsglobal.ini.add_section('dirmonitor')
     # dirmonitor trigger
     botsglobal.ini.set('dirmonitor', 'trigger', botslib.join(botssys, '.dirmonitor.trigger'))
     botsglobal.ini.set('settings', 'log_when', botsglobal.ini.get('settings', 'log_when', 'report'))
@@ -369,6 +425,36 @@ def botsreplacechar_handler(info):
 # **********************************************************************************
 
 
+# keys in OPTIONS of DATABASES in settings.py that are for django, not for the database driver
+DJANGO_ONLY_OPTIONS = ('isolation_level', 'pool', 'server_side_binding', 'assume_role')
+
+
+def driver_options(options):
+    """the OPTIONS of the database settings that can be passed to the database driver."""
+    return dict((key, value) for key, value in (options or {}).items() if key not in DJANGO_ONLY_OPTIONS)
+
+
+class BotsRow(dict):
+    """row of a query: a dict; a value can also be accessed by position: row['idta'], row[0]."""
+    __slots__ = ('values_in_order',)
+
+    def __getitem__(self, key):
+        if isinstance(key, (int, slice)):
+            return self.values_in_order[key]
+        return dict.__getitem__(self, key)
+
+
+def botsrow_factory(cursor):
+    """row factory for psycopg (version 3)."""
+    names = [column.name for column in cursor.description] if cursor.description else []
+
+    def make_row(values):
+        row = BotsRow(zip(names, values))
+        row.values_in_order = tuple(values)
+        return row
+    return make_row
+
+
 def connect():
     """connect to database for non-django modules eg engine"""
     # pylint: disable=import-error, import-outside-toplevel
@@ -391,20 +477,36 @@ def connect():
         botsglobal.db = botssqlite.connect(
             database=db_settings["NAME"]
         )
-    elif db_engine == "django.db.backends.postgresql":
-        import psycopg
-        from psycopg.rows import dict_row
+    elif db_engine in ("django.db.backends.postgresql", "django.db.backends.postgresql_psycopg2"):
+        # psycopg (version 3) if installed, else psycopg2: the same choice django makes.
+        # rows can be used as row['name'] and as row[0] (as in bots 3).
+        options = driver_options(db_settings["OPTIONS"])
+        try:
+            import psycopg
+        except ImportError:
+            import psycopg2
+            import psycopg2.extras
 
-        botsglobal.db = psycopg.connect(
-            host=db_settings["HOST"],
-            port=db_settings["PORT"],
-            dbname=db_settings["NAME"],
-            user=db_settings["USER"],
-            password=db_settings["PASSWORD"],
-            row_factory=dict_row,
-            # client_encoding="utf-8",
-            **db_settings["OPTIONS"]
-        )
+            botsglobal.db = psycopg2.connect(
+                host=db_settings["HOST"],
+                port=db_settings["PORT"],
+                dbname=db_settings["NAME"],
+                user=db_settings["USER"],
+                password=db_settings["PASSWORD"],
+                connection_factory=psycopg2.extras.DictConnection,
+                **options
+            )
+            botsglobal.db.set_client_encoding('UNICODE')
+        else:
+            botsglobal.db = psycopg.connect(
+                host=db_settings["HOST"],
+                port=db_settings["PORT"],
+                dbname=db_settings["NAME"],
+                user=db_settings["USER"],
+                password=db_settings["PASSWORD"],
+                row_factory=botsrow_factory,
+                **options
+            )
     elif db_engine == 'django.db.backends.mysql':
         import MySQLdb
         from MySQLdb import cursors
@@ -416,23 +518,14 @@ def connect():
             user=db_settings["USER"],
             passwd=db_settings["PASSWORD"],
             cursorclass=cursors.DictCursor,
-            **db_settings["OPTIONS"]
+            **driver_options(db_settings["OPTIONS"])
         )
-    elif db_engine == "django.db.backends.postgresql_psycopg2":
-        import psycopg2
-        import psycopg2.extensions
-        import psycopg2.extras
+    elif db_engine == 'mssql':
+        # Microsoft SQL Server (django backend mssql-django): same behaviour as the other databases,
+        # %(name)s parameters and rows by name and by position (see dbconnect)
+        from . import dbconnect
 
-        psycopg2.extensions.register_type(psycopg2.extensions.UNICODE)
-        botsglobal.db = psycopg2.connect(
-            host=db_settings["HOST"],
-            port=db_settings["PORT"],
-            database=db_settings["NAME"],
-            user=db_settings["USER"],
-            password=db_settings["PASSWORD"],
-            connection_factory=psycopg2.extras.DictConnection,
-        )
-        botsglobal.db.set_client_encoding('UNICODE')
+        botsglobal.db = dbconnect.connect_django(db_settings)
     elif db_engine:
         botsglobal.logger.warning("Using unknown/untested Django database engine: %s", db_engine)
         botsglobal.db = botsglobal.connection

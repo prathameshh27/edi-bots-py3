@@ -1,0 +1,156 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "1.edi",
+   3
+  ],
+  [
+   "146.edi",
+   3
+  ],
+  [
+   "147.edi",
+   3
+  ],
+  [
+   "148.edi",
+   3
+  ],
+  [
+   "149.edi",
+   3
+  ],
+  [
+   "150.edi",
+   3
+  ],
+  [
+   "ORDERS01001.idoc",
+   3
+  ],
+  [
+   "ORDERS01002.idoc",
+   3
+  ],
+  [
+   "ORDERS01003.idoc",
+   3
+  ],
+  [
+   "ORDERS01004.idoc",
+   3
+  ],
+  [
+   "ORDERS01005.idoc",
+   3
+  ],
+  [
+   "ORDERS01006.idoc",
+   3
+  ],
+  [
+   "ORDERS01007.idoc",
+   3
+  ],
+  [
+   "ORDERS01008.idoc",
+   3
+  ],
+  [
+   "ORDERS01009.idoc",
+   3
+  ],
+  [
+   "ORDERS01010.idoc",
+   3
+  ],
+  [
+   "ORDERS01011.idoc",
+   3
+  ],
+  [
+   "ORDERS01012.idoc",
+   3
+  ],
+  [
+   "WP_PLU001.idoc",
+   3
+  ],
+  [
+   "WP_PLU002.idoc",
+   3
+  ],
+  [
+   "WP_PLU003.idoc",
+   3
+  ],
+  [
+   "WP_PLU004.idoc",
+   3
+  ],
+  [
+   "WP_PLU010.idoc",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "demo_idoc/edifact_orders/1.edi": "1da69dc44e373d3250a76090db5d4436e623e953d1c1cdfb29d5b92a446bd7d9",
+  "demo_idoc/edifact_pricat/1.edi": "d4954d58368ec8b41b6d06a09d2ecc52ec5c68c32f82716f67c2cda79c37eb5b",
+  "demo_idoc/edifact_pricat/2.edi": "97417589971921fef3a48c9753efb00157b84b26c6ffcfe45456c896771bb27c",
+  "demo_idoc/edifact_pricat/3.edi": "0aec4e4abeb8fce69ae4b8c9a54d301243d87a2bbd88497b95a3526ad7013632",
+  "demo_idoc/edifact_pricat/4.edi": "fb32f68e23b580b06b9f1e5aa5fbac7fe7e74ab31fd9315c8b5b0acab52d4024",
+  "demo_idoc/idoc_orders/1.idoc": "25a295a45a581bf7eff032c58111d816d2df0e5114e365cee3355ab3025a8b5f",
+  "demo_idoc/idoc_orders/10.idoc": "797da5bfc0a8ead356ef3e20ad65b74fae0472f23533618045f0a37a6331f412",
+  "demo_idoc/idoc_orders/11.idoc": "08350e45133b08e6f4aa71c0bc0217a72c0259ba81d5e83b51f6455fcebaa674",
+  "demo_idoc/idoc_orders/12.idoc": "c35f9a028a65f1debe3de9ae1219b937a93a07f9ef8a35cae37913e22ab2bafa",
+  "demo_idoc/idoc_orders/13.idoc": "3a8884c539fea614c03d07999fcaf9fb07c253f19a7677ad4cca564f6e5d4113",
+  "demo_idoc/idoc_orders/14.idoc": "7060b835a123ecd9aac0b5ae2f833f7e339981157debdbefe80bd582210443ef",
+  "demo_idoc/idoc_orders/15.idoc": "73ce78a392feef8098cc77ed4d00e32db2b906c41c076c6afd319cb56af286c9",
+  "demo_idoc/idoc_orders/16.idoc": "d79c283c993a7463d037ec9d35443ecbb3c30cedfd873025d1695d709b8ae952",
+  "demo_idoc/idoc_orders/17.idoc": "7bc385308ca5554fb72f4d827d4b02764aa8208f052d39e11e998e3e4f32c9f3",
+  "demo_idoc/idoc_orders/18.idoc": "ac7e6f588e4b377013744e2dd7844293f8f90771ef007ecc2d4d4e0d49381675",
+  "demo_idoc/idoc_orders/2.idoc": "35dc15937fa8f9a798b0155fb642d82032231ade79978142c629a84bc40b52a7",
+  "demo_idoc/idoc_orders/3.idoc": "c35f9a028a65f1debe3de9ae1219b937a93a07f9ef8a35cae37913e22ab2bafa",
+  "demo_idoc/idoc_orders/4.idoc": "08350e45133b08e6f4aa71c0bc0217a72c0259ba81d5e83b51f6455fcebaa674",
+  "demo_idoc/idoc_orders/5.idoc": "fd5abd83a0b80fa01199a6c0fa2e97366c05d02ab1b7c1338ab3578287363892",
+  "demo_idoc/idoc_orders/6.idoc": "35dc15937fa8f9a798b0155fb642d82032231ade79978142c629a84bc40b52a7",
+  "demo_idoc/idoc_orders/7.idoc": "25a295a45a581bf7eff032c58111d816d2df0e5114e365cee3355ab3025a8b5f",
+  "demo_idoc/idoc_orders/8.idoc": "fd5abd83a0b80fa01199a6c0fa2e97366c05d02ab1b7c1338ab3578287363892",
+  "demo_idoc/idoc_orders/9.idoc": "797da5bfc0a8ead356ef3e20ad65b74fae0472f23533618045f0a37a6331f412"
+ },
+ "plugin": "demo_sap_idoc_orders_WPPLU_20130613",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 1110189,
+  "lastdone": 23,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 23,
+  "processerrors": 0,
+  "send": 23,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound_orders_edifact2idoc",
+   9999,
+   true,
+   false
+  ],
+  [
+   "outbound_orders_idoc2edifact",
+   9999,
+   true,
+   false
+  ],
+  [
+   "outbound_pricat_idoc2edifact",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

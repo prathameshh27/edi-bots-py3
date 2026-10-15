@@ -1,0 +1,1921 @@
+<!-- Group "Integration tutorials": a carrier with many shippers, X12 204/990/210/997 and JSON for its TMS.
+     Checked with Bots 4.0.0 (bots-new-stable): built and run end to end in a scratch environment; every input and
+     output file on this page is from those runs. -->
+
+<section id="int-logistics" data-title="Tutorial: logistics with JSON and many partners" data-group="Integration tutorials">
+<h2>Tutorial: logistics with JSON and many partners</h2>
+<p class="lead">MyCompany is a carrier: it moves loads by truck for shippers. Shippers send load tenders as X12 204; the
+transport management system (TMS) of MyCompany reads and writes JSON. In this tutorial you build the whole exchange
+for three shippers: 204 in, JSON tender to the TMS, 997 back; then the answer of the TMS (990, accept or decline) and
+its freight invoice (210) back to the right shipper. You build it so that the tenth shipper costs you minutes, not a
+new set of mappings.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A shipper asks "can you move this load?" with a
+204. Bots turns it into a JSON file that the TMS understands and tells the shipper "file received" with a 997.
+Dispatch decides in the TMS; Bots turns that decision into a 990 for the shipper. After delivery the TMS bills the
+load; Bots turns the bill into a 210. All shippers share the same mappings; where one shipper wants something
+different, a setting in Bots (a partner field, a code list entry, a small extra mapping) makes the difference.</p></div>
+
+<h3 id="int-logistics--build">What you will build</h3>
+<p><b>The business.</b> MyCompany (X12 ID <code>MYCOMPANY</code>, carrier code SCAC <code>MYCO</code>) gets load
+tenders from three shippers: ShipperA, ShipperB and ShipperC (IDs <code>SHIPPERA</code>, <code>SHIPPERB</code>,
+<code>SHIPPERC</code>). A tender says what to pick up where and when, and where to deliver it (the
+<b>stops</b>). Every shipper sends X12 version 004010.</p>
+<div class="diagram"><svg viewBox="0 0 760 290" width="760" role="img" aria-label="Upper row: shippers send X12 204 load tenders; route loadtenders_in turns them into JSON tenders for the TMS folder, and sends 997 (and for ShipperA an automatic 990) back. Lower row: the TMS writes JSON responses and invoices; route tms_to_shippers turns them into X12 990 and 210 for the right shipper.">
+<defs><marker id="arrow-intlog-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="20" width="180" height="84" rx="10"/><text x="100" y="52" text-anchor="middle" font-weight="600">ShipperA, B, C</text><text class="small" x="100" y="74" text-anchor="middle">X12 204 load tender</text><text class="small" x="100" y="92" text-anchor="middle">one inbox per shipper</text>
+<path class="arrow" d="M194,62 L246,62" marker-end="url(#arrow-intlog-1)"/>
+<rect class="box mid" x="250" y="20" width="260" height="84" rx="10"/><text x="380" y="52" text-anchor="middle" font-weight="600">Route loadtenders_in</text><text class="small" x="380" y="74" text-anchor="middle">204 → JSON tender; 997 back;</text><text class="small" x="380" y="92" text-anchor="middle">automatic 990 for ShipperA</text>
+<path class="arrow" d="M514,62 L566,62" marker-end="url(#arrow-intlog-1)"/>
+<rect class="box out" x="570" y="20" width="180" height="84" rx="10"/><text x="660" y="52" text-anchor="middle" font-weight="600">TMS folder</text><text class="small" x="660" y="74" text-anchor="middle">tender_&lt;load&gt;.json</text><text class="small" x="660" y="92" text-anchor="middle">(FTP in production)</text>
+<rect class="box in" x="570" y="186" width="180" height="84" rx="10"/><text x="660" y="218" text-anchor="middle" font-weight="600">TMS</text><text class="small" x="660" y="240" text-anchor="middle">JSON response (990)</text><text class="small" x="660" y="258" text-anchor="middle">JSON invoice (210)</text>
+<path class="arrow" d="M566,228 L514,228" marker-end="url(#arrow-intlog-1)"/>
+<rect class="box mid" x="250" y="186" width="260" height="84" rx="10"/><text x="380" y="218" text-anchor="middle" font-weight="600">Route tms_to_shippers</text><text class="small" x="380" y="240" text-anchor="middle">JSON → X12 990 and 210,</text><text class="small" x="380" y="258" text-anchor="middle">sent to the right shipper</text>
+<path class="arrow" d="M246,228 L194,228" marker-end="url(#arrow-intlog-1)"/>
+<rect class="box out" x="10" y="186" width="180" height="84" rx="10"/><text x="100" y="218" text-anchor="middle" font-weight="600">ShipperA, B, C</text><text class="small" x="100" y="240" text-anchor="middle">997, 990, 210</text><text class="small" x="100" y="258" text-anchor="middle">one outbox per shipper</text>
+<path class="arrow" d="M300,108 L170,182" marker-end="url(#arrow-intlog-1)"/>
+<path class="arrow" d="M660,108 L660,182" marker-end="url(#arrow-intlog-1)"/><text class="small" x="668" y="150">dispatch decides</text>
+</svg></div>
+<p>The documents, in the order they happen:</p>
+<div class="table-wrap"><table>
+<tr><th>Document</th><th>From → to</th><th>What it says</th><th>Format</th></tr>
+<tr><td>204 Motor Carrier Load Tender</td><td>shipper → MyCompany</td><td>Load number, references, equipment, the stops with dates, times, weights and addresses, the offered rate.</td><td>X12 004010</td></tr>
+<tr><td>997 Functional Acknowledgment</td><td>MyCompany → shipper</td><td>"Your file arrived and its X12 is correct." Made by Bots itself.</td><td>X12 004010</td></tr>
+<tr><td>Load tender for the TMS</td><td>Bots → TMS</td><td>The 204 as a JSON object: one file per load.</td><td>JSON (MyCompany's own format)</td></tr>
+<tr><td>Tender response</td><td>TMS → Bots</td><td>Accept or decline, the PRO number (MyCompany's own number for the load), the reason of a decline.</td><td>JSON</td></tr>
+<tr><td>990 Response to a Load Tender</td><td>MyCompany → shipper</td><td>Accepted (A) or declined (D).</td><td>X12 004010</td></tr>
+<tr><td>Freight invoice</td><td>TMS → Bots</td><td>Invoice number, load, charges (line haul, fuel, detention…), weight.</td><td>JSON</td></tr>
+<tr><td>210 Freight Details and Invoice</td><td>MyCompany → shipper</td><td>The invoice in X12.</td><td>X12 004010</td></tr>
+</table></div>
+<p><b>The three shippers are not the same</b>, as in real life. Each difference is solved without a copy of the
+mappings:</p>
+<div class="table-wrap"><table>
+<tr><th>Shipper</th><th>What is different</th><th>How Bots handles it</th><th>Part</th></tr>
+<tr><td>ShipperA</td><td>Wants an immediate 990 (accept) from MyCompany, without waiting for dispatch.</td><td>Partner field <code>attr2</code> = <code>auto</code>; the mapping returns an alt, and a second translation makes the 990 (chained translation).</td><td><a href="#int-logistics--part4">4</a></td></tr>
+<tr><td>ShipperB</td><td>Its X12 must be one long line, and it wants ISA14 = 1. Its code for detention on the 210 is <code>DTV</code>, not <code>DET</code>.</td><td>Partner syntax file <code>usersys/partners/x12/SHIPPERB.py</code>; one extra line in the code list <code>charge_code</code>.</td><td><a href="#int-logistics--part5">5</a>, <a href="#int-logistics--part6">6</a></td></tr>
+<tr><td>ShipperC</td><td>Sends its agreed rates in NTE notes (<code>RATE LINEHAUL 980.00</code>); wants weights on the 210 in kilograms.</td><td>Its own small mapping that reuses the common one (translation for frompartner <code>SHIPPERC</code>); partner field <code>attr1</code> = <code>K</code>.</td><td><a href="#int-logistics--part5">5</a>, <a href="#int-logistics--part6">6</a></td></tr>
+</table></div>
+<p>In production the shippers deliver to, and collect from, FTP or SFTP servers, and the TMS reads and writes a folder
+on an FTP server. In this tutorial every connection is a folder (file channel) so that you can run it on your own
+machine; the FTP settings for real use are in <a href="#int-logistics--part7">Part 7</a>.</p>
+
+<h3 id="int-logistics--need">What you need</h3>
+<ul>
+<li>A Bots 4 environment that runs (<a href="#install-windows">Install on Windows</a> or <a href="#install-linux">Install on Linux</a>, <a href="#environments">Environments</a>), and the first two tutorials done: <a href="#tutorial-first-route">your first route</a> and <a href="#tutorial-first-translation">your first translation</a>.</li>
+<li>Read <a href="#int-overview">Planning an integration</a> for the method; this page is a worked design.</li>
+<li>Reference while you work: <a href="#routes">Routes</a>, <a href="#partners">Partners</a>, <a href="#translations">Translations</a>, <a href="#code-lists">Code lists</a>, <a href="#editype-x12">X12</a>, <a href="#editype-xml-json">XML and JSON</a>, <a href="#mapping-functions">Mapping functions</a>, <a href="#acknowledgements">Acknowledgements</a>.</li>
+</ul>
+<p>This tutorial was built and run with Bots 4.0.0. The files you create, all in the <code>usersys</code> folder of your environment
+(the folders exist in a new environment, each with an <code>__init__.py</code>):</p>
+<div class="table-wrap"><table>
+<tr><th>File</th><th>What it is</th></tr>
+<tr><td><code>grammars/x12/x12.py</code></td><td>The X12 envelope (ISA, GS, GE, IEA), in and out.</td></tr>
+<tr><td><code>grammars/x12/records004010.py</code></td><td>The segments of version 004010 used here (cut down).</td></tr>
+<tr><td><code>grammars/x12/204004010.py</code>, <code>990004010.py</code>, <code>210004010.py</code>, <code>997004010.py</code></td><td>The four X12 messages (cut down).</td></tr>
+<tr><td><code>grammars/json/loadtender.py</code></td><td>The JSON tender Bots writes for the TMS (checked: editype <code>json</code>).</td></tr>
+<tr><td><code>grammars/json/freightinvoice.py</code></td><td>The JSON invoice of the TMS (checked; unknown fields ignored).</td></tr>
+<tr><td><code>grammars/jsonnocheck/tenderresponse.py</code></td><td>The JSON response of the TMS (not checked: editype <code>jsonnocheck</code>).</td></tr>
+<tr><td><code>mappings/x12/loadtender_x12_to_json.py</code></td><td>204 → JSON tender, for all shippers.</td></tr>
+<tr><td><code>mappings/x12/loadtender_x12_to_json_shipperc.py</code></td><td>204 → JSON tender for ShipperC: the common mapping plus its rates.</td></tr>
+<tr><td><code>mappings/x12/loadtender_x12_to_990.py</code></td><td>204 → automatic 990 (accept), for shippers with <code>attr2</code> = <code>auto</code>.</td></tr>
+<tr><td><code>mappings/jsonnocheck/tenderresponse_json_to_x12.py</code></td><td>JSON response → X12 990.</td></tr>
+<tr><td><code>mappings/json/freightinvoice_json_to_x12.py</code></td><td>JSON invoice → X12 210.</td></tr>
+<tr><td><code>partners/x12/SHIPPERB.py</code></td><td>Envelope settings for ShipperB only.</td></tr>
+</table></div>
+<p>In the web interface you add 4 partners and 1 partner group, 1 code list with 6 entries, 9 channels, 5 translations, 2 routes
+with 12 parts, and 1 confirm rule.</p>
+<div class="note info"><span class="label">Note</span><p>The X12 grammars on this page are <b>cut down</b> for the
+tutorial: only the segments the example uses, and each segment only up to the last element used here. They follow
+the X12 004010 standard for what they contain, but a real 204 from a shipper often has more (MS3, PLD, LAD, N7
+details…). For production use complete grammars (for example from the plugins on the Bots website) and check them
+against the implementation guide of each shipper. See <a href="#editype-x12">X12</a>.</p></div>
+
+<h3 id="int-logistics--part1">Part 1: Partners, a partner group and partner fields</h3>
+<p>Every shipper is a partner. The group <code>SHIPPERS</code> says "these are our shippers": the translation of the
+204 and the route to the TMS use the group, so a new shipper only has to be added to the group. Two free partner
+fields hold the differences that are only a value:</p>
+<ul>
+<li><code>attr1</code>: the weight unit the shipper wants on the 210: <code>L</code> (pounds) or <code>K</code> (kilograms).</li>
+<li><code>attr2</code>: <code>auto</code> if the shipper gets an automatic 990 (accept) as soon as the 204 arrives.</li>
+</ul>
+<ol class="steps">
+<li><b>Add the group.</b> <span class="ui">Configuration</span> → <span class="ui">Partnergroups</span> → <span class="ui">Add</span>: tick <span class="ui">Active</span>, <span class="ui">Partner identification</span> <code>SHIPPERS</code>, <span class="ui">Name</span> <code>Shippers</code>. <span class="ui">Save</span>.</li>
+<li><b>Add your own company.</b> <span class="ui">Configuration</span> → <span class="ui">Partners</span> → <span class="ui">Add</span>: <span class="ui">Active</span>, <code>MYCOMPANY</code>, <code>MyCompany</code>. <span class="ui">Save</span>.</li>
+<li><b>Add the shippers</b> in the same way, and for each open <span class="ui">Is in groups</span> (move <code>SHIPPERS</code> to the right list) and <span class="ui">User defined</span> (attr1, attr2):
+<div class="table-wrap"><table>
+<tr><th>Partner identification</th><th>Name</th><th>Is in groups</th><th>attr1 (weight unit on 210)</th><th>attr2 (automatic 990)</th></tr>
+<tr><td><code>SHIPPERA</code></td><td>ShipperA</td><td><code>SHIPPERS</code></td><td><code>L</code></td><td><code>auto</code></td></tr>
+<tr><td><code>SHIPPERB</code></td><td>ShipperB</td><td><code>SHIPPERS</code></td><td><code>L</code></td><td>(empty)</td></tr>
+<tr><td><code>SHIPPERC</code></td><td>ShipperC</td><td><code>SHIPPERS</code></td><td><code>K</code></td><td>(empty)</td></tr>
+</table></div></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p><span class="ui">Configuration</span> → <span class="ui">Partners</span> lists
+<code>MYCOMPANY (MyCompany)</code>, <code>SHIPPERA (ShipperA)</code>, <code>SHIPPERB (ShipperB)</code>,
+<code>SHIPPERC (ShipperC)</code>; the filter <span class="ui">By group</span> <code>SHIPPERS</code> shows the three shippers.</p></div>
+<div class="note warn"><span class="label">Watch out</span><p>The partner ID must be exactly the ID in ISA06 of the shipper's
+files (without the trailing spaces): Bots takes the sender of a 204 from ISA06 (see the envelope grammar in Part 2). A
+shipper that sends <code>SHIPPERA1</code> instead of <code>SHIPPERA</code> is a different partner to Bots.</p></div>
+
+<h3 id="int-logistics--part2">Part 2: The X12 grammars</h3>
+<p>Bots needs the envelope (<code>x12.py</code>), the segments (<code>records004010.py</code>) and one grammar per
+message. Bots finds the grammar of a received message from ST01 and GS08: <code>204</code> + <code>004010</code> =
+<code>204004010.py</code>.</p>
+<ol class="steps">
+<li><b>Write the envelope grammar</b> <code>usersys/grammars/x12/x12.py</code>. Unlike the outgoing-only envelope of
+<a href="#tutorial-first-translation">your first translation</a>, this one also reads: the <code>QUERIES</code> give each
+received message its sender (ISA06), receiver (ISA08) and test indicator (ISA15), and <code>SUBTRANSLATION</code>
+finds the message grammar.
+<pre><code class="language-python">from bots.botsconfig import *
+
+# Envelope of every X12 file, in and out.
+# In: the QUERIES give each message its sender, receiver and test indicator;
+#     SUBTRANSLATION finds the message grammar (ST01 + GS08, eg 204 + 004010).
+# Out: the syntax gives the defaults for ISA and GS.
+syntax = {
+    'version': '00401',
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+    'ISA14': '0',
+}
+
+nextmessage = ({'BOTSID': 'ISA'}, {'BOTSID': 'GS'}, {'BOTSID': 'ST'})
+
+structure = [
+    {ID: 'ISA', MIN: 1, MAX: 99999,
+     QUERIES: {
+         'frompartner': {'BOTSID': 'ISA', 'ISA06': None},
+         'topartner': {'BOTSID': 'ISA', 'ISA08': None},
+         'testindicator': {'BOTSID': 'ISA', 'ISA15': None},
+     },
+     LEVEL: [
+         {ID: 'GS', MIN: 1, MAX: 99999, LEVEL: [
+             {ID: 'ST', MIN: 0, MAX: 99999,
+              QUERIES: {'reference': {'BOTSID': 'ST', 'ST02': None}},
+              SUBTRANSLATION: [{'BOTSID': 'ST', 'ST01': None}]},
+             {ID: 'GE', MIN: 1, MAX: 1},
+         ]},
+         {ID: 'IEA', MIN: 1, MAX: 1},
+     ]},
+]
+
+recorddefs = {
+    'ISA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ISA01', 'M', (2, 2), 'AN'],
+        ['ISA02', 'M', (10, 10), 'AN'],
+        ['ISA03', 'M', (2, 2), 'AN'],
+        ['ISA04', 'M', (10, 10), 'AN'],
+        ['ISA05', 'M', (2, 2), 'AN'],
+        ['ISA06', 'M', (15, 15), 'AN'],
+        ['ISA07', 'M', (2, 2), 'AN'],
+        ['ISA08', 'M', (15, 15), 'AN'],
+        ['ISA09', 'M', (6, 6), 'DT'],
+        ['ISA10', 'M', (4, 4), 'TM'],
+        ['ISA11', 'M', (1, 1), 'AN'],
+        ['ISA12', 'M', (5, 5), 'AN'],
+        ['ISA13', 'M', (9, 9), 'N0'],
+        ['ISA14', 'M', (1, 1), 'AN'],
+        ['ISA15', 'M', (1, 1), 'AN'],
+        # ISA16 is the component separator itself (eg &gt;): Bots reads it as an empty
+        # composite of two parts, and writes it itself when it makes an envelope.
+        ['ISA16', 'C', [
+            ['ISA16.01', 'C', 1, 'AN'],
+            ['ISA16.02', 'C', 1, 'AN'],
+        ]],
+    ],
+    'GS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GS01', 'M', (2, 2), 'AN'],
+        ['GS02', 'M', (2, 15), 'AN'],
+        ['GS03', 'M', (2, 15), 'AN'],
+        ['GS04', 'M', (8, 8), 'DT'],
+        ['GS05', 'M', (4, 8), 'TM'],
+        ['GS06', 'M', (1, 9), 'N0'],
+        ['GS07', 'M', (1, 2), 'AN'],
+        ['GS08', 'M', (1, 12), 'AN'],
+    ],
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'AN'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'GE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GE01', 'M', (1, 6), 'N0'],
+        ['GE02', 'M', (1, 9), 'N0'],
+    ],
+    'IEA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['IEA01', 'M', (1, 5), 'N0'],
+        ['IEA02', 'M', (9, 9), 'N0'],
+    ],
+}</code></pre>
+<ul>
+<li><code>syntax</code>: defaults for every X12 file Bots writes: ISA version <code>00401</code>, ID qualifiers <code>ZZ</code>, ISA14 <code>0</code> (no TA1 asked).</li>
+<li><code>nextmessage</code>: each ST is translated on its own, so a file with two 204s gives two JSON tenders.</li>
+<li><code>ST</code> has <code>MIN: 0</code>: when Bots writes an envelope, the messages are not in the tree (they are added as text), so the check must allow zero.</li>
+<li><code>ISA16</code> is a composite: see the comment.</li>
+</ul></li>
+<li><b>Write the segments</b> <code>usersys/grammars/x12/records004010.py</code>. Lengths are <code>(minimum, maximum)</code>;
+format <code>N2</code> is a number with 2 <b>implied</b> decimals (<code>185000</code> means 1850.00), <code>R</code> a
+number with a decimal point where needed, <code>DT</code> a date, <code>TM</code> a time, <code>ID</code> a code.
+<pre><code class="language-python">from bots.botsconfig import *
+
+# X12 004010 segments used by the 204, 990, 210 and 997 of this tutorial.
+# Cut down: only these segments, and each only up to the last element used here.
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],      # transaction set: 204, 990, 210, 997
+        ['ST02', 'M', (4, 9), 'AN'],      # control number
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],     # number of segments ST..SE
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+    # ---- 204 load tender -------------------------------------------------
+    'B2': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['B201', 'C', (2, 2), 'ID'],
+        ['B202', 'C', (2, 4), 'ID'],      # SCAC of the carrier
+        ['B203', 'C', (6, 9), 'AN'],
+        ['B204', 'C', (1, 30), 'AN'],     # shipment id (the shipper's load number)
+        ['B205', 'C', (1, 1), 'ID'],
+        ['B206', 'M', (2, 2), 'ID'],      # payment: PP prepaid, CC collect, TP third party
+    ],
+    'B2A': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['B2A01', 'M', (2, 2), 'ID'],     # purpose: 00 original, 01 cancel, 04 change
+        ['B2A02', 'C', (2, 2), 'ID'],
+    ],
+    'L11': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['L1101', 'C', (1, 30), 'AN'],    # reference
+        ['L1102', 'C', (2, 3), 'ID'],     # qualifier: BM bill of lading, PO, CR, ...
+        ['L1103', 'C', (1, 80), 'AN'],
+    ],
+    'G62': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['G6201', 'C', (2, 2), 'ID'],     # date qualifier: 37/38 pickup, 53/54 delivery
+        ['G6202', 'C', (8, 8), 'DT'],
+        ['G6203', 'C', (1, 2), 'ID'],     # time qualifier
+        ['G6204', 'C', (4, 8), 'TM'],
+        ['G6205', 'C', (2, 2), 'ID'],     # time zone
+    ],
+    'NTE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['NTE01', 'C', (3, 3), 'ID'],
+        ['NTE02', 'M', (1, 80), 'AN'],
+    ],
+    'N1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N101', 'M', (2, 3), 'ID'],      # SH shipper, BT bill-to, SF ship from, ST ship to
+        ['N102', 'C', (1, 60), 'AN'],
+        ['N103', 'C', (1, 2), 'ID'],
+        ['N104', 'C', (2, 80), 'AN'],
+    ],
+    'N3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N301', 'M', (1, 55), 'AN'],
+        ['N302', 'C', (1, 55), 'AN'],
+    ],
+    'N4': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N401', 'C', (2, 30), 'AN'],     # city
+        ['N402', 'C', (2, 2), 'ID'],      # state
+        ['N403', 'C', (3, 15), 'ID'],     # postal code
+        ['N404', 'C', (2, 3), 'ID'],      # country
+    ],
+    'G61': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['G6101', 'M', (2, 2), 'ID'],
+        ['G6102', 'M', (1, 60), 'AN'],    # contact name
+        ['G6103', 'C', (2, 2), 'ID'],     # TE phone, EM e-mail
+        ['G6104', 'C', (1, 80), 'AN'],
+    ],
+    'N7': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N701', 'C', (1, 4), 'AN'],
+        ['N702', 'M', (1, 10), 'AN'],     # equipment (trailer) number
+        ['N703', 'C', (1, 10), 'R'],
+        ['N704', 'C', (1, 2), 'ID'],
+        ['N705', 'C', (3, 8), 'N0'],
+        ['N706', 'C', (2, 6), 'N0'],
+        ['N707', 'C', (1, 6), 'N0'],
+        ['N708', 'C', (1, 8), 'R'],
+        ['N709', 'C', (1, 1), 'ID'],
+        ['N710', 'C', (1, 1), 'ID'],
+        ['N711', 'C', (2, 2), 'ID'],      # equipment type: TV van, RT reefer, FT flatbed
+        ['N712', 'C', (2, 4), 'ID'],
+        ['N713', 'C', (3, 6), 'AN'],
+        ['N714', 'C', (1, 3), 'AN'],
+        ['N715', 'C', (4, 5), 'N0'],      # length, feet and inches: 5300 = 53 ft
+    ],
+    'S5': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['S501', 'M', (1, 3), 'N0'],      # stop sequence number
+        ['S502', 'M', (2, 2), 'ID'],      # LD/CL/PL load, UL/CU/PU unload
+        ['S503', 'C', (1, 10), 'R'],      # weight
+        ['S504', 'C', (1, 1), 'ID'],      # L pounds, K kilograms
+        ['S505', 'C', (1, 10), 'R'],      # number of units (pallets)
+        ['S506', 'C', (2, 2), 'ID'],
+    ],
+    'AT8': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AT801', 'C', (1, 2), 'ID'],     # G gross
+        ['AT802', 'C', (1, 1), 'ID'],     # L or K
+        ['AT803', 'C', (1, 10), 'R'],     # weight
+        ['AT804', 'C', (1, 7), 'N0'],     # pallets
+        ['AT805', 'C', (1, 7), 'N0'],     # pieces
+    ],
+    'OID': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['OID01', 'C', (1, 30), 'AN'],
+        ['OID02', 'C', (1, 22), 'AN'],    # purchase order number
+        ['OID03', 'C', (1, 30), 'AN'],
+        ['OID04', 'C', (2, 2), 'ID'],
+        ['OID05', 'C', (1, 15), 'R'],
+        ['OID06', 'C', (1, 1), 'ID'],
+        ['OID07', 'C', (1, 10), 'R'],
+    ],
+    'L3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['L301', 'C', (1, 10), 'R'],      # weight
+        ['L302', 'C', (1, 2), 'ID'],
+        ['L303', 'C', (1, 9), 'R'],
+        ['L304', 'C', (2, 2), 'ID'],
+        ['L305', 'C', (1, 12), 'N2'],     # charge, 2 implied decimals
+        ['L306', 'C', (1, 12), 'N2'],
+        ['L307', 'C', (1, 12), 'N2'],
+        ['L308', 'C', (3, 3), 'ID'],
+        ['L309', 'C', (1, 8), 'R'],
+        ['L310', 'C', (1, 1), 'ID'],
+        ['L311', 'C', (1, 7), 'N0'],      # lading quantity
+        ['L312', 'C', (1, 1), 'ID'],      # weight unit
+    ],
+    # ---- 990 response ----------------------------------------------------
+    'B1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['B101', 'M', (2, 4), 'ID'],      # SCAC of the carrier
+        ['B102', 'M', (1, 30), 'AN'],     # shipment id from B204 of the tender
+        ['B103', 'M', (8, 8), 'DT'],      # date of the response
+        ['B104', 'M', (1, 1), 'ID'],      # A accepted, D declined
+    ],
+    'N9': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['N901', 'M', (2, 3), 'ID'],
+        ['N902', 'C', (1, 30), 'AN'],
+        ['N903', 'C', (1, 45), 'AN'],
+    ],
+    'K1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['K101', 'M', (1, 30), 'AN'],
+        ['K102', 'C', (1, 30), 'AN'],
+    ],
+    # ---- 210 freight invoice ---------------------------------------------
+    'B3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['B301', 'C', (1, 1), 'ID'],
+        ['B302', 'M', (1, 22), 'AN'],     # invoice number
+        ['B303', 'C', (1, 30), 'AN'],     # shipment id (the shipper's load number)
+        ['B304', 'M', (2, 2), 'ID'],      # payment method
+        ['B305', 'C', (1, 1), 'ID'],
+        ['B306', 'M', (8, 8), 'DT'],      # invoice date
+        ['B307', 'M', (1, 12), 'N2'],     # amount due, 2 implied decimals
+        ['B308', 'C', (2, 2), 'ID'],
+        ['B309', 'C', (8, 8), 'DT'],      # delivery date
+        ['B310', 'C', (3, 3), 'ID'],      # 035 = delivered
+        ['B311', 'M', (2, 4), 'ID'],      # SCAC
+    ],
+    'C3': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['C301', 'M', (3, 3), 'ID'],      # currency
+    ],
+    'LX': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['LX01', 'M', (1, 6), 'N0'],
+    ],
+    'L5': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['L501', 'C', (1, 3), 'N0'],
+        ['L502', 'C', (1, 50), 'AN'],     # description
+    ],
+    'L0': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['L001', 'C', (1, 3), 'N0'],
+        ['L002', 'C', (1, 11), 'R'],
+        ['L003', 'C', (2, 2), 'ID'],
+        ['L004', 'C', (1, 10), 'R'],      # weight
+        ['L005', 'C', (1, 2), 'ID'],      # G gross
+        ['L006', 'C', (1, 8), 'R'],
+        ['L007', 'C', (1, 1), 'ID'],
+        ['L008', 'C', (1, 7), 'N0'],      # lading quantity
+        ['L009', 'C', (3, 3), 'ID'],      # PLT pallets
+        ['L010', 'C', (2, 25), 'AN'],
+        ['L011', 'C', (1, 1), 'ID'],      # L pounds, K kilograms
+    ],
+    'L1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['L101', 'C', (1, 3), 'N0'],
+        ['L102', 'C', (1, 9), 'R'],
+        ['L103', 'C', (2, 2), 'ID'],
+        ['L104', 'C', (1, 12), 'N2'],     # charge, 2 implied decimals
+        ['L105', 'C', (1, 12), 'N2'],
+        ['L106', 'C', (1, 12), 'N2'],
+        ['L107', 'C', (1, 9), 'AN'],
+        ['L108', 'C', (3, 3), 'ID'],      # charge code
+    ],
+    # ---- 997 functional acknowledgement ----------------------------------
+    'AK1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK101', 'M', (2, 2), 'ID'],
+        ['AK102', 'M', (1, 9), 'N0'],
+    ],
+    'AK2': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK201', 'M', (3, 3), 'ID'],
+        ['AK202', 'M', (4, 9), 'AN'],
+    ],
+    'AK5': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK501', 'M', (1, 1), 'ID'],
+    ],
+    'AK9': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['AK901', 'M', (1, 1), 'ID'],
+        ['AK902', 'M', (1, 6), 'N0'],
+        ['AK903', 'M', (1, 6), 'N0'],
+        ['AK904', 'M', (1, 6), 'N0'],
+    ],
+}</code></pre></li>
+<li><b>Write the 204 grammar</b> <code>usersys/grammars/x12/204004010.py</code>. The <b>S5 loop</b> is one stop: S5 and
+the segments under it (references, dates, weight, the place in an N1 loop, the orders in OID). A load has at least one
+S5; ours have two or three.
+<pre><code class="language-python">from bots.botsconfig import *
+from .records004010 import recorddefs
+
+# X12 204 Motor Carrier Load Tender, version 004010 (cut down for the tutorial).
+syntax = {
+    'functionalgroup': 'SM',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'B2', MIN: 1, MAX: 1},
+        {ID: 'B2A', MIN: 1, MAX: 1},
+        {ID: 'L11', MIN: 0, MAX: 50},
+        {ID: 'G62', MIN: 0, MAX: 1},
+        {ID: 'NTE', MIN: 0, MAX: 10},
+        {ID: 'N1', MIN: 0, MAX: 5, LEVEL: [
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+            {ID: 'G61', MIN: 0, MAX: 3},
+        ]},
+        {ID: 'N7', MIN: 0, MAX: 10},
+        {ID: 'S5', MIN: 1, MAX: 999, LEVEL: [
+            {ID: 'L11', MIN: 0, MAX: 50},
+            {ID: 'G62', MIN: 0, MAX: 2},
+            {ID: 'AT8', MIN: 0, MAX: 1},
+            {ID: 'NTE', MIN: 0, MAX: 20},
+            {ID: 'N1', MIN: 0, MAX: 1, LEVEL: [
+                {ID: 'N3', MIN: 0, MAX: 2},
+                {ID: 'N4', MIN: 0, MAX: 1},
+                {ID: 'G61', MIN: 0, MAX: 3},
+            ]},
+            {ID: 'OID', MIN: 0, MAX: 999},
+        ]},
+        {ID: 'L3', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]</code></pre></li>
+<li><b>Write the 990 grammar</b> <code>usersys/grammars/x12/990004010.py</code>:
+<pre><code class="language-python">from bots.botsconfig import *
+from .records004010 import recorddefs
+
+# X12 990 Response to a Load Tender, version 004010 (cut down for the tutorial).
+syntax = {
+    'functionalgroup': 'GF',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'B1', MIN: 1, MAX: 1},
+        {ID: 'N9', MIN: 0, MAX: 1},
+        {ID: 'G62', MIN: 0, MAX: 1},
+        {ID: 'K1', MIN: 0, MAX: 10},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]</code></pre></li>
+<li><b>Write the 210 grammar</b> <code>usersys/grammars/x12/210004010.py</code>. Each charge is one <b>LX loop</b>
+(LX, L5 description, L0 weight and quantity, L1 amount and charge code); L3 has the totals.
+<pre><code class="language-python">from bots.botsconfig import *
+from .records004010 import recorddefs
+
+# X12 210 Motor Carrier Freight Details and Invoice, version 004010 (cut down for the tutorial).
+syntax = {
+    'functionalgroup': 'IM',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'B3', MIN: 1, MAX: 1},
+        {ID: 'C3', MIN: 0, MAX: 1},
+        {ID: 'N9', MIN: 0, MAX: 300},
+        {ID: 'G62', MIN: 0, MAX: 6},
+        {ID: 'N1', MIN: 0, MAX: 10, LEVEL: [
+            {ID: 'N3', MIN: 0, MAX: 2},
+            {ID: 'N4', MIN: 0, MAX: 1},
+        ]},
+        {ID: 'LX', MIN: 1, MAX: 9999, LEVEL: [
+            {ID: 'L5', MIN: 0, MAX: 30},
+            {ID: 'L0', MIN: 0, MAX: 10},
+            {ID: 'L1', MIN: 0, MAX: 10},
+        ]},
+        {ID: 'L3', MIN: 1, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]</code></pre></li>
+<li><b>Write the 997 grammar</b> <code>usersys/grammars/x12/997004010.py</code>. Bots writes the 997 itself (no
+mapping), but it needs this grammar to write it.
+<pre><code class="language-python">from bots.botsconfig import *
+from .records004010 import recorddefs
+
+# X12 997 Functional Acknowledgment, version 004010 (cut down: no AK3/AK4 error details).
+syntax = {
+    'functionalgroup': 'FA',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'AK1', MIN: 1, MAX: 1},
+        {ID: 'AK2', MIN: 0, MAX: 999999, LEVEL: [
+            {ID: 'AK5', MIN: 1, MAX: 1},
+        ]},
+        {ID: 'AK9', MIN: 1, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]</code></pre></li>
+<li><b>Check the grammars</b> (Windows: <code>-cC:/bots/env/logistics/config</code>):
+<pre><code class="language-bash">bots-grammarcheck -c/srv/bots/env/logistics/config x12 x12
+bots-grammarcheck -c/srv/bots/env/logistics/config x12 204004010
+bots-grammarcheck -c/srv/bots/env/logistics/config x12 990004010
+bots-grammarcheck -c/srv/bots/env/logistics/config x12 210004010
+bots-grammarcheck -c/srv/bots/env/logistics/config x12 997004010</code></pre></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Each command prints <code>OK - no error found in grammar</code>.</p></div>
+
+<h3 id="int-logistics--part3">Part 3: The JSON grammars: json and jsonnocheck</h3>
+<p>The TMS has its own JSON. There are two editypes for it, and this tutorial uses both on purpose:</p>
+<div class="table-wrap"><table>
+<tr><th></th><th><code>json</code></th><th><code>jsonnocheck</code></th></tr>
+<tr><td>Grammar</td><td><code>structure</code> and <code>recorddefs</code>: every object and field is declared.</td><td>Only a <code>syntax</code> (or an empty file).</td></tr>
+<tr><td>Checks</td><td>Mandatory fields, lengths, numbers, booleans, how often a record may occur. Unknown fields are errors, unless <code>checkunknownentities</code> is <code>False</code>.</td><td>None. What is in the JSON is read as it is.</td></tr>
+<tr><td>Partners from the file</td><td>Yes, with <code>QUERIES</code> in the grammar, before the translation is chosen.</td><td>No: the mapping must read them and set them.</td></tr>
+<tr><td>Writing</td><td>Fields in the order of <code>recorddefs</code>; options <code>named_root_object</code>, <code>max1_as_object</code>, <code>json_write_numericals</code> <span class="badge green">new in 4.0</span>.</td><td>Fields sorted alphabetically, child records always lists.</td></tr>
+<tr><td>Use it for</td><td>Files you write for a system that must get correct data; files you read where errors must be caught.</td><td>Small, flat or changing files; passing data through.</td></tr>
+</table></div>
+<ol class="steps">
+<li><b>Write the grammar of the tender</b> <code>usersys/grammars/json/loadtender.py</code>. Bots writes it, so it is
+checked: the TMS never gets a tender without a load number or a stop without an address.
+<pre><code class="language-python">from bots.botsconfig import *
+
+# Load tender as the TMS of MyCompany reads it (one JSON object per file).
+syntax = {
+    'indented': True,               # readable output
+    'named_root_object': False,     # write {...}, not {"tender": {...}}
+    'max1_as_object': True,         # a record with MAX 1 (address) is an object, not a list
+    'json_write_numericals': True,  # fields with format R are written as JSON numbers
+}
+
+structure = [
+    {ID: 'tender', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'references', MIN: 0, MAX: 99},
+        {ID: 'stops', MIN: 2, MAX: 99, LEVEL: [
+            {ID: 'address', MIN: 1, MAX: 1},
+            {ID: 'stop_refs', MIN: 0, MAX: 99},
+        ]},
+    ]},
+]
+
+recorddefs = {
+    'tender': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['shipper_id', 'M', 35, 'AN'],
+        ['carrier_ref', 'M', 35, 'AN'],
+        ['test_load', 'C', 5, 'B'],
+        ['load_id', 'M', 30, 'AN'],
+        ['purpose', 'M', 10, 'AN'],
+        ['payment_terms', 'C', 2, 'AN'],
+        ['bol_no', 'C', 30, 'AN'],
+        ['equipment', 'C', 20, 'AN'],
+        ['trailer_no', 'C', 10, 'AN'],
+        ['gross_weight_lb', 'C', 10, 'R'],
+        ['total_pallets', 'C', 10, 'R'],
+        ['offered_rate', 'C', 12, 'R'],
+        ['rate_linehaul', 'C', 12, 'R'],
+        ['rate_fuel', 'C', 12, 'R'],
+        ['auto_accepted', 'C', 5, 'B'],
+        ['notes', 'C', 1000, 'AN'],
+    ],
+    'references': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['qualifier', 'M', 3, 'AN'],
+        ['value', 'M', 30, 'AN'],
+        ['description', 'C', 80, 'AN'],
+    ],
+    'stops': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['stop_seq', 'M', 3, 'R'],
+        ['stop_type', 'M', 10, 'AN'],          # pickup or delivery
+        ['name', 'M', 60, 'AN'],
+        ['window_start', 'C', 16, 'AN'],       # YYYY-MM-DDTHH:MM
+        ['window_end', 'C', 16, 'AN'],
+        ['weight_lb', 'C', 10, 'R'],
+        ['pallets', 'C', 10, 'R'],
+        ['po_numbers', 'C', 200, 'AN'],
+        ['contact', 'C', 60, 'AN'],
+        ['phone', 'C', 80, 'AN'],
+    ],
+    'address': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['street1', 'M', 55, 'AN'],
+        ['street2', 'C', 55, 'AN'],
+        ['city', 'M', 30, 'AN'],
+        ['state', 'M', 2, 'AN'],
+        ['zip', 'M', 15, 'AN'],
+        ['country', 'C', 3, 'AN'],
+    ],
+    'stop_refs': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['qualifier', 'M', 3, 'AN'],
+        ['value', 'M', 30, 'AN'],
+    ],
+}</code></pre>
+<ul>
+<li><code>named_root_object: False</code>: the file is <code>{...}</code>, not <code>{"tender": {...}}</code>.</li>
+<li><code>max1_as_object: True</code>: <code>address</code> (MAX 1) becomes an object; <code>stops</code> and <code>references</code> stay lists.</li>
+<li><code>json_write_numericals: True</code>: fields with format <code>R</code> are JSON numbers (<code>18450</code>, not <code>"18450"</code>). Format <code>B</code> is a JSON boolean (<code>true</code>/<code>false</code>).</li>
+<li><code>stops</code> has <code>MIN: 2</code>: a tender needs a pickup and a delivery.</li>
+</ul></li>
+<li><b>Write the grammar of the invoice</b> <code>usersys/grammars/json/freightinvoice.py</code>. Bots reads it; the
+TMS writes more fields than Bots needs (here <code>cost_center</code>), so <code>checkunknownentities</code> is off. The
+<code>QUERIES</code> take the partners from the JSON: <code>carrier_ref</code> is the sender, <code>shipper_id</code>
+the receiver; <code>botskey</code> is the reference shown in the web interface.
+<pre><code class="language-python">from bots.botsconfig import *
+
+# Freight invoice as the TMS of MyCompany writes it.
+syntax = {
+    'checkunknownentities': False,   # the TMS writes more fields than Bots needs: ignore them
+}
+
+structure = [
+    {ID: 'invoice', MIN: 1, MAX: 1,
+     QUERIES: {
+         'frompartner': {'BOTSID': 'invoice', 'carrier_ref': None},
+         'topartner': {'BOTSID': 'invoice', 'shipper_id': None},
+         'botskey': {'BOTSID': 'invoice', 'inv_number': None},
+     },
+     LEVEL: [
+         {ID: 'billto', MIN: 0, MAX: 1},
+         {ID: 'charges', MIN: 1, MAX: 99},
+     ]},
+]
+
+recorddefs = {
+    'invoice': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['inv_number', 'M', 22, 'AN'],
+        ['invoiced_on', 'M', 10, 'AN'],       # YYYY-MM-DD
+        ['shipper_id', 'M', 35, 'AN'],
+        ['carrier_ref', 'M', 35, 'AN'],
+        ['load_id', 'M', 30, 'AN'],
+        ['pro_no', 'C', 30, 'AN'],
+        ['bol_no', 'C', 30, 'AN'],
+        ['currency', 'C', 3, 'AN'],
+        ['terms', 'C', 2, 'AN'],
+        ['shipped_on', 'C', 10, 'AN'],
+        ['delivered_on', 'C', 10, 'AN'],
+        ['total_amount', 'M', 12, 'R'],
+        ['gross_weight_lb', 'C', 10, 'R'],
+        ['total_pallets', 'C', 10, 'R'],
+    ],
+    'billto': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['name', 'M', 60, 'AN'],
+        ['street1', 'C', 55, 'AN'],
+        ['city', 'C', 30, 'AN'],
+        ['state', 'C', 2, 'AN'],
+        ['zip', 'C', 15, 'AN'],
+    ],
+    'charges': [
+        ['BOTSID', 'M', 20, 'AN'],
+        ['charge_type', 'M', 20, 'AN'],        # linehaul, fuel, detention, stopoff, ...
+        ['text', 'C', 50, 'AN'],
+        ['amount', 'M', 12, 'R'],
+    ],
+}</code></pre></li>
+<li><b>Write the grammar of the response</b> <code>usersys/grammars/jsonnocheck/tenderresponse.py</code>. The response
+is one flat object without a name; <code>defaultBOTSIDroot</code> names its root record <code>response</code> (the
+default name is <code>ROOT</code>).
+<pre><code class="language-python"># Response of the TMS to a load tender: one flat JSON object.
+# jsonnocheck: no structure, no recorddefs, nothing is checked.
+# The object has no name, so give the root record a name here.
+syntax = {
+    'defaultBOTSIDroot': 'response',
+}</code></pre></li>
+<li><b>Check them</b>: <code>bots-grammarcheck -c… json loadtender</code>, <code>… json freightinvoice</code>, <code>… jsonnocheck tenderresponse</code>.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Three times <code>OK - no error found in grammar</code>.</p></div>
+
+<h3 id="int-logistics--part4">Part 4: The 204 mapping: stops, dates, references, weights</h3>
+<p>One mapping serves all shippers. It is the largest piece of this tutorial, so read it with the 204 of ShipperA (in
+<a href="#int-logistics--run">Run it end to end</a>) next to it.</p>
+<ol class="steps">
+<li><b>Write</b> <code>usersys/mappings/x12/loadtender_x12_to_json.py</code>:
+<pre><code class="language-python">"""Load tender: X12 204 from a shipper -&gt; JSON load tender for the TMS of MyCompany.
+
+Used for all shippers (translation with frompartner = group SHIPPERS).
+A shipper that needs something different gets its own small mapping that
+calls build_tender() and adds what is different.
+"""
+import decimal
+
+import bots.transform as tr
+from bots.botslib import MappingFormatError
+
+LB_PER_KG = decimal.Decimal('2.20462')
+PICKUP = ('LD', 'CL', 'PL')          # S502: load, complete load, partial load
+DELIVERY = ('UL', 'CU', 'PU')        # S502: unload, complete unload, partial unload
+PURPOSE = {'00': 'new', '01': 'cancel', '04': 'change'}
+# N711 equipment type + N715 length -&gt; equipment code of the TMS
+EQUIPMENT = {
+    ('TV', '5300'): 'VAN53',
+    ('TV', '4800'): 'VAN48',
+    ('RT', '5300'): 'REEFER53',
+    ('FT', '4800'): 'FLAT48',
+}
+
+
+def put_values(node, *path, **fields):
+    """Put only the fields that have a value.
+    (If one value in a put is None, Bots writes nothing at all of that put.)"""
+    values = {key: value for key, value in fields.items() if value is not None and value != ''}
+    if values:
+        node.put(*path[:-1], dict(path[-1], **values))
+
+
+def pounds(weight, unit):
+    """Weight in whole pounds; unit is the X12 weight unit code (L or K)."""
+    if unit == 'K':
+        weight = weight * LB_PER_KG
+    return weight.quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP)
+
+
+def date_time(s5, qualifiers):
+    """First G62 of the stop with one of the qualifiers -&gt; 'YYYY-MM-DDTHH:MM'."""
+    for qualifier in qualifiers:
+        date = s5.get({'BOTSID': 'S5'}, {'BOTSID': 'G62', 'G6201': qualifier, 'G6202': None})
+        if date:
+            time = s5.get({'BOTSID': 'S5'}, {'BOTSID': 'G62', 'G6201': qualifier, 'G6204': None})
+            if time:
+                return tr.datemask(date + time[:4], 'YYYYMMDDHHMM', 'YYYY-MM-DDTHH:MM')
+            return tr.datemask(date, 'YYYYMMDD', 'YYYY-MM-DD')
+    return None
+
+
+def build_tender(inn, out, skip_note=None):
+    """Write the tender. skip_note: function that says which NTE texts are not notes."""
+    shipper = inn.ta_info['frompartner']
+    load_id = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'B2', 'B204': None})
+    if not load_id:
+        raise MappingFormatError('204 from %(shipper)s has no load number in B204.', {'shipper': shipper})
+    # botskey: the reference shown in the web interface, and {botskey} in file names
+    inn.ta_info['botskey'] = load_id
+    out.ta_info['botskey'] = load_id
+
+    purpose = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'B2A', 'B2A01': None})
+    put_values(out, {'BOTSID': 'tender'},
+               shipper_id=shipper,
+               carrier_ref=inn.ta_info['topartner'],
+               test_load=inn.ta_info.get('testindicator') == 'T',
+               load_id=load_id,
+               purpose=PURPOSE.get(purpose, purpose),
+               payment_terms=inn.get({'BOTSID': 'ST'}, {'BOTSID': 'B2', 'B206': None}),
+               bol_no=inn.get({'BOTSID': 'ST'}, {'BOTSID': 'L11', 'L1102': 'BM', 'L1101': None}))
+
+    # L11: all references of the load (the bill of lading BM also has its own field, above)
+    for l11 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'L11'}):
+        ref = out.putloop({'BOTSID': 'tender'}, {'BOTSID': 'references'})
+        put_values(ref, {'BOTSID': 'references'},
+                   qualifier=l11.get({'BOTSID': 'L11', 'L1102': None}),
+                   value=l11.get({'BOTSID': 'L11', 'L1101': None}),
+                   description=l11.get({'BOTSID': 'L11', 'L1103': None}))
+
+    # NTE: the notes of the load in one text
+    notes = []
+    for nte in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'NTE'}):
+        text = nte.get({'BOTSID': 'NTE', 'NTE02': None})
+        if not (skip_note and skip_note(text)):
+            notes.append(text)
+
+    # N7: equipment; L3: the rate the shipper offers (L305 has 2 implied decimals)
+    eq_type = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'N7', 'N711': None})
+    eq_length = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'N7', 'N715': None})
+    put_values(out, {'BOTSID': 'tender'},
+               notes=' / '.join(notes),
+               equipment=EQUIPMENT.get((eq_type, eq_length)),
+               trailer_no=inn.get({'BOTSID': 'ST'}, {'BOTSID': 'N7', 'N702': None}),
+               offered_rate=inn.get({'BOTSID': 'ST'}, {'BOTSID': 'L3', 'L305': None}))
+
+    # S5 loops: the stops, in sequence
+    gross_weight = total_pallets = decimal.Decimal(0)
+    seq = 0
+    for s5 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'S5'}):
+        seq += 1
+        if int(s5.get({'BOTSID': 'S5', 'S501': None})) != seq:
+            raise MappingFormatError('Load %(load)s: stop %(seq)s is out of sequence.',
+                                     {'load': load_id, 'seq': seq})
+        reason = s5.get({'BOTSID': 'S5', 'S502': None})
+        if reason in PICKUP:
+            stop_type, start, end = 'pickup', ('37', '69'), ('38',)
+        elif reason in DELIVERY:
+            stop_type, start, end = 'delivery', ('53', '70'), ('54',)
+        else:
+            raise MappingFormatError('Load %(load)s: unknown stop reason "%(reason)s" in S502.',
+                                     {'load': load_id, 'reason': reason})
+        if seq == 1 and stop_type != 'pickup':
+            raise MappingFormatError('Load %(load)s: the first stop is not a pickup.', {'load': load_id})
+
+        # weight and pallets: in S5, or else in AT8 (getdecimal gives 0 when there is none)
+        weight = pounds(s5.getdecimal({'BOTSID': 'S5', 'S503': None})
+                        or s5.getdecimal({'BOTSID': 'S5'}, {'BOTSID': 'AT8', 'AT803': None}),
+                        s5.get({'BOTSID': 'S5', 'S504': None})
+                        or s5.get({'BOTSID': 'S5'}, {'BOTSID': 'AT8', 'AT802': None}))
+        pallets = (s5.getdecimal({'BOTSID': 'S5', 'S505': None})
+                   or s5.getdecimal({'BOTSID': 'S5'}, {'BOTSID': 'AT8', 'AT804': None}))
+        if stop_type == 'pickup':
+            gross_weight += weight
+            total_pallets += pallets
+
+        # the place: the N1 loop of the stop (SF ship from, ST ship to)
+        name = s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1', 'N102': None})
+        if not name:
+            raise MappingFormatError('Load %(load)s: stop %(seq)s has no N1 (name and address).',
+                                     {'load': load_id, 'seq': seq})
+        po_numbers = [oid.get({'BOTSID': 'OID', 'OID02': None})
+                      for oid in s5.getloop({'BOTSID': 'S5'}, {'BOTSID': 'OID'})]
+
+        stop = out.putloop({'BOTSID': 'tender'}, {'BOTSID': 'stops'})
+        put_values(stop, {'BOTSID': 'stops'},
+                   stop_seq=seq,
+                   stop_type=stop_type,
+                   name=name,
+                   window_start=date_time(s5, start),
+                   window_end=date_time(s5, end),
+                   weight_lb=weight,
+                   pallets=pallets,
+                   po_numbers=','.join(po for po in po_numbers if po),
+                   contact=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'G61', 'G6102': None}),
+                   phone=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'},
+                                        {'BOTSID': 'G61', 'G6103': 'TE', 'G6104': None}))
+        put_values(stop, {'BOTSID': 'stops'}, {'BOTSID': 'address'},
+                   street1=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N3', 'N301': None}),
+                   street2=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N3', 'N302': None}),
+                   city=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N401': None}),
+                   state=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N402': None}),
+                   zip=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N403': None}),
+                   country=s5.get({'BOTSID': 'S5'}, {'BOTSID': 'N1'}, {'BOTSID': 'N4', 'N404': None}))
+        # L11 references of the stop
+        for l11 in s5.getloop({'BOTSID': 'S5'}, {'BOTSID': 'L11'}):
+            ref = stop.putloop({'BOTSID': 'stops'}, {'BOTSID': 'stop_refs'})
+            put_values(ref, {'BOTSID': 'stop_refs'},
+                       qualifier=l11.get({'BOTSID': 'L11', 'L1102': None}),
+                       value=l11.get({'BOTSID': 'L11', 'L1101': None}))
+
+    put_values(out, {'BOTSID': 'tender'}, gross_weight_lb=gross_weight, total_pallets=total_pallets)
+    return load_id
+
+
+def main(inn, out):
+    build_tender(inn, out)
+    # Partner attribute attr2 = 'auto': this shipper gets an automatic 990 (accept) from Bots.
+    # Returning an alt value makes Bots translate the same 204 again, with the
+    # translation that has this alt (204 -&gt; 990).
+    if tr.partnerlookup(inn.ta_info['frompartner'], 'attr2', safe=None) == 'auto':
+        out.put({'BOTSID': 'tender', 'auto_accepted': True})
+        return 'auto990'
+    return None</code></pre></li>
+</ol>
+<p>What it does, piece by piece:</p>
+<ul>
+<li><b><code>put_values</code></b>: in Bots, <code>put()</code> writes nothing at all when one of its values is
+<code>None</code> (that is how optional values are left out). With several fields in one put, one missing value
+would lose all of them. The helper drops the empty values first. Use it whenever one put has optional fields.</li>
+<li><b>References (L11)</b>: every L11 under ST becomes an entry in <code>references</code>, with qualifier
+(<code>BM</code> bill of lading, <code>CR</code> customer reference, <code>PO</code> purchase order…). The bill of
+lading also gets its own field: <code>inn.get(…, {'BOTSID': 'L11', 'L1102': 'BM', 'L1101': None})</code> finds the
+L11 whose qualifier is BM and returns its value. L11s under an S5 belong to that stop (<code>stop_refs</code>).</li>
+<li><b>Stops (S5 loops)</b>: <code>getloop</code> goes through the stops in the order of the file. S501 must count
+1, 2, 3…; S502 says what happens: <code>LD</code>, <code>CL</code>, <code>PL</code> load (pickup), <code>UL</code>,
+<code>CU</code>, <code>PU</code> unload (delivery). The first stop must be a pickup. Anything else stops the
+translation with a clear error, so the shipper can be told what is wrong.</li>
+<li><b>Dates and times (G62)</b>: the qualifier in G6201 says which date it is. For a pickup the window starts at
+<code>37</code> (ship not before) or <code>69</code> (scheduled pickup) and ends at <code>38</code> (ship not later
+than); for a delivery <code>53</code>/<code>70</code> and <code>54</code>. Date G6202 (YYYYMMDD) and time G6204 (HHMM)
+become one value <code>2026-10-20T08:00</code> with <code>tr.datemask</code>. A stop without an end time simply has no
+<code>window_end</code>.</li>
+<li><b>Weights and units</b>: the weight is in S503 with its unit in S504, or in AT803 with the unit in AT802 (ShipperB
+uses AT8). <code>K</code> is kilograms, <code>L</code> pounds; the TMS wants whole pounds. <code>getdecimal</code> gives
+<code>0</code> when there is no value, so <code>a or b</code> falls back to the second place. Total weight and pallets
+are the sum of the pickups.</li>
+<li><b>Equipment (N7)</b>: equipment type N711 and length N715 (<code>5300</code> = 53 feet) give the equipment code of the TMS.</li>
+<li><b><code>botskey</code></b>: the load number becomes the reference of the incoming and outgoing document, visible in the web
+interface and used in the file name <code>tender_{botskey}_{unique}.json</code>.</li>
+<li><b>The automatic 990</b>: <code>main</code> reads <code>attr2</code> of the sender with <code>tr.partnerlookup</code>
+(<code>safe=None</code>: <code>None</code> when empty). For <code>auto</code> it returns <code>'auto990'</code>. Bots
+then writes the JSON tender and translates the same 204 again, now with alt <code>auto990</code>; the translation with
+that alt makes the 990 (see <a href="#translations--chain">Chained translations</a>).</li>
+</ul>
+<ol class="steps" start="2">
+<li><b>Write the mapping of the automatic 990</b> <code>usersys/mappings/x12/loadtender_x12_to_990.py</code>. A 990
+goes the other way, so it swaps sender and receiver. <code>tr.strftime</code> gives today's date (fixed during
+acceptance tests).
+<pre><code class="language-python">"""Automatic 990 (accept) for a load tender, for shippers with partner attribute attr2 = 'auto'.
+
+Runs as the second translation of the same 204 (alt 'auto990', returned by loadtender_x12_to_json).
+"""
+import bots.transform as tr
+
+SCAC = 'MYCO'   # standard carrier alpha code of MyCompany
+
+
+def main(inn, out):
+    # the 990 goes back: sender and receiver swap
+    out.ta_info['frompartner'] = inn.ta_info['topartner']
+    out.ta_info['topartner'] = inn.ta_info['frompartner']
+    load_id = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'B2', 'B204': None})
+    out.ta_info['botskey'] = load_id
+
+    st02 = out.ta_info['reference'].zfill(4)
+    out.put({'BOTSID': 'ST', 'ST01': '990', 'ST02': st02})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'B1',
+                               'B101': SCAC,
+                               'B102': load_id,
+                               'B103': tr.strftime('%Y%m%d'),
+                               'B104': 'A'})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': st02})</code></pre></li>
+</ol>
+
+<h3 id="int-logistics--part5">Part 5: When one shipper needs something different</h3>
+<p>There are four tools, from light to heavy. Use the lightest one that does the job:</p>
+<div class="table-wrap"><table>
+<tr><th>Difference</th><th>Tool</th><th>In this tutorial</th></tr>
+<tr><td>A value per shipper (a unit, a yes/no, an ID the shipper knows you by)</td><td>Partner fields <code>attr1</code>…<code>attr5</code>, read with <code>tr.partnerlookup</code></td><td>Weight unit on the 210 (<code>attr1</code>), automatic 990 (<code>attr2</code>)</td></tr>
+<tr><td>A code per shipper (charge codes, equipment codes, units)</td><td>A code list with general entries and entries per shipper</td><td><code>SHIPPERB:detention</code> → <code>DTV</code> (Part 6)</td></tr>
+<tr><td>Envelope settings (qualifiers, ISA14, ISA15, line breaks, separators)</td><td>Partner syntax file <code>usersys/partners/x12/&lt;partner&gt;.py</code></td><td>ShipperB: one line, ISA14 = 1</td></tr>
+<tr><td>Different content or logic</td><td>Its own mapping, chosen by a translation for that partner, that reuses the common mapping</td><td>ShipperC: rates in NTE</td></tr>
+</table></div>
+<ol class="steps">
+<li><b>Write the mapping of ShipperC</b> <code>usersys/mappings/x12/loadtender_x12_to_json_shipperc.py</code>. It
+calls <code>build_tender</code> of the common mapping (a normal Python import from the same folder) and only adds what
+is special. Fixes in the common mapping apply to ShipperC too.
+<pre><code class="language-python">"""Load tender of ShipperC: as for all shippers, plus the agreed rates.
+
+ShipperC sends its rates in NTE lines: 'RATE LINEHAUL 980.00' and 'RATE FUEL 142.10'.
+These go to the fields rate_linehaul and rate_fuel, not into the notes.
+"""
+from .loadtender_x12_to_json import build_tender
+
+RATE_FIELDS = {'LINEHAUL': 'rate_linehaul', 'FUEL': 'rate_fuel'}
+
+
+def rate_line(text):
+    """('rate_linehaul', '980.00') for a rate line, else None."""
+    words = text.split()
+    if len(words) == 3 and words[0] == 'RATE' and words[1] in RATE_FIELDS:
+        return RATE_FIELDS[words[1]], words[2]
+    return None
+
+
+def main(inn, out):
+    # the rate lines are not notes
+    build_tender(inn, out, skip_note=rate_line)
+    for nte in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'NTE'}):
+        rate = rate_line(nte.get({'BOTSID': 'NTE', 'NTE02': None}))
+        if rate:
+            out.put({'BOTSID': 'tender', rate[0]: rate[1]})</code></pre>
+The common mapping gets a function <code>skip_note</code> so that the rate lines do not end up in <code>notes</code>.
+A field of the root record can be written only once: a second <code>put</code> with another value for
+<code>notes</code> stops the translation with <code>MappingRootError</code>.</li>
+<li><b>Write the envelope settings of ShipperB</b> <code>usersys/partners/x12/SHIPPERB.py</code>. Bots reads this file
+for every X12 file to or from <code>SHIPPERB</code> and lets its <code>syntax</code> overrule the grammars:
+<pre><code class="language-python"># X12 settings for ShipperB only (overrule the envelope grammar x12.py).
+syntax = {
+    'ISA14': '1',                    # ShipperB wants to be asked for a TA1
+    'add_crlfafterrecord_sep': '',   # no line break after each segment: one long line
+}</code></pre></li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>A translation for one partner does not always win over a
+translation for a group the partner is in: Bots sorts the matching translations by the partner ID as text. Here
+<code>SHIPPERC</code> comes before <code>SHIPPERS</code>, so ShipperC gets its own mapping. With a group called
+<code>ALLSHIPPERS</code> the group would come first and ShipperC would get the common mapping (tested). Choose IDs that
+sort the way you want; see <a href="#translations--choose">How Bots chooses a translation</a>.</p></div>
+
+<h3 id="int-logistics--part6">Part 6: The answers of the TMS: 990 and 210</h3>
+<p>The TMS writes one JSON file per response and per invoice. These mappings show the two ways to know the shipper
+of a JSON file.</p>
+<ol class="steps">
+<li><b>Write the 990 mapping</b> <code>usersys/mappings/jsonnocheck/tenderresponse_json_to_x12.py</code>. The input is
+<code>jsonnocheck</code>, so there are no QUERIES: the mapping reads <code>shipper_id</code> and <code>carrier_ref</code>
+and sets the partners of the 990. <code>tr.partnerlookup(shipper, 'idpartner')</code> stops with an error when the TMS
+names a shipper that Bots does not know.
+<pre><code class="language-python">"""Response of the TMS to a load tender (JSON, accept or decline) -&gt; X12 990 for the shipper."""
+import textwrap
+
+import bots.transform as tr
+from bots.botslib import MappingFormatError
+
+SCAC = 'MYCO'
+ACTION = {'accept': 'A', 'decline': 'D'}
+
+
+def main(inn, out):
+    # jsonnocheck has no QUERIES: take the partners from the JSON here
+    shipper = inn.get({'BOTSID': 'response', 'shipper_id': None})
+    tr.partnerlookup(shipper, 'idpartner')     # error if the shipper is not a partner in Bots
+    out.ta_info['frompartner'] = inn.get({'BOTSID': 'response', 'carrier_ref': None})
+    out.ta_info['topartner'] = shipper
+    load_id = inn.get({'BOTSID': 'response', 'load_id': None})
+    inn.ta_info['botskey'] = out.ta_info['botskey'] = load_id
+
+    decision = inn.get({'BOTSID': 'response', 'decision': None})
+    if decision not in ACTION:
+        raise MappingFormatError('Load %(load)s: decision must be accept or decline, not "%(decision)s".',
+                                 {'load': load_id, 'decision': decision})
+    # decided_at is YYYY-MM-DDTHH:MM:SS; B103 wants YYYYMMDD
+    decided = inn.get({'BOTSID': 'response', 'decided_at': None})[:10]
+
+    st02 = out.ta_info['reference'].zfill(4)
+    out.put({'BOTSID': 'ST', 'ST01': '990', 'ST02': st02})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'B1',
+                               'B101': SCAC,
+                               'B102': load_id,
+                               'B103': tr.datemask(decided, 'YYYY-MM-DD', 'YYYYMMDD'),
+                               'B104': ACTION[decision]})
+    # accepted: the PRO number of MyCompany as carrier reference (N9*CN).
+    # No pro_no in the JSON: get() gives None, and a put with a None value writes nothing.
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'N9', 'N901': 'CN',
+                               'N902': inn.get({'BOTSID': 'response', 'pro_no': None})})
+    # declined: the reason, in K1 (K101 and K102, each at most 30 characters)
+    reason = inn.get({'BOTSID': 'response', 'reason': None})
+    if decision == 'decline' and reason:
+        parts = textwrap.wrap(reason, 30)
+        out.put({'BOTSID': 'ST'}, {'BOTSID': 'K1', 'K101': parts[0]})
+        if len(parts) &gt; 1:
+            out.put({'BOTSID': 'ST'}, {'BOTSID': 'K1', 'K102': parts[1]})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': st02})</code></pre></li>
+<li><b>Make the code list</b> for the charge codes of the 210. <span class="ui">Configuration</span> →
+<span class="ui">User Code types</span> → <span class="ui">Add</span>: <span class="ui">Type of user code</span>
+<code>charge_code</code>, a description. <span class="ui">Save</span>. Then <span class="ui">Configuration</span> →
+<span class="ui">User Codes list</span> → <span class="ui">Add</span>, one entry per row (<span class="ui">Save and add another</span>):
+<div class="table-wrap"><table>
+<tr><th>Type of user code</th><th>Leftcode (TMS charge type)</th><th>Rightcode (X12 L108)</th><th>Attr1 (L502 text)</th></tr>
+<tr><td><code>charge_code</code></td><td><code>linehaul</code></td><td><code>400</code></td><td><code>LINE HAUL</code></td></tr>
+<tr><td><code>charge_code</code></td><td><code>fuel</code></td><td><code>FUE</code></td><td><code>FUEL SURCHARGE</code></td></tr>
+<tr><td><code>charge_code</code></td><td><code>detention</code></td><td><code>DET</code></td><td><code>DETENTION</code></td></tr>
+<tr><td><code>charge_code</code></td><td><code>stopoff</code></td><td><code>SOC</code></td><td><code>STOP-OFF CHARGE</code></td></tr>
+<tr><td><code>charge_code</code></td><td><code>liftgate</code></td><td><code>LFT</code></td><td><code>LIFTGATE SERVICE</code></td></tr>
+<tr><td><code>charge_code</code></td><td><code>SHIPPERB:detention</code></td><td><code>DTV</code></td><td><code>DETENTION</code></td></tr>
+</table></div>
+The last row is the trick for codes per partner: the left code starts with the partner ID. The mapping first looks
+for <code>SHIPPERB:detention</code> and, when there is none, for <code>detention</code>. A new exception for a
+shipper is one more row, no change of code. The charge codes here are examples; use the codes in each shipper's
+implementation guide.</li>
+<li><b>Write the 210 mapping</b> <code>usersys/mappings/json/freightinvoice_json_to_x12.py</code>. The partners come
+from the QUERIES of the grammar, so <code>inn.ta_info['topartner']</code> is the shipper. The mapping checks that the
+charges add up to the total, takes the weight unit from <code>attr1</code>, and the charge codes from the code list.
+<pre><code class="language-python">"""Freight invoice of the TMS (JSON) -&gt; X12 210 for the shipper.
+
+Partner differences, without a mapping per shipper:
+- partner attribute attr1: the weight unit the shipper wants on the 210 (L pounds, K kilograms);
+- code list charge_code: the X12 code per charge type, and per shipper where it differs
+  (left code SHIPPERB:detention wins over detention).
+"""
+import decimal
+
+import bots.transform as tr
+from bots.botslib import MappingFormatError
+
+SCAC = 'MYCO'
+KG_PER_LB = decimal.Decimal('0.45359237')
+
+
+def charge_code(shipper, charge_type):
+    """X12 charge code (L108): first the code for this shipper, else the general one."""
+    return (tr.ccode('charge_code', shipper + ':' + charge_type, safe=None)
+            or tr.ccode('charge_code', charge_type))
+
+
+def weight_in(weight_lb, unit):
+    if unit == 'K':
+        weight_lb = weight_lb * KG_PER_LB
+    return weight_lb.quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP)
+
+
+def ymd(value):
+    """YYYY-MM-DD -&gt; YYYYMMDD"""
+    return tr.datemask(value, 'YYYY-MM-DD', 'YYYYMMDD')
+
+
+def main(inn, out):
+    # frompartner and topartner come from the QUERIES of the grammar (carrier_ref, shipper_id)
+    shipper = inn.ta_info['topartner']
+    unit = tr.partnerlookup(shipper, 'attr1', safe=None) or 'L'
+    inv_number = inn.get({'BOTSID': 'invoice', 'inv_number': None})
+    out.ta_info['botskey'] = inv_number
+
+    # the charges must add up to the total
+    total = inn.getdecimal({'BOTSID': 'invoice', 'total_amount': None})
+    charges = list(inn.getloop({'BOTSID': 'invoice'}, {'BOTSID': 'charges'}))
+    sum_charges = sum(c.getdecimal({'BOTSID': 'charges', 'amount': None}) for c in charges)
+    if sum_charges != total:
+        raise MappingFormatError('Invoice %(inv)s: charges add up to %(sum)s, total_amount is %(total)s.',
+                                 {'inv': inv_number, 'sum': sum_charges, 'total': total})
+
+    st02 = out.ta_info['reference'].zfill(4)
+    out.put({'BOTSID': 'ST', 'ST01': '210', 'ST02': st02})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'B3',
+                               'B302': inv_number,
+                               'B303': inn.get({'BOTSID': 'invoice', 'load_id': None}),
+                               'B304': inn.get({'BOTSID': 'invoice', 'terms': None}) or 'PP',
+                               'B306': ymd(inn.get({'BOTSID': 'invoice', 'invoiced_on': None})),
+                               'B307': total,
+                               'B309': ymd(inn.get({'BOTSID': 'invoice', 'delivered_on': None})),
+                               'B310': '035',
+                               'B311': SCAC})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'C3',
+                               'C301': inn.get({'BOTSID': 'invoice', 'currency': None}) or 'USD'})
+    # references: bill of lading, PRO number of MyCompany
+    for qualifier, field in (('BM', 'bol_no'), ('CN', 'pro_no')):
+        value = inn.get({'BOTSID': 'invoice', field: None})
+        if value:
+            n9 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'N9'})
+            n9.put({'BOTSID': 'N9', 'N901': qualifier, 'N902': value})
+    # bill-to party
+    billto = inn.get({'BOTSID': 'invoice'}, {'BOTSID': 'billto', 'name': None})
+    if billto:
+        n1 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'N1'})
+        n1.put({'BOTSID': 'N1', 'N101': 'BT', 'N102': billto})
+        n1.put({'BOTSID': 'N1'}, {'BOTSID': 'N3',
+                                  'N301': inn.get({'BOTSID': 'invoice'}, {'BOTSID': 'billto', 'street1': None})})
+        n1.put({'BOTSID': 'N1'}, {'BOTSID': 'N4',
+                                  'N401': inn.get({'BOTSID': 'invoice'}, {'BOTSID': 'billto', 'city': None}),
+                                  'N402': inn.get({'BOTSID': 'invoice'}, {'BOTSID': 'billto', 'state': None}),
+                                  'N403': inn.get({'BOTSID': 'invoice'}, {'BOTSID': 'billto', 'zip': None})})
+
+    # weight and pallets, in the unit this shipper wants
+    weight = weight_in(inn.getdecimal({'BOTSID': 'invoice', 'gross_weight_lb': None}), unit)
+    pallets = inn.get({'BOTSID': 'invoice', 'total_pallets': None})
+
+    # one LX loop per charge
+    for number, charge in enumerate(charges, start=1):
+        charge_type = charge.get({'BOTSID': 'charges', 'charge_type': None})
+        lx = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'LX'})
+        lx.put({'BOTSID': 'LX', 'LX01': number})
+        lx.put({'BOTSID': 'LX'}, {'BOTSID': 'L5', 'L501': number,
+                                  'L502': tr.ccode('charge_code', charge_type, field='attr1')})
+        if number == 1:
+            # weight and pallets once, on the first line
+            lx.put({'BOTSID': 'LX'}, {'BOTSID': 'L0', 'L001': number, 'L004': weight, 'L005': 'G',
+                                      'L008': pallets, 'L009': 'PLT', 'L011': unit})
+        lx.put({'BOTSID': 'LX'}, {'BOTSID': 'L1', 'L101': number,
+                                  'L104': charge.get({'BOTSID': 'charges', 'amount': None}),
+                                  'L108': charge_code(shipper, charge_type)})
+
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'L3', 'L301': weight, 'L302': 'G', 'L305': total,
+                               'L311': pallets, 'L312': unit})
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': st02})</code></pre>
+<ul>
+<li>Amounts are written with their decimal point (<code>1850.00</code>); because B307, L104 and L305 have format
+<code>N2</code>, Bots writes them with implied decimals: <code>185000</code>.</li>
+<li><code>tr.ccode('charge_code', charge_type)</code> without <code>safe</code> stops with an error when a charge type
+is not in the list: better than a 210 with an empty code.</li>
+</ul></li>
+</ol>
+
+<h3 id="int-logistics--part7">Part 7: Channels, translations, routes and the 997</h3>
+<p><b>One channel per shipper, one route for all.</b> Each shipper has its own inbox and outbox (in production its own
+FTP or SFTP account). All 204s go through one route, <code>loadtenders_in</code>; all answers of the TMS through
+<code>tms_to_shippers</code>. The outgoing route parts choose the shipper's channel with
+<span class="ui">Topartner tochannel</span>, so one route serves every shipper.</p>
+<ol class="steps">
+<li><b>Add the incoming channels.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> →
+<span class="ui">In</span> → <span class="ui">Add incoming channel</span>, <span class="ui">Type</span> <code>file</code>,
+<span class="ui">Remove</span> ticked:
+<div class="table-wrap"><table>
+<tr><th>Idchannel</th><th>Path</th><th>Filename</th></tr>
+<tr><td><code>shippera_in</code></td><td><code>botssys/infile/shippera</code></td><td><code>*.edi</code></td></tr>
+<tr><td><code>shipperb_in</code></td><td><code>botssys/infile/shipperb</code></td><td><code>204_*.x12</code></td></tr>
+<tr><td><code>shipperc_in</code></td><td><code>botssys/infile/shipperc</code></td><td><code>*.edi</code></td></tr>
+<tr><td><code>tms_responses_in</code></td><td><code>botssys/infile/tms/responses</code></td><td><code>*.json</code></td></tr>
+<tr><td><code>tms_invoices_in</code></td><td><code>botssys/infile/tms/invoices</code></td><td><code>*.json</code></td></tr>
+</table></div></li>
+<li><b>Add the outgoing channels.</b> <span class="ui">Out</span> → <span class="ui">Add outgoing channel</span>,
+<span class="ui">Type</span> <code>file</code>:
+<div class="table-wrap"><table>
+<tr><th>Idchannel</th><th>Path</th><th>Filename</th></tr>
+<tr><td><code>shippera_out</code></td><td><code>botssys/outfile/shippera</code></td><td><code>{messagetype}_{unique}.edi</code></td></tr>
+<tr><td><code>shipperb_out</code></td><td><code>botssys/outfile/shipperb</code></td><td><code>{messagetype}_{datetime:%Y%m%d%H%M%S}_{unique}.x12</code></td></tr>
+<tr><td><code>shipperc_out</code></td><td><code>botssys/outfile/shipperc</code></td><td><code>{messagetype}_{unique}.edi</code></td></tr>
+<tr><td><code>tms_tenders_out</code></td><td><code>botssys/outfile/tms/tenders</code></td><td><code>tender_{botskey}_{unique}.json</code></td></tr>
+</table></div>
+Relative paths are inside your environment folder (<a href="#channels--paths">Relative paths</a>). Make the folders
+under <code>botssys/infile</code> and <code>botssys/outfile</code> before the first run.</li>
+<li><b>Add the translations.</b> <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>, all <span class="ui">Active</span>:
+<div class="table-wrap"><table>
+<tr><th>Fromeditype</th><th>Frommessagetype</th><th>Alt</th><th>Frompartner</th><th>Mapping Script</th><th>Toeditype</th><th>Tomessagetype</th></tr>
+<tr><td><code>x12</code></td><td><code>204004010</code></td><td></td><td><code>SHIPPERS</code> (group)</td><td><code>loadtender_x12_to_json</code></td><td><code>json</code></td><td><code>loadtender</code></td></tr>
+<tr><td><code>x12</code></td><td><code>204004010</code></td><td></td><td><code>SHIPPERC</code></td><td><code>loadtender_x12_to_json_shipperc</code></td><td><code>json</code></td><td><code>loadtender</code></td></tr>
+<tr><td><code>x12</code></td><td><code>204004010</code></td><td><code>auto990</code></td><td></td><td><code>loadtender_x12_to_990</code></td><td><code>x12</code></td><td><code>990004010</code></td></tr>
+<tr><td><code>jsonnocheck</code></td><td><code>tenderresponse</code></td><td></td><td></td><td><code>tenderresponse_json_to_x12</code></td><td><code>x12</code></td><td><code>990004010</code></td></tr>
+<tr><td><code>json</code></td><td><code>freightinvoice</code></td><td></td><td></td><td><code>freightinvoice_json_to_x12</code></td><td><code>x12</code></td><td><code>210004010</code></td></tr>
+</table></div>
+The first rule has the group as frompartner: a 204 from a partner that is not in <code>SHIPPERS</code> finds no
+translation and is stopped, instead of being sent to the TMS.</li>
+<li><b>Add the route <code>loadtenders_in</code></b>, seven parts. <span class="ui">Configuration</span> →
+<span class="ui">Routes</span> → <span class="ui">Add</span> for each (or <span class="ui">Save as new</span> on the
+previous one), all <span class="ui">Active</span>. The outgoing filters are under <span class="ui">Filtering for outchannel</span>:
+<div class="table-wrap"><table>
+<tr><th>Sequence</th><th>Incoming channel</th><th>Fromeditype / Frommessagetype</th><th>Translate</th><th>Outgoing channel</th><th>Toeditype</th><th>Frompartner tochannel</th><th>Topartner tochannel</th></tr>
+<tr><td>10</td><td><code>shippera_in</code></td><td><code>x12</code> / <code>x12</code></td><td>Translate</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>11</td><td><code>shipperb_in</code></td><td><code>x12</code> / <code>x12</code></td><td>Translate</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>12</td><td><code>shipperc_in</code></td><td><code>x12</code> / <code>x12</code></td><td>Translate</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>20</td><td></td><td></td><td>Nothing</td><td><code>tms_tenders_out</code></td><td><code>json</code></td><td><code>SHIPPERS</code></td><td></td></tr>
+<tr><td>30</td><td></td><td></td><td>Nothing</td><td><code>shippera_out</code></td><td><code>x12</code></td><td></td><td><code>SHIPPERA</code></td></tr>
+<tr><td>31</td><td></td><td></td><td>Nothing</td><td><code>shipperb_out</code></td><td><code>x12</code></td><td></td><td><code>SHIPPERB</code></td></tr>
+<tr><td>32</td><td></td><td></td><td>Nothing</td><td><code>shipperc_out</code></td><td><code>x12</code></td><td></td><td><code>SHIPPERC</code></td></tr>
+</table></div>
+Messagetype <code>x12</code> means "any X12 message": Bots finds the real type in the file. Part 20 takes only JSON
+(the tenders), parts 30 to 32 only X12 (the 997s and the automatic 990s), each for one shipper. Numbering in tens
+leaves room for new shippers: ShipperD gets parts 13 and 33.</li>
+<li><b>Add the route <code>tms_to_shippers</code></b>, five parts:
+<div class="table-wrap"><table>
+<tr><th>Sequence</th><th>Incoming channel</th><th>Fromeditype / Frommessagetype</th><th>Translate</th><th>Outgoing channel</th><th>Toeditype</th><th>Topartner tochannel</th></tr>
+<tr><td>10</td><td><code>tms_responses_in</code></td><td><code>jsonnocheck</code> / <code>tenderresponse</code></td><td>Translate</td><td></td><td></td><td></td></tr>
+<tr><td>11</td><td><code>tms_invoices_in</code></td><td><code>json</code> / <code>freightinvoice</code></td><td>Translate</td><td></td><td></td><td></td></tr>
+<tr><td>30</td><td></td><td></td><td>Nothing</td><td><code>shippera_out</code></td><td><code>x12</code></td><td><code>SHIPPERA</code></td></tr>
+<tr><td>31</td><td></td><td></td><td>Nothing</td><td><code>shipperb_out</code></td><td><code>x12</code></td><td><code>SHIPPERB</code></td></tr>
+<tr><td>32</td><td></td><td></td><td>Nothing</td><td><code>shipperc_out</code></td><td><code>x12</code></td><td><code>SHIPPERC</code></td></tr>
+</table></div>
+Two routes may use the same outgoing channel.</li>
+<li><b>Add the confirm rule for the 997.</b> <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span> →
+<span class="ui">Add</span>: <span class="ui">Active</span>, <span class="ui">Confirmtype</span> <span class="ui">send a x12
+confirmation (997) when receiving</span>, <span class="ui">Ruletype</span> <span class="ui">Route</span>,
+<span class="ui">Route</span> <code>loadtenders_in</code>. <span class="ui">Save</span>. Confirm rules do not know
+partner groups; a rule per route is the simple way to cover all shippers.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p><span class="ui">Configuration</span> → <span class="ui">Routes</span>
+shows <code>loadtenders_in</code> with 7 parts and <code>tms_to_shippers</code> with 5 parts. In
+<span class="ui">Configuration</span> → <span class="ui">Translations</span> no mapping or grammar has a red cross
+(a red cross means the file is not found in usersys).</p></div>
+<h4 id="int-logistics--ftp">The real connections: FTP</h4>
+<p>In production only the channels change; grammars, mappings, translations and routes stay as they are. The TMS
+folder on an FTP server, for example:</p>
+<div class="table-wrap"><table>
+<tr><th>Field</th><th><code>tms_tenders_out</code></th><th><code>tms_responses_in</code> / <code>tms_invoices_in</code></th></tr>
+<tr><td><span class="ui">Type</span></td><td><code>ftps (explicit)</code> (or <code>ftp</code> on a closed network)</td><td>the same</td></tr>
+<tr><td><span class="ui">Host</span> / <span class="ui">Port</span></td><td><code>ftp.example.com</code> / <code>0</code> (= 21)</td><td>the same</td></tr>
+<tr><td><span class="ui">Username</span> / <span class="ui">Password</span></td><td><code>edi_bots</code> / <code>********</code></td><td>the same</td></tr>
+<tr><td><span class="ui">Path</span></td><td><code>/tms/inbound/tenders</code></td><td><code>/tms/outbound/responses</code>, <code>/tms/outbound/invoices</code></td></tr>
+<tr><td><span class="ui">Filename</span></td><td><code>tender_{botskey}_{unique}.json</code></td><td><code>*.json</code></td></tr>
+<tr><td><span class="ui">Remove</span></td><td>-</td><td>ticked (the TMS writes a file once; Bots takes it away)</td></tr>
+<tr><td><span class="ui">Tmp-part file name</span></td><td><code>.tmp</code>: the TMS never reads a half-written tender</td><td>-</td></tr>
+</table></div>
+<p>The shippers' channels become <code>sftp</code> or <code>ftp</code> channels with the host and login each shipper
+gives you, for example <code>shippera_sftp_in</code> on <code>sftp.example.net</code>. See
+<a href="#channel-ftp">FTP and FTPS channels</a> and <a href="#channel-sftp">SFTP channels</a>. To test the routes
+with folders while the channels are already the real ones, set an <span class="ui">Acceptance test path</span> per
+channel and <code>channels_use_testpath</code> in <code>bots.ini</code> (<a href="#channels--testpath">Test path</a>).</p>
+<h4 id="int-logistics--script">Shortcut: enter the configuration with a script</h4>
+<p>To set up a test environment quickly, this script makes all the configuration of Parts 1, 6 and 7 in the
+database (the same as the screens). Save it outside usersys, for example as <code>setup_logistics.py</code>, and run
+it with the Python of Bots: <code>python setup_logistics.py /srv/bots/env/logistics/config</code>. It replaces
+existing translations, routes and confirm rules, so use it only on an empty test environment.</p>
+<pre><code class="language-python">"""Enter the configuration of the logistics tutorial in the Bots database (the same as the web screens).
+
+Use: python setup_logistics.py &lt;config folder of the environment&gt;
+"""
+import sys
+
+from bots import botsinit
+botsinit.generalinit(sys.argv[1])
+import django
+django.setup()
+from bots import models as m
+
+# partners and group
+m.partner.objects.update_or_create(idpartner='MYCOMPANY', defaults=dict(active=True, name='MyCompany'))
+group, _ = m.partnergroep.objects.update_or_create(idpartner='SHIPPERS', defaults=dict(active=True, name='Shippers'))
+for idp, name, attr1, attr2 in (('SHIPPERA', 'ShipperA', 'L', 'auto'),
+                                ('SHIPPERB', 'ShipperB', 'L', ''),
+                                ('SHIPPERC', 'ShipperC', 'K', '')):
+    p, _ = m.partner.objects.update_or_create(idpartner=idp, defaults=dict(
+        active=True, name=name, attr1=attr1, attr2=attr2))
+    p.group.set([group])
+
+# code list
+m.ccodetrigger.objects.update_or_create(ccodeid='charge_code', defaults=dict(
+    ccodeid_desc='TMS charge type -&gt; X12 210 charge code (L108); attr1 = description (L502)'))
+m.ccode.objects.filter(ccodeid_id='charge_code').delete()
+for left, right, desc in (('linehaul', '400', 'LINE HAUL'),
+                          ('fuel', 'FUE', 'FUEL SURCHARGE'),
+                          ('detention', 'DET', 'DETENTION'),
+                          ('stopoff', 'SOC', 'STOP-OFF CHARGE'),
+                          ('liftgate', 'LFT', 'LIFTGATE SERVICE'),
+                          ('SHIPPERB:detention', 'DTV', 'DETENTION')):
+    m.ccode.objects.create(ccodeid_id='charge_code', leftcode=left, rightcode=right, attr1=desc)
+
+# channels
+CH = [
+    # idchannel, inorout, path, filename, remove
+    ('shippera_in', 'in', 'botssys/infile/shippera', '*.edi', True),
+    ('shipperb_in', 'in', 'botssys/infile/shipperb', '204_*.x12', True),
+    ('shipperc_in', 'in', 'botssys/infile/shipperc', '*.edi', True),
+    ('shippera_out', 'out', 'botssys/outfile/shippera', '{messagetype}_{unique}.edi', False),
+    ('shipperb_out', 'out', 'botssys/outfile/shipperb', '{messagetype}_{datetime:%Y%m%d%H%M%S}_{unique}.x12', False),
+    ('shipperc_out', 'out', 'botssys/outfile/shipperc', '{messagetype}_{unique}.edi', False),
+    ('tms_tenders_out', 'out', 'botssys/outfile/tms/tenders', 'tender_{botskey}_{unique}.json', False),
+    ('tms_responses_in', 'in', 'botssys/infile/tms/responses', '*.json', True),
+    ('tms_invoices_in', 'in', 'botssys/infile/tms/invoices', '*.json', True),
+]
+for idc, inout, path, filename, remove in CH:
+    m.channel.objects.update_or_create(idchannel=idc, defaults=dict(
+        inorout=inout, type='file', path=path, filename=filename, remove=remove, charset='us-ascii'))
+
+# translations
+m.translate.objects.all().delete()
+P = m.partner.objects.get
+for fe, fm, alt, frp, script, te, tm in (
+        ('x12', '204004010', '', 'SHIPPERS', 'loadtender_x12_to_json', 'json', 'loadtender'),
+        ('x12', '204004010', '', 'SHIPPERC', 'loadtender_x12_to_json_shipperc', 'json', 'loadtender'),
+        ('x12', '204004010', 'auto990', None, 'loadtender_x12_to_990', 'x12', '990004010'),
+        ('jsonnocheck', 'tenderresponse', '', None, 'tenderresponse_json_to_x12', 'x12', '990004010'),
+        ('json', 'freightinvoice', '', None, 'freightinvoice_json_to_x12', 'x12', '210004010')):
+    m.translate.objects.create(active=True, fromeditype=fe, frommessagetype=fm, alt=alt,
+                               frompartner=P(idpartner=frp) if frp else None,
+                               tscript=script, toeditype=te, tomessagetype=tm)
+
+# routes
+m.routes.objects.all().delete()
+C = m.channel.objects.get
+R = [
+    # idroute, seq, fromchannel, fromeditype, frommessagetype, translateind, tochannel, toeditype, frompartner_tochannel, topartner_tochannel
+    ('loadtenders_in', 10, 'shippera_in', 'x12', 'x12', 1, None, '', None, None),
+    ('loadtenders_in', 11, 'shipperb_in', 'x12', 'x12', 1, None, '', None, None),
+    ('loadtenders_in', 12, 'shipperc_in', 'x12', 'x12', 1, None, '', None, None),
+    ('loadtenders_in', 20, None, '', '', 0, 'tms_tenders_out', 'json', 'SHIPPERS', None),
+    ('loadtenders_in', 30, None, '', '', 0, 'shippera_out', 'x12', None, 'SHIPPERA'),
+    ('loadtenders_in', 31, None, '', '', 0, 'shipperb_out', 'x12', None, 'SHIPPERB'),
+    ('loadtenders_in', 32, None, '', '', 0, 'shipperc_out', 'x12', None, 'SHIPPERC'),
+    ('tms_to_shippers', 10, 'tms_responses_in', 'jsonnocheck', 'tenderresponse', 1, None, '', None, None),
+    ('tms_to_shippers', 11, 'tms_invoices_in', 'json', 'freightinvoice', 1, None, '', None, None),
+    ('tms_to_shippers', 30, None, '', '', 0, 'shippera_out', 'x12', None, 'SHIPPERA'),
+    ('tms_to_shippers', 31, None, '', '', 0, 'shipperb_out', 'x12', None, 'SHIPPERB'),
+    ('tms_to_shippers', 32, None, '', '', 0, 'shipperc_out', 'x12', None, 'SHIPPERC'),
+]
+for idr, seq, fc, fe, fm, ti, tc, te, fptc, tptc in R:
+    m.routes.objects.create(idroute=idr, seq=seq, active=True,
+                            fromchannel=C(idchannel=fc) if fc else None, fromeditype=fe, frommessagetype=fm,
+                            translateind=ti, tochannel=C(idchannel=tc) if tc else None, toeditype=te,
+                            frompartner_tochannel=P(idpartner=fptc) if fptc else None,
+                            topartner_tochannel=P(idpartner=tptc) if tptc else None)
+
+# confirm rule: 997 for every 204 received in route loadtenders_in
+m.confirmrule.objects.all().delete()
+m.confirmrule.objects.create(active=True, confirmtype='send-x12-997', ruletype='route', idroute='loadtenders_in')
+print('configuration done')</code></pre>
+
+<h3 id="int-logistics--run">Run it end to end</h3>
+<ol class="steps">
+<li><b>Save the 204 of ShipperA</b> as <code>botssys/infile/shippera/tender_A7781201.edi</code>: one load, two stops,
+weights in pounds in S5, two purchase orders on the pickup.
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*SHIPPERA       *ZZ*MYCOMPANY      *261015*0930*U*00401*000004711*0*P*&gt;~
+GS*SM*SHIPPERA*MYCOMPANY*20261015*0930*4711*X*004010~
+ST*204*0001~
+B2**MYCO**A7781201**PP~
+B2A*00~
+L11*BL-2026-55102*BM~
+L11*7781201*CR*Customer reference~
+NTE**Driver must call 1 hour before arrival~
+N7**TR4471*********TV****5300~
+S5*1*LD*18450*L*22*PL~
+L11*SO-88120*SI~
+G62*37*20261020*I*0800~
+G62*38*20261020*K*1400~
+N1*SF*ShipperA Plant North*93*SA-PLANT-N~
+N3*1200 Industrial Parkway~
+N4*Springfield*OH*45501*US~
+G61*SH*Dock Office*TE*555-0100~
+OID**PO-310245**PL*12*L*10150~
+OID**PO-310246**PL*10*L*8300~
+S5*2*UL*18450*L*22*PL~
+G62*53*20261021*G*0700~
+G62*54*20261021*L*1200~
+N1*ST*Retail Distribution Center 7*93*DC07~
+N3*45 Commerce Drive~
+N4*Columbus*OH*43217*US~
+G61*RE*Receiving*TE*555-0142~
+L3*18450*G***185000~
+SE*26*0001~
+GE*1*4711~
+IEA*1*000004711~</code></pre></li>
+<li><b>Save the 204s of ShipperB</b> as <code>botssys/infile/shipperb/204_20261015_101200.x12</code>: two loads in one
+file. The first has three stops (one pickup, two deliveries, a reefer); the weights are in AT8.
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*SHIPPERB       *ZZ*MYCOMPANY      *261015*1012*U*00401*000000318*0*P*&gt;~
+GS*SM*SHIPPERB*MYCOMPANY*20261015*1012*318*X*004010~
+ST*204*3180001~
+B2**MYCO**B550318**CC~
+B2A*00~
+L11*B550318-BOL*BM~
+L11*4500912233*PO~
+N7**53102*********RT****5300~
+S5*1*CL~
+G62*37*20261019*I*0600~
+G62*38*20261019*K*1000~
+AT8*G*L*24200*26~
+N1*SF*ShipperB Cold Store*93*SB-CS1~
+N3*88 Harbor Road~
+N4*Bayport*NJ*07002*US~
+S5*2*PU~
+G62*53*20261019*G*1500~
+AT8*G*L*11000*12~
+N1*ST*Retail Store 112~
+N3*500 Main Street~
+N4*Trenton*NJ*08608*US~
+OID**4500912233~
+S5*3*CU~
+G62*53*20261020*G*0600~
+G62*54*20261020*L*0900~
+AT8*G*L*13200*14~
+N1*ST*Retail Store 140~
+N3*12 Lake Avenue~
+N4*Scranton*PA*18503*US~
+SE*28*3180001~
+ST*204*3180002~
+B2**MYCO**B550319**CC~
+B2A*00~
+L11*B550319-BOL*BM~
+N7**53117*********TV****5300~
+S5*1*LD~
+G62*37*20261020*I*0700~
+G62*38*20261020*K*1100~
+AT8*G*L*16800*20~
+N1*SF*ShipperB Cold Store*93*SB-CS1~
+N3*88 Harbor Road~
+N4*Bayport*NJ*07002*US~
+S5*2*UL~
+G62*53*20261021*G*0800~
+G62*54*20261021*L*1600~
+AT8*G*L*16800*20~
+N1*ST*Retail Store 205~
+N3*9 Station Square~
+N4*Albany*NY*12207*US~
+SE*20*3180002~
+GE*2*318~
+IEA*1*000000318~</code></pre></li>
+<li><b>Save the 204 of ShipperC</b> as <code>botssys/infile/shipperc/C-90412.edi</code>: a test file (ISA15
+<code>T</code>), weights in kilograms, rates in NTE, scheduled dates (G62 <code>69</code>/<code>70</code>).
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*SHIPPERC       *ZZ*MYCOMPANY      *261015*1105*U*00401*000090412*0*T*&gt;~
+GS*SM*SHIPPERC*MYCOMPANY*20261015*1105*90412*X*004010~
+ST*204*0001~
+B2**MYCO**C-90412**TP~
+B2A*00~
+L11*C90412BL*BM~
+NTE**RATE LINEHAUL 980.00~
+NTE**RATE FUEL 142.10~
+NTE**High value load: no stops on the way~
+N7**V20877*********TV****4800~
+S5*1*LD*9800*K*18*PL~
+G62*69*20261021*I*1300~
+N1*SF*ShipperC Warehouse 3*93*SC-WH3~
+N3*7 Logistics Way~
+N4*Riverside*IN*46201*US~
+S5*2*UL*9800*K*18*PL~
+G62*70*20261022*G*0800~
+N1*ST*ShipperC Customer Hub~
+N3*300 Gateway Blvd~
+N4*Peoria*IL*61602*US~
+L3*21605*G***112210~
+SE*20*0001~
+GE*1*90412~
+IEA*1*000090412~</code></pre></li>
+<li><b>Run the engine</b>: <span class="ui">Run</span> → <span class="ui">Run (only new)</span>, or on the command line
+<code>bots-engine -c/srv/bots/env/logistics/config</code> (Windows: <code>bots-engine -cC:/bots/env/logistics/config</code>).
+Both routes run; <code>tms_to_shippers</code> has nothing to do yet. The run report:
+<pre><code class="language-text">    3 files received/processed in run.
+    3 files without errors,
+    8 files send in run.</code></pre></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Eight files: four tenders in <code>botssys/outfile/tms/tenders</code>
+(<code>tender_A7781201_1.json</code>, <code>tender_B550318_2.json</code>, <code>tender_B550319_3.json</code>,
+<code>tender_C-90412_4.json</code>), a 997 for each shipper, and the automatic 990 for ShipperA
+(<code>botssys/outfile/shippera/990004010_1.edi</code>, <code>997004010_2.edi</code>). ShipperB and ShipperC get no 990
+yet: dispatch decides first.</p></div>
+<p>The tender of ShipperA, as the TMS gets it. Note <code>auto_accepted</code>, the time windows, the weights as numbers,
+<code>address</code> as an object:</p>
+<pre><code class="language-json">{
+  "shipper_id": "SHIPPERA",
+  "carrier_ref": "MYCOMPANY",
+  "test_load": false,
+  "load_id": "A7781201",
+  "purpose": "new",
+  "payment_terms": "PP",
+  "bol_no": "BL-2026-55102",
+  "equipment": "VAN53",
+  "trailer_no": "TR4471",
+  "gross_weight_lb": 18450,
+  "total_pallets": 22,
+  "offered_rate": 1850,
+  "auto_accepted": true,
+  "notes": "Driver must call 1 hour before arrival",
+  "references": [
+    {
+      "qualifier": "BM",
+      "value": "BL-2026-55102"
+    },
+    {
+      "qualifier": "CR",
+      "value": "7781201",
+      "description": "Customer reference"
+    }
+  ],
+  "stops": [
+    {
+      "stop_seq": 1,
+      "stop_type": "pickup",
+      "name": "ShipperA Plant North",
+      "window_start": "2026-10-20T08:00",
+      "window_end": "2026-10-20T14:00",
+      "weight_lb": 18450,
+      "pallets": 22,
+      "po_numbers": "PO-310245,PO-310246",
+      "contact": "Dock Office",
+      "phone": "555-0100",
+      "address": {
+        "street1": "1200 Industrial Parkway",
+        "city": "Springfield",
+        "state": "OH",
+        "zip": "45501",
+        "country": "US"
+      },
+      "stop_refs": [
+        {
+          "qualifier": "SI",
+          "value": "SO-88120"
+        }
+      ]
+    },
+    {
+      "stop_seq": 2,
+      "stop_type": "delivery",
+      "name": "Retail Distribution Center 7",
+      "window_start": "2026-10-21T07:00",
+      "window_end": "2026-10-21T12:00",
+      "weight_lb": 18450,
+      "pallets": 22,
+      "contact": "Receiving",
+      "phone": "555-0142",
+      "address": {
+        "street1": "45 Commerce Drive",
+        "city": "Columbus",
+        "state": "OH",
+        "zip": "43217",
+        "country": "US"
+      }
+    }
+  ]
+}</code></pre>
+<p>The tender of ShipperC: <code>test_load</code> is <code>true</code> (ISA15 <code>T</code>), 9800 kg became 21605 lb,
+the rates came from the NTE lines and only the real note is in <code>notes</code>. <code>offered_rate</code> is
+<code>1122.1</code>: a JSON number has no trailing zeros.</p>
+<pre><code class="language-json">{
+  "shipper_id": "SHIPPERC",
+  "carrier_ref": "MYCOMPANY",
+  "test_load": true,
+  "load_id": "C-90412",
+  "purpose": "new",
+  "payment_terms": "TP",
+  "bol_no": "C90412BL",
+  "equipment": "VAN48",
+  "trailer_no": "V20877",
+  "gross_weight_lb": 21605,
+  "total_pallets": 18,
+  "offered_rate": 1122.1,
+  "rate_linehaul": 980,
+  "rate_fuel": 142.1,
+  "notes": "High value load: no stops on the way",
+  "references": [
+    {
+      "qualifier": "BM",
+      "value": "C90412BL"
+    }
+  ],
+  "stops": [
+    {
+      "stop_seq": 1,
+      "stop_type": "pickup",
+      "name": "ShipperC Warehouse 3",
+      "window_start": "2026-10-21T13:00",
+      "weight_lb": 21605,
+      "pallets": 18,
+      "address": {
+        "street1": "7 Logistics Way",
+        "city": "Riverside",
+        "state": "IN",
+        "zip": "46201",
+        "country": "US"
+      }
+    },
+    {
+      "stop_seq": 2,
+      "stop_type": "delivery",
+      "name": "ShipperC Customer Hub",
+      "window_start": "2026-10-22T08:00",
+      "weight_lb": 21605,
+      "pallets": 18,
+      "address": {
+        "street1": "300 Gateway Blvd",
+        "city": "Peoria",
+        "state": "IL",
+        "zip": "61602",
+        "country": "US"
+      }
+    }
+  ]
+}</code></pre>
+<p>The automatic 990 and the 997 for ShipperA (the date and time in ISA09/ISA10, GS04/GS05 and B103 are those of
+your run):</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERA       *261015*2131*U*00401*000000001*0*P*&gt;~
+GS*GF*MYCOMPANY*SHIPPERA*20261015*2131*1*X*004010~
+ST*990*0002~
+B1*MYCO*A7781201*20261015*A~
+SE*3*0002~
+GE*1*1~
+IEA*1*000000001~
+ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERA       *261015*2131*U*00401*000000002*0*P*&gt;~
+GS*FA*MYCOMPANY*SHIPPERA*20261015*2131*2*X*004010~
+ST*997*0003~
+AK1*SM*4711~
+AK2*204*0001~
+AK5*A~
+AK9*A*1*1*1~
+SE*6*0003~
+GE*1*2~
+IEA*1*000000002~</code></pre>
+<p>The 997 for ShipperB, on one line and with ISA14 <code>1</code> because of <code>SHIPPERB.py</code>; one AK2 per 204 in the file:</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERB       *261015*2131*U*00401*000000003*1*P*&gt;~GS*FA*MYCOMPANY*SHIPPERB*20261015*2131*3*X*004010~ST*997*0006~AK1*SM*318~AK2*204*3180001~AK5*A~AK2*204*3180002~AK5*A~AK9*A*2*2*2~SE*8*0006~GE*1*3~IEA*1*000000003~</code></pre>
+<ol class="steps" start="5">
+<li><b>Play the TMS: save its responses</b> in <code>botssys/infile/tms/responses</code>: accept the first load of
+ShipperB, decline the second, accept the load of ShipperC.
+<p><code>resp_B550318.json</code>:</p>
+<pre><code class="language-json">{
+  "load_id": "B550318",
+  "shipper_id": "SHIPPERB",
+  "carrier_ref": "MYCOMPANY",
+  "decision": "accept",
+  "pro_no": "MYC1000458",
+  "decided_at": "2026-10-15T14:05:00",
+  "decided_by": "dispatch2"
+}</code></pre>
+<p><code>resp_B550319.json</code>:</p>
+<pre><code class="language-json">{
+  "load_id": "B550319",
+  "shipper_id": "SHIPPERB",
+  "carrier_ref": "MYCOMPANY",
+  "decision": "decline",
+  "reason": "No driver available in the pickup window",
+  "decided_at": "2026-10-15T14:20:00",
+  "decided_by": "dispatch1"
+}</code></pre>
+<p><code>resp_C-90412.json</code>:</p>
+<pre><code class="language-json">{
+  "load_id": "C-90412",
+  "shipper_id": "SHIPPERC",
+  "carrier_ref": "MYCOMPANY",
+  "decision": "accept",
+  "pro_no": "MYC1000459",
+  "decided_at": "2026-10-15T14:31:00",
+  "decided_by": "dispatch1"
+}</code></pre></li>
+<li><b>Save the invoices</b> in <code>botssys/infile/tms/invoices</code>, one per load that was driven.
+<p><code>inv_A7781201.json</code>:</p>
+<pre><code class="language-json">{
+  "invoice": {
+    "inv_number": "INV-260101",
+    "invoiced_on": "2026-10-22",
+    "shipper_id": "SHIPPERA",
+    "carrier_ref": "MYCOMPANY",
+    "load_id": "A7781201",
+    "pro_no": "MYC1000457",
+    "bol_no": "BL-2026-55102",
+    "currency": "USD",
+    "terms": "PP",
+    "shipped_on": "2026-10-20",
+    "delivered_on": "2026-10-21",
+    "total_amount": "2193.25",
+    "gross_weight_lb": "18450",
+    "total_pallets": "22",
+    "cost_center": "OPS-EAST",
+    "billto": {"name": "ShipperA Freight Payables", "street1": "PO Box 4410",
+               "city": "Springfield", "state": "OH", "zip": "45501"},
+    "charges": [
+      {"charge_type": "linehaul", "text": "Line haul", "amount": "1850.00"},
+      {"charge_type": "fuel", "text": "Fuel surcharge", "amount": "268.25"},
+      {"charge_type": "detention", "text": "Detention at delivery, 1.5 h", "amount": "75.00"}
+    ]
+  }
+}</code></pre>
+<p><code>inv_B550318.json</code>:</p>
+<pre><code class="language-json">{
+  "invoice": {
+    "inv_number": "INV-260102",
+    "invoiced_on": "2026-10-22",
+    "shipper_id": "SHIPPERB",
+    "carrier_ref": "MYCOMPANY",
+    "load_id": "B550318",
+    "pro_no": "MYC1000458",
+    "bol_no": "B550318-BOL",
+    "currency": "USD",
+    "terms": "CC",
+    "shipped_on": "2026-10-19",
+    "delivered_on": "2026-10-20",
+    "total_amount": "3006.00",
+    "gross_weight_lb": "24200",
+    "total_pallets": "26",
+    "cost_center": "OPS-EAST",
+    "billto": {"name": "ShipperB Accounts Payable", "street1": "88 Harbor Road",
+               "city": "Bayport", "state": "NJ", "zip": "07002"},
+    "charges": [
+      {"charge_type": "linehaul", "text": "Line haul", "amount": "2400.00"},
+      {"charge_type": "fuel", "text": "Fuel surcharge", "amount": "336.00"},
+      {"charge_type": "stopoff", "text": "Extra stop Trenton", "amount": "150.00"},
+      {"charge_type": "detention", "text": "Detention at pickup, 2 h", "amount": "120.00"}
+    ]
+  }
+}</code></pre>
+<p><code>inv_C-90412.json</code>:</p>
+<pre><code class="language-json">{
+  "invoice": {
+    "inv_number": "INV-260103",
+    "invoiced_on": "2026-10-23",
+    "shipper_id": "SHIPPERC",
+    "carrier_ref": "MYCOMPANY",
+    "load_id": "C-90412",
+    "pro_no": "MYC1000459",
+    "bol_no": "C90412BL",
+    "currency": "USD",
+    "terms": "TP",
+    "shipped_on": "2026-10-21",
+    "delivered_on": "2026-10-22",
+    "total_amount": "1122.10",
+    "gross_weight_lb": "21605",
+    "total_pallets": "18",
+    "cost_center": "OPS-WEST",
+    "charges": [
+      {"charge_type": "linehaul", "text": "Line haul", "amount": "980.00"},
+      {"charge_type": "fuel", "text": "Fuel surcharge", "amount": "142.10"}
+    ]
+  }
+}</code></pre></li>
+<li><b>Run the engine again.</b> The report:
+<pre><code class="language-text">    6 files received/processed in run.
+    6 files without errors,
+    5 files send in run.</code></pre></li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>Six files in, five out: the two 990s for ShipperB are merged
+into one interchange (two ST…SE in one ISA), so ShipperB gets one 990 file, ShipperC one, and each shipper one 210.</p></div>
+<p>The 990s for ShipperB: B104 <code>A</code> with the PRO number in N9*CN, and <code>D</code> with the reason in K1:</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERB       *261015*2131*U*00401*000000005*1*P*&gt;~GS*GF*MYCOMPANY*SHIPPERB*20261015*2131*5*X*004010~ST*990*0009~B1*MYCO*B550318*20261015*A~N9*CN*MYC1000458~SE*4*0009~ST*990*0010~B1*MYCO*B550319*20261015*D~K1*No driver available in the*pickup window~SE*4*0010~GE*2*5~IEA*1*000000005~</code></pre>
+<p>The 210 for ShipperB. Detention has code <code>DTV</code> (the ShipperB row of the code list); amounts have
+implied decimals (<code>300600</code> = 3006.00):</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERB       *261015*2131*U*00401*000000008*1*P*&gt;~GS*IM*MYCOMPANY*SHIPPERB*20261015*2131*8*X*004010~ST*210*0013~B3**INV-260102*B550318*CC**20261022*300600**20261020*035*MYCO~C3*USD~N9*BM*B550318-BOL~N9*CN*MYC1000458~N1*BT*ShipperB Accounts Payable~N3*88 Harbor Road~N4*Bayport*NJ*07002~LX*1~L5*1*LINE HAUL~L0*1***24200*G***26*PLT**L~L1*1***240000****400~LX*2~L5*2*FUEL SURCHARGE~L1*2***33600****FUE~LX*3~L5*3*STOP-OFF CHARGE~L1*3***15000****SOC~LX*4~L5*4*DETENTION~L1*4***12000****DTV~L3*24200*G***300600******26*L~SE*23*0013~GE*1*8~IEA*1*000000008~</code></pre>
+<p>The 210 for ShipperC, with the weight in kilograms (L0 and L3: <code>9800</code> … <code>K</code>):</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERC       *261015*2131*U*00401*000000009*0*P*&gt;~
+GS*IM*MYCOMPANY*SHIPPERC*20261015*2131*9*X*004010~
+ST*210*0014~
+B3**INV-260103*C-90412*TP**20261023*112210**20261022*035*MYCO~
+C3*USD~
+N9*BM*C90412BL~
+N9*CN*MYC1000459~
+LX*1~
+L5*1*LINE HAUL~
+L0*1***9800*G***18*PLT**K~
+L1*1***98000****400~
+LX*2~
+L5*2*FUEL SURCHARGE~
+L1*2***14210****FUE~
+L3*9800*G***112210******18*K~
+SE*14*0014~
+GE*1*9~
+IEA*1*000000009~</code></pre>
+<p>For comparison, the 210 for ShipperA (detention <code>DET</code>, pounds):</p>
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*SHIPPERA       *261015*2131*U*00401*000000007*0*P*&gt;~
+GS*IM*MYCOMPANY*SHIPPERA*20261015*2131*7*X*004010~
+ST*210*0012~
+B3**INV-260101*A7781201*PP**20261022*219325**20261021*035*MYCO~
+C3*USD~
+N9*BM*BL-2026-55102~
+N9*CN*MYC1000457~
+N1*BT*ShipperA Freight Payables~
+N3*PO Box 4410~
+N4*Springfield*OH*45501~
+LX*1~
+L5*1*LINE HAUL~
+L0*1***18450*G***22*PLT**L~
+L1*1***185000****400~
+LX*2~
+L5*2*FUEL SURCHARGE~
+L1*2***26825****FUE~
+LX*3~
+L5*3*DETENTION~
+L1*3***7500****DET~
+L3*18450*G***219325******22*L~
+SE*20*0012~
+GE*1*7~
+IEA*1*000000007~</code></pre>
+<h4 id="int-logistics--screens">What the web screens show</h4>
+<ul>
+<li><span class="ui">Incoming</span>: nine files, all <span class="ui">Done</span>. The three X12 files have route
+<code>loadtenders_in</code>, messagetype <code>204004010</code>; the file of ShipperB has 2 messages; their output
+columns say <span class="ui">(several values)</span> because one 204 gave a tender, a 997 and (ShipperA) a 990. The
+JSON files have route <code>tms_to_shippers</code>, editype <code>json</code> / <code>freightinvoice</code> or
+<code>jsonnocheck</code> / <code>tenderresponse</code>, and the out-channel of their shipper.</li>
+<li><span class="ui">Outgoing</span>: thirteen files. The tenders show the load number as reference; the X12 files
+their interchange number.</li>
+<li><span class="ui">Document-in</span> / <span class="ui">Document-out</span>: one line per load or invoice with
+reference <code>A7781201</code>, <code>B550318</code>, <code>INV-260102</code>…; each 204 shows confirmation
+<code>send-x12-997</code>. The responses (<code>jsonnocheck</code>) show no partners in Document-in: Bots learns them
+only in the mapping. The invoices show <code>MYCOMPANY</code> → <code>SHIPPERA</code>, found by the QUERIES before the
+mapping.</li>
+<li><span class="ui">All runs</span> → <span class="ui">Confirmations</span>: the three 204 files with a 997 sent.</li>
+</ul>
+
+<h3 id="int-logistics--variations">Variations</h3>
+<h4 id="int-logistics--add-shipper">Adding ShipperD</h4>
+<p>With this design a new shipper that needs nothing special takes no new files:</p>
+<ol class="steps">
+<li><b>Partner</b> <code>SHIPPERD</code> in group <code>SHIPPERS</code>, with <code>attr1</code> and <code>attr2</code>.</li>
+<li><b>Channels</b> <code>shipperd_in</code> and <code>shipperd_out</code>.</li>
+<li><b>Route parts</b>: <code>loadtenders_in</code> 13 (in) and 33 (out, Topartner tochannel <code>SHIPPERD</code>); <code>tms_to_shippers</code> 33.</li>
+<li><b>Only if needed</b>: rows <code>SHIPPERD:…</code> in the code list, <code>usersys/partners/x12/SHIPPERD.py</code>, a translation with frompartner <code>SHIPPERD</code> and a small mapping.</li>
+<li><b>Test</b> with the shipper's test files (ISA15 <code>T</code>) and tell the TMS team that <code>test_load</code> is <code>true</code>.</li>
+</ol>
+<h4 id="int-logistics--shared">One shared outgoing channel instead of one per shipper</h4>
+<p>When all shippers collect from the same server, each in its own folder, one channel can serve them all: Filename
+<code>{topartner}/{messagetype}_{unique}.edi</code> on a channel <code>shippers_out</code> with path
+<code>botssys/outfile/shippers</code>, and one route part without Topartner tochannel instead of parts 30 to 32 (tested:
+the files land in <code>SHIPPERA/</code>, <code>SHIPPERB/</code>, <code>SHIPPERC/</code>; the sub-folders must exist).
+Fewer channels, but one login for all shippers and no way to stop one shipper alone. With separate servers per
+shipper, as is usual, keep one channel per shipper.</p>
+<h4 id="int-logistics--per-route">One route per shipper</h4>
+<p>Many installations grow one route per shipper (<code>shippera_in</code>, <code>shippera_out</code>…). It is easy to
+understand and lets you switch one shipper off by making its route inactive, but every change must be made in every
+route, and the list of routes grows with every shipper. The design of this page keeps one route per flow; to switch
+one shipper off, make its incoming route part inactive.</p>
+<h4 id="int-logistics--more">More ideas</h4>
+<ul>
+<li><b>997s from the shippers</b> for your 990s and 210s: a confirm rule <code>ask-x12-997</code> for route
+<code>tms_to_shippers</code>, and a route that receives the 997s; see <a href="#acknowledgements--howto-ask">How to
+track 997s</a>.</li>
+<li><b>Test indicator</b>: the 997, 990 and 210 get ISA15 <code>P</code> from <code>x12.py</code>, also for a shipper
+that tests with <code>T</code>. Set <code>'ISA15': 'T'</code> in that shipper's partner syntax file while you test.</li>
+<li><b>Status messages (214)</b>: the TMS writes shipment status as JSON; a third flow on the same pattern as the 210.</li>
+<li><b>Process right away</b>: start the routes when a file arrives with the directory monitor, or every few minutes
+with the job queue; see <a href="#scheduling">Scheduling runs</a>.</li>
+<li><b>A test environment</b> next to production, with the same usersys and the folders of this tutorial; see
+<a href="#int-going-live">Running integrations in production</a>.</li>
+</ul>
+
+<h3 id="int-logistics--trouble">Troubleshooting</h3>
+<p>The messages below are from runs of this tutorial with broken files. They are shown in <span class="ui">Incoming</span>
+and in the detail of the file; the path of the mapping is shortened here.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>TranslationNotFoundError: Translation not found for editype "x12", messagetype "204004010", frompartner "SHIPPERA1", topartner "MYCOMPANY", alt "".</code></td><td>The sender in ISA06 is not a member of group <code>SHIPPERS</code> (here a wrong ID). Bots still made a 997 for it, but no route part sends it: there is no channel for <code>SHIPPERA1</code>.</td><td>Ask the shipper to use its agreed ID, or add the ID as a partner in the group and give it channels and route parts.</td></tr>
+<tr><td><code>MessageError: Message nr 1, type 204004010, [S50]: Line:6 pos:1 record:"MS3": message has an error in its structure; this record is not allowed here. Scanned in message definition until mandatory record: "ST-S5".</code></td><td>The shipper sends a segment that the cut-down grammar does not have.</td><td>Add the segment to <code>records004010.py</code> and to the structure of <code>204004010.py</code> at its place in the standard, or use a complete grammar.</td></tr>
+<tr><td><code>MessageError: [F17] line 1 pos 106: Record "ISA" expect field but "" is a subfield.</code> and <code>[F02] line 1 pos 1: Record "ISA" field "ISA16" is mandatory.</code></td><td>ISA16 defined as a normal field in <code>x12.py</code>. ISA16 is the component separator itself.</td><td>Define ISA16 as a composite of two parts, as in Part 2.</td></tr>
+<tr><td>The 997 has an error: <code>MessageError: [F02]: Record "ISA" field "ISA16" is mandatory.</code> / <code>[S03]: Record "ISA-GS-ST" occurs 0 times, min is 1.</code></td><td>When Bots writes an envelope, the messages are not in the envelope tree; a mandatory ISA16 or <code>ST</code> with <code>MIN: 1</code> in <code>x12.py</code> fails that check.</td><td>ISA16 conditional (composite), <code>ST</code> with <code>MIN: 0</code> in the envelope grammar.</td></tr>
+<tr><td><code>ScriptError: Userscript "…\mappings\x12\loadtender_x12_to_json_shipperc": "MappingFormatError: Load C-90499: the first stop is not a pickup."</code></td><td>The check in the mapping: S502 of the first S5 is an unload code. The 997 said <code>A</code> anyway: a 997 only says the X12 is correct.</td><td>Tell the shipper; it sends the load again.</td></tr>
+<tr><td><code>ScriptError: … "MappingRootError: Error in root put "{'BOTSID': 'tender', 'notes': '…', 'BOTSIDnr': '1'}"."</code></td><td>A second <code>put</code> with another value for a field of the root record (here: ShipperC's mapping wrote <code>notes</code> again).</td><td>Write each root field once: pass the difference into the common code (here <code>skip_note</code>) instead of overwriting.</td></tr>
+<tr><td>JSON output errors such as <code>[F02]: Record "tender-references" field "qualifier" is mandatory.</code>, <code>Record "tender-stops" field "name" is mandatory.</code> or <code>[S03]: Record "tender-stops-address" occurs 0 times, min is 1.</code> although the 204 has the data</td><td>A <code>put</code> with several fields where one value was <code>None</code> (an optional element missing in the 204): Bots wrote nothing of that put.</td><td>Use a helper such as <code>put_values</code> that leaves out empty values, or one put per optional field.</td></tr>
+<tr><td><code>ScriptError: … "CodeConversionError: No result found for partner lookup where idpartner="SHIPPERX"; either record does not exist or field "idpartner" has no value."</code></td><td>The TMS answered for a shipper that is not a partner in Bots.</td><td>Correct the shipper in the TMS, or add the partner (group, channels, route parts).</td></tr>
+<tr><td><code>ScriptError: … "MappingFormatError: Load C-90412: decision must be accept or decline, not "maybe"."</code></td><td><code>jsonnocheck</code> checks nothing, so the mapping checks the value.</td><td>Fix the export of the TMS; then <span class="ui">Rereceive</span> the file.</td></tr>
+<tr><td><code>ScriptError: … "CodeConversionError: Value "tolls" not in code-conversion, user table "charge_code"."</code></td><td>The TMS uses a charge type that is not in the code list.</td><td>Add <code>tolls</code> to <code>charge_code</code> (and <code>SHIPPERx:tolls</code> where a shipper has its own code), then rereceive.</td></tr>
+<tr><td><code>ScriptError: … "MappingFormatError: Invoice INV-260201: charges add up to 2193.25, total_amount is 2200.00."</code></td><td>The check in the 210 mapping: the invoice does not add up.</td><td>Correct the invoice in the TMS; it writes a new file.</td></tr>
+<tr><td><code>MessageError: [F02]: Record "invoice" field "inv_number" is mandatory.</code></td><td>The JSON grammar <code>freightinvoice</code> (editype <code>json</code>) checks mandatory fields before the mapping runs.</td><td>Fix the export of the TMS. This check is the reason the invoice uses <code>json</code>, not <code>jsonnocheck</code>.</td></tr>
+<tr><td>ShipperC gets the common mapping, its rates are missing in the tender</td><td>A group whose ID sorts before <code>SHIPPERC</code> (for example <code>ALLSHIPPERS</code>) is in the frompartner of the general translation.</td><td>Rename the group, or give the general translation no partner; see <a href="#translations--choose">How Bots chooses a translation</a>.</td></tr>
+<tr><td>A 997 or 990 is made (<span class="ui">Document-out</span>) but never sent</td><td>No route part has an outgoing channel for that receiver (Topartner tochannel does not match), or the Toeditype filter is wrong.</td><td>Check parts 30 to 32: a part per shipper, Toeditype <code>x12</code>. A shipper that is not in any part gets nothing.</td></tr>
+<tr><td>Tenders also arrive in the shipper's folder, or 997s in the TMS folder</td><td>A sending route part without Toeditype takes every file of the route.</td><td>Set Toeditype <code>json</code> on the TMS part and <code>x12</code> on the shipper parts.</td></tr>
+</table></div>
+</section>

@@ -11,6 +11,8 @@ from json.decoder import JSONDecodeError
 import os
 import socket
 import subprocess
+import threading
+import sys
 import time
 import traceback
 
@@ -966,14 +968,14 @@ def filer(request):
         'title': _('Bots Filer'),
     }
     if request.method == 'GET':
-        currentta = get_object_or_404(models.ta, idta=request.GET.get('idta'))
+        currentta = get_object_or_404(models.ta, idta=viewlib.safe_int(request.GET.get('idta')))
         formin = forms.FilerForm(request=request)
         formin.initial.update(formin.initials)
         if len(request.GET) > 0:
             formin.initial.update(request.GET.items())
         context['form'] = formin = forms.FilerForm(formin.initial, ta=currentta, request=request)
     else:
-        currentta = get_object_or_404(models.ta, idta=request.POST.get('idta'))
+        currentta = get_object_or_404(models.ta, idta=viewlib.safe_int(request.POST.get('idta')))
         context['form'] = formin = forms.FilerForm(request.POST, ta=currentta, request=request)
 
     if not formin.is_valid():
@@ -1171,10 +1173,9 @@ def srcfiler(request):
             src = request.GET.get('src')
             if not src:
                 raise Http404()
-            srcfile = os.path.abspath(
-                os.path.join(botsglobal.ini.get('directories', 'usersysabs'), src))
             # Get only python files in usersys !
-            if not srcfile.startswith(botsglobal.ini.get('directories', 'usersysabs')):
+            srcfile = botslib.path_in_directory(botsglobal.ini.get('directories', 'usersysabs'), src)
+            if not srcfile:
                 botsglobal.logger.error('Invalid source file requested: %s', src)
                 raise Http404()
             if srcfile.endswith('.py') and os.path.isfile(srcfile):
@@ -1235,7 +1236,8 @@ def logfiler(request):
                     'settings', 'log_when', None) == 'report':
                 logfiles = logfiles[:25]
             context["logfiles"] = [os.path.basename(log) for log in logfiles]
-            log = request.GET.get(logname, '').split(os.sep)[-1]
+            # only the name of a file in this directory: no path (with / or \\)
+            log = os.path.basename(request.GET.get(logname, '').replace('\\', '/'))
             if not log:
                 if logname == 'engine':
                     log = str(viewlib.get_reportidta(request.GET) or "")
@@ -1243,8 +1245,8 @@ def logfiler(request):
                     log = context['logfiles'][0]
             if log:
                 context['log'] = log
-                logfile = botslib.join(logdir, log)
-                if os.path.isfile(logfile):
+                logfile = botslib.path_in_directory(logdir, log)
+                if logfile and os.path.isfile(logfile):
                     try:
                         with open(logfile, "r", encoding="utf8") as logfil:
                             logdata = logfil.read()
@@ -1255,7 +1257,7 @@ def logfiler(request):
                         context['logdata'] = err
                 else:
                     context['logdata'] = _('No such file.')
-                    if botsglobal.settings.DEBUG:
+                    if botsglobal.settings.DEBUG and logfile:
                         context['logdata'] += ': %s' % logfile
 
             # Download log file
@@ -1355,10 +1357,13 @@ def add_messages(request, msgs: dict[str, list]):
     :param request: django.request
     :param msgs: dict
     """
+    # the texts can contain names from a plugin (files, routes): escape
     for info in msgs.get("info", []):
-        messages.add_message(request, messages.INFO, mark_safe(info.replace("\n", "<br>")))
+        messages.add_message(
+            request, messages.INFO, format_html_join(mark_safe("<br>"), "{}", ((line,) for line in info.split("\n"))))
     for warn in msgs.get("warning", []):
-        messages.add_message(request, messages.WARNING, mark_safe(warn.replace("\n", "<br>")))
+        messages.add_message(
+            request, messages.WARNING, format_html_join(mark_safe("<br>"), "{}", ((line,) for line in warn.split("\n"))))
 
 
 @login_required
@@ -1483,7 +1488,7 @@ def runengine(request):
         if botsglobal.ini.getboolean('jobqueue', 'enabled', False):
             # run bots-engine via jobqueue-server; reports back if job is queued
             terug = job2queue.send_job_to_jobqueue(lijst)
-            txt = '%s: %s' % (job2queue.JOBQUEUEMESSAGE2TXT[terug], lijst[-1])
+            txt = '%s: %s' % (job2queue.JOBQUEUEMESSAGE2TXT.get(terug, terug), lijst[-1])
             if terug == 0:
                 messages.add_message(request, messages.INFO, txt)
                 botsglobal.logger.info(txt)
@@ -1518,10 +1523,14 @@ def runengine(request):
             # Close the socket
             engine_socket.close()
 
-            # run engine
+            # run engine: with the python that runs the webserver (bots-engine does not have to be in
+            # PATH, eg when the webserver runs as a service); do not wait until the engine is ready.
             try:
-                with subprocess.Popen(lijst) as proc:
-                    terug = proc.pid
+                proc = subprocess.Popen(  # pylint: disable=consider-using-with
+                    [sys.executable, '-m', __package__ + '.engine'] + lijst[1:],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # collect the exit code when the engine ends (no zombie process)
+                threading.Thread(target=proc.wait, daemon=True).start()
             except Exception as exc:
                 notification = _('Errors while trying to run bots-engine: "%s".') % exc
                 messages.add_message(request, messages.ERROR, notification)

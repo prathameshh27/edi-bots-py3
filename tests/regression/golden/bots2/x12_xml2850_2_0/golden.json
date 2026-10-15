@@ -1,0 +1,27 @@
+{
+ "errors": [],
+ "files": [],
+ "index_version": "",
+ "outfiles": {},
+ "plugin": "x12_xml2850_2_0",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 0,
+  "lastdone": 0,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 0,
+  "processerrors": 0,
+  "send": 0,
+  "status": false
+ },
+ "routes": [
+  [
+   "x12_xml2850",
+   1,
+   false,
+   false
+  ]
+ ]
+}

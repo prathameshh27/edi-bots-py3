@@ -3,7 +3,8 @@
 $(document).ready(function() {
     setTimeout(function() {
         if (document.getElementById('id_refresh').value) {
-            document.forms[0].submit();
+            /* the form of the view; not the first form of the page: that is the form to log out */
+            document.getElementById('id_refresh').form.submit();
         }
     }, {{ refresh }}*1000);
 });

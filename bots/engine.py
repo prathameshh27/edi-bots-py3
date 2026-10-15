@@ -5,7 +5,9 @@ import logging
 import os
 import socket
 import sys
+import threading
 import time
+import traceback
 import warnings
 
 # bots-modules
@@ -25,19 +27,76 @@ def logging_exit():
             and getattr(botsglobal.currentrun, 'minta4query', None):
         # Not for classic logging, dailly or rotating
         # Rename engine.log with "botsglobal.currentrun.minta4query
-        os.rename(
-            botsglobal.logger.handlers[0].baseFilename,
-            os.path.join(
-                botsglobal.ini.get('directories', 'logging'),
-                botsglobal.logger.name.replace(f"{__package__}.", ""),
-                str(botsglobal.currentrun.minta4query)
+        logfiles = [handler.baseFilename for handler in botsglobal.logger.handlers if hasattr(handler, 'baseFilename')]
+        if logfiles and os.path.isfile(logfiles[0]):
+            # os.replace: a log with that name can be there already (windows: os.rename gives an error)
+            os.replace(
+                logfiles[0],
+                os.path.join(
+                    botsglobal.ini.get('directories', 'logging'),
+                    botsglobal.logger.name.replace(f"{__package__}.", ""),
+                    str(botsglobal.currentrun.minta4query)
+                )
             )
-        )
 
 
 def start():
     """
-    Start Bots engine
+    Start Bots engine; see run() for the exit codes.
+    The engine always ends: if at the end something is still running (a thread started by a library or
+    a user script) that is reported and the engine ends anyway.
+    """
+    try:
+        run()
+    except SystemExit as exc:
+        code = exc.code
+    else:
+        code = 0
+    leave(code)
+
+
+def leave(code, wait=None):
+    """End the engine with exit code 'code'."""
+    if wait is None:
+        wait = 30
+        if botsglobal.ini:
+            wait = botsglobal.ini.getint('settings', 'maxsecondsexit', 30)
+    deadline = time.time() + wait
+    busy = [thread for thread in threading.enumerate()
+            if thread is not threading.main_thread() and not thread.daemon and thread.is_alive()]
+    for thread in busy:
+        thread.join(max(0, deadline - time.time()))
+    busy = [thread for thread in busy if thread.is_alive()]
+    if not busy:
+        # the normal way: python runs what is registered to run at exit
+        sys.exit(code)
+    # python would wait for these threads for ever, with the database still locked for a next run.
+    frames = sys._current_frames()  # pylint: disable=protected-access
+    text = 'bots-engine is ready, but something is still running after %s seconds; bots-engine ends now.\n' % wait
+    for thread in busy:
+        text += 'Thread "%s":\n%s\n' % (
+            thread.name, ''.join(traceback.format_stack(frames.get(thread.ident))) if thread.ident in frames else '?')
+    try:
+        if botsglobal.logger:
+            botsglobal.logger.critical(text)
+        else:
+            sys.stderr.write(text)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+    try:
+        # remove database lock, close database, close log, etc
+        atexit._run_exitfuncs()  # pylint: disable=protected-access
+    finally:
+        if isinstance(code, int):
+            os._exit(code)  # pylint: disable=protected-access
+        if code is not None:
+            sys.stderr.write('%s\n' % code)
+        os._exit(0 if code is None else 1)  # pylint: disable=protected-access
+
+
+def run():
+    """
+    Run Bots engine
 
     sysexit codes:
     0: OK, no errors
@@ -108,6 +167,10 @@ def start():
     try:
         engine_socket = botslib.check_if_other_engine_is_running()
     except socket.error:
+        # logging is not started yet (the log is of the engine that runs): tell why nothing is done
+        sys.stderr.write(
+            'bots-engine does not run: another bots-engine is running for this environment (port %s is in use).\n'
+            % botsglobal.ini.getint('settings', 'port', 28081))
         sys.exit(3)
     else:
         atexit.register(engine_socket.close)
@@ -164,6 +227,12 @@ def start():
     # set a lock on the database;
     # if not possible, the database is locked:
     #   an earlier instance of bots-engine was terminated unexpectedly.
+    if not botslib.database_has_engine_tables():
+        botsglobal.logger.critical(_(
+            'The database does not have the tables of bots-engine.\n'
+            'Run "bots-updatedb" to create the tables in a new database or to update the database of bots 3.'
+        ))
+        sys.exit(3)
     if not botslib.set_database_lock():
         # for SQLite: do a integrity check on the database
         if botsglobal.connection.settings_dict["ENGINE"] == "django.db.backends.sqlite3":
@@ -237,6 +306,9 @@ def start():
                            ORDER BY idroute """,
                         {'active': True, 'notindefaultrun': False}):
                     use_routestorun.append(row["idroute"])
+                # in the order of the characters, as SQLite (and bots 3 on it) did: the collation of another
+                # database may ignore case or punctuation and run the routes in another order
+                use_routestorun.sort()
                 botsglobal.logger.info(
                     _('Run active routes from database that are in default run: "%(routes)s".'),
                     {"routes": str(use_routestorun)},
@@ -251,6 +323,7 @@ def start():
                            ORDER BY idroute """,
                         {'active': True}):
                     use_routestorun.append(row["idroute"])
+                use_routestorun.sort()      # see above
                 botsglobal.logger.info(
                     _('Run all active routes from database: "%(routes)s".'),
                     {"routes": str(use_routestorun)},

@@ -1,0 +1,45 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "orders96.edi",
+   3
+  ],
+  [
+   "orders96.edi",
+   3
+  ]
+ ],
+ "index_version": "3.2.0rc",
+ "outfiles": {
+  "edifax/orders1.html": "09ac793b38ad75dcf35c56070481fe6ddc2cbe0b5b506a1d811378fd7dda44ed",
+  "edifax/orders2.html": "23dd495f28a1cf3f167a3494486d85400023c01360028d7ece37e2f7f873eccb"
+ },
+ "plugin": "edifact_ordertoprint_20140428",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 1872,
+  "lastdone": 2,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 2,
+  "processerrors": 0,
+  "send": 2,
+  "status": false
+ },
+ "routes": [
+  [
+   "edifax",
+   9999,
+   true,
+   false
+  ],
+  [
+   "edifax_new",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

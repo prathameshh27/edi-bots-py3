@@ -44,7 +44,8 @@ def evaluate(command, rootidtaofrun):
             f"""SELECT {TAVARS}
             FROM ta
             WHERE idta > %(rootidtaofrun)s
-            AND status=%(status)s""",
+            AND status=%(status)s
+            ORDER BY idta""",
             {'status': EXTERNIN, 'rootidtaofrun': rootidtaofrun}):
         traceofinfile = Trace(row, rootidtaofrun)
         resultsofrun[traceofinfile.statust] += 1
@@ -185,7 +186,8 @@ def email_error_report(rootidtaofrun) -> int:
                     FROM ta
                     WHERE idta>=%(rootidtaofrun)s
                     AND status=%(status)s
-                    AND statust=%(statust)s""",
+                    AND statust=%(statust)s
+                    ORDER BY idta""",
                     {'rootidtaofrun': rootidtaofrun, 'status': PROCESS, 'statust': ERROR}):
                 reporttext += '\nProcess error:\n'
                 for key in row.keys():

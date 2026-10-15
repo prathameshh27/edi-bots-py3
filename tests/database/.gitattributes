@@ -1,0 +1,2 @@
+# database dumps: loaded as they are
+dumps/** -text

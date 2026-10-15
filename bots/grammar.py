@@ -158,6 +158,12 @@ class Grammar:
             raise GrammarError(
                 _('Grammar "%(grammar)s": syntax is not a dict{}.'), {'grammar': self.grammarname}
             )
+        # syntax parameters that have another name than in bots 3
+        if 'no_results_if_any_error_in_translation_edifile' in self.original_syntaxfromgrammar:
+            self.original_syntaxfromgrammar.setdefault(
+                'KillWholeFile', self.original_syntaxfromgrammar['no_results_if_any_error_in_translation_edifile'])
+        if not self.original_syntaxfromgrammar.get('allow_spaces_between_records', True):
+            self.original_syntaxfromgrammar.setdefault('strict_syntax_check', True)
         self.syntax = self.original_syntaxfromgrammar
 
     def _init_restofgrammar(self):
@@ -542,6 +548,7 @@ class Grammar:
                                 'grammar': self.grammarname,
                                 'record': recordid,
                                 'field': field[ID],
+                                'len': field[LENGTH],
                                 'decimals': field[DECIMALS],
                             },
                         )
@@ -929,7 +936,7 @@ class Grammar:
                     'record': recordid,
                     'field': field[ID],
                     'format': field[FORMAT],
-                    'keys': self.formatconvert.keys(),
+                    'keys': ', '.join(sorted(self.formatconvert)),
                 },
             ) from exc
 
@@ -987,7 +994,7 @@ class csv(Grammar):
         'skip_char': '',
         'skip_firstline': False,  # often first line in CSV is fieldnames. Usage: either False/True, or number of lines. If True, number of lines is 1
         "strict_syntax_check": False,  # for strict checks: no spaces between records
-        "strip_value": False,  # Strip field value of incoming document
+        "strip_value": True,  # Strip whitespace around field values of incoming document (as bots 3.x did)
         'triad': '',
         'wrap_length': 0,  # for producing wrapped format, where a file consists of fixed length records ending with crr/lf. Often seen in mainframe, as400
         # settings needed as defaults, but not useful for this editype
@@ -1127,9 +1134,8 @@ class fixed(Grammar):
             i[FIXED_RECORD_LENGTH] = sum(field[LENGTH] for field in i[FIELDS])
             if self.syntax['noBOTSID']:
                 # correct record-length if noBOTSID
-                i[FIXED_RECORD_LENGTH] -= -(
-                    self.syntax['endrecordID'] - self.syntax['startrecordID']
-                )
+                # (records in the edi file do not contain the BOTSID field)
+                i[FIXED_RECORD_LENGTH] -= self.syntax['endrecordID'] - self.syntax['startrecordID']
             # and go recursive
             if LEVEL in i:
                 self._linkrecorddefs2structure(i[LEVEL])
@@ -1321,7 +1327,7 @@ class edifact(Grammar):
         'sfield_sep': ':',
         'skip_char': '\r\n',
         "strict_syntax_check": False,  # for strict checks: no spaces between records
-        "strip_value": False,  # Strip field value of incoming document
+        "strip_value": True,  # Strip whitespace around field values of incoming document (as bots 3.x did)
         'version': '3',
         'UNB.S001.0080': '',
         'UNB.S001.0133': '',
@@ -1376,7 +1382,7 @@ class x12(Grammar):
         'sfield_sep': '>',  # advised '\'?
         'skip_char': '\r\n',
         "strict_syntax_check": False,  # for strict checks: no spaces between records
-        "strip_value": False,  # Strip field value of incoming document
+        "strip_value": True,  # Strip whitespace around field values of incoming document (as bots 3.x did)
         'version': '00403',
         'ISA01': '00',
         'ISA02': '          ',
@@ -1387,7 +1393,8 @@ class x12(Grammar):
         # since ISA version 00403 this is the reserve/repetition separator.
         # Bots does not use this anymore for ISA version >00403
         'ISA11': 'U',
-        'ISA14': '0',
+        # acknowledgment requested; '1' as in bots 3.x (set '0' in grammar or partner syntax to not ask)
+        'ISA14': '1',
         'ISA15': 'P',
         'GS07': 'X',
         # settings needed as defaults, but not useful for this editype
@@ -1453,7 +1460,8 @@ class json(Grammar):
         'checkcharsetout': 'strict',  # strict, ignore or botsreplace (replace with char as set in bots.ini).
         'checkunknownentities': True,
         'named_root_object': True,  # outgoing: when True: as default in bots 3.2. Output: True: {'ROOT':{...}} false: {...}
-        "force_list": False,  # outgoing. when True: max 1: object, max > 1
+        "force_list": False,  # outgoing. when True: always write a list of messages, also for one message
+        "max1_as_object": False,  # outgoing. False (as bots 3): records in a record are a list. True: a record with MAX 1 is an object.
         "json_write_numericals": False,  # outgoing. when True: write numerical field types (N, R) to json types (int or float).
         'contenttype': 'application/json',
         'decimaal': '.',
@@ -1533,7 +1541,7 @@ class tradacoms(Grammar):
         'record_tag_sep': '=',  # Tradacoms/GTDI
         'sfield_sep': ':',
         "strict_syntax_check": False,  # for strict checks: no spaces between records
-        "strip_value": False,  # Strip field value of incoming document
+        "strip_value": True,  # Strip whitespace around field values of incoming document (as bots 3.x did)
         'STX.STDS1': 'ANA',
         'STX.STDS2': '1',
         'STX.FROM.02': '',

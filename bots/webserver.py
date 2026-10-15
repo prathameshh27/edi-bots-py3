@@ -32,7 +32,7 @@ def error_page(status, message, _traceback, _version) -> str:
 <!DOCTYPE html>
 <html>
 <head>
-<title{status}</title>
+<title>{status}</title>
 </head>
 <body>
 <h2>{status}</h2>

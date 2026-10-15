@@ -1,0 +1,49 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "test.csv",
+   3
+  ],
+  [
+   "test.edi",
+   3
+  ],
+  [
+   "test2.csv",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "csvdemo/csv2edi/1.edi": "e966e3dc5cb9d65a2f85e1a27658b0580d0b866ba0710110581ba7f3515fdd5a",
+  "csvdemo/edi2csv/1.csv": "7e64861f25b1bc9a76f1b4c1cf48030eaf3ce1dbdaa0da2f8f5180f1b696be75"
+ },
+ "plugin": "edifact_orders2csv_and_vv_20130710",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 3700,
+  "lastdone": 3,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 3,
+  "processerrors": 0,
+  "send": 2,
+  "status": false
+ },
+ "routes": [
+  [
+   "csv2edi",
+   9999,
+   true,
+   false
+  ],
+  [
+   "edi2csv",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

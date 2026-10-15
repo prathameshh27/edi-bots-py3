@@ -21,42 +21,73 @@ from . import botsinit
 from . import botsglobal
 from . import job2queue
 from .botsinit import STARTINFO
-from .botslib import sendbotserrorreport, gettext as _
+from .botslib import sendbotserrorreport, gettext as _, join as botslib_join
 from .exceptions import DirmonitorError
 
-# get path to bots-engine
-BOTSENGINEPATH = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'bots-engine')
-
 logger = logging.getLogger(__name__)
+GLOBCHARS = '*?['
 
 
 def add_job(task):
-    """Add job to jobqueue"""
-    logger.info(
-        _('Sending job to queue: "%(path)s %(config)s %(task)s".'),
-        {
-            'path': BOTSENGINEPATH,
-            'config': '-c' + botsglobal.configdir,
-            'task': task,
-        },
-    )
-    task_args = ['bots-engine']
-    if os.path.dirname(BOTSENGINEPATH) not in os.environ['PATH'].split(':'):
-        task_args = [BOTSENGINEPATH]
-    task_args.append(f"-c{botsglobal.configdir}")
-    task_args.append(task)
-    logger.debug('task args: %s', task_args)
+    """
+    Add job to jobqueue: run bots-engine for route 'task' (all routes if task is '').
+    The jobqueue-server knows where bots-engine is.
+    """
+    task_args = ['bots-engine', f"-c{botsglobal.configdir}"]
+    if task:
+        task_args.append(task)
+    logger.info(_('Sending job to queue: "%(task)s".'), {'task': ' '.join(task_args)})
     ret = job2queue.send_job_to_jobqueue(task_args)
+    text = job2queue.JOBQUEUEMESSAGE2TXT.get(ret, str(ret))
     if ret == 0:
-        logger.info(job2queue.JOBQUEUEMESSAGE2TXT[ret])
-    elif ret == 1:
-        err = f"Task: {task}, "
-        err += job2queue.JOBQUEUEMESSAGE2TXT[ret]
+        logger.info(text)
+    elif ret in (1, 6):
+        err = f"Task: {task}, {text}"
         logger.error(err)
         sendbotserrorreport(__name__, err)
     else:
-        logger.warning(job2queue.JOBQUEUEMESSAGE2TXT[ret])
+        logger.warning(text)
     return ret
+
+
+def watch_root(path):
+    """directory to watch for path: path itself, or if path has wildcards: the part before the wildcards."""
+    path = os.path.abspath(path)
+    parts = path.replace('\\', '/').split('/')
+    for index, part in enumerate(parts):
+        if any(char in part for char in GLOBCHARS):
+            return os.path.normpath('/'.join(parts[:index]) + '/')
+    return path
+
+
+def event_matches(dir_watch, filename):
+    """
+    Is the file of an event a file this watch is for?
+    filename: as in the event: absolute (linux) or relative to the watched directory (windows).
+    - the name of the file matches 'filemask';
+    - the directory of the file is 'path' (path can have wildcards);
+      for a recursive watch: or a directory in 'path'.
+    """
+    root = watch_root(dir_watch['path'])
+    if not os.path.isabs(filename):
+        filename = os.path.join(root, filename)
+    filename = os.path.normpath(filename)
+    if not fnmatch.fnmatch(os.path.basename(filename), dir_watch['filemask']):
+        return False
+    directories = set((os.path.normcase(os.path.dirname(filename)),
+                       os.path.normcase(os.path.realpath(os.path.dirname(filename)))))
+    path = os.path.abspath(dir_watch['path'])
+    for watched in set((os.path.normcase(path), os.path.normcase(os.path.realpath(path)))):
+        for directory in directories:
+            if any(char in watched for char in GLOBCHARS):
+                if fnmatch.fnmatchcase(directory, watched):
+                    return True
+                continue
+            if directory == watched:
+                return True
+            if dir_watch['rec'] and directory.startswith(watched.rstrip(os.sep) + os.sep):
+                return True
+    return False
 
 
 def process_existing_files(dir_watch_data):
@@ -113,8 +144,14 @@ if os.name == 'nt':
             )
         ) from exc
 
-    def windows_event_handler(dir_watch, cond, tasks):
-        """Bots windows event handler"""
+    import pywintypes
+    import win32event
+
+    def windows_event_handler(dir_watch, cond, tasks, stop=None):
+        """
+        Bots windows event handler: watch one directory until 'stop' (threading.Event) is set.
+        Uses overlapped I/O: the thread does not block in windows, so it can be stopped (reload).
+        """
         # pylint: disable=invalid-name
         ACTIONS = {
             1: 'Created  ',  # tekst for printing results
@@ -124,8 +161,10 @@ if os.name == 'nt':
             5: 'Rename to',
         }
         FILE_LIST_DIRECTORY = 0x0001
+        stop = stop or threading.Event()
+        recursive = bool(dir_watch['rec'] or any(char in dir_watch['path'] for char in GLOBCHARS))
         hdir = win32file.CreateFile(
-            dir_watch['path'],  # path to directory
+            watch_root(dir_watch['path']),  # path to directory
             FILE_LIST_DIRECTORY,  # access (read/write) mode
             # share mode: FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
             win32con.FILE_SHARE_READ
@@ -134,46 +173,49 @@ if os.name == 'nt':
             # security descriptor
             None,
             win32con.OPEN_EXISTING,  # how to create
-            # file attributes: FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED
-            win32con.FILE_FLAG_BACKUP_SEMANTICS,
+            win32con.FILE_FLAG_BACKUP_SEMANTICS | win32con.FILE_FLAG_OVERLAPPED,
             None,
         )
+        overlapped = pywintypes.OVERLAPPED()
+        overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
+        buffer = win32file.AllocateReadBuffer(65536)
         # detecting right events is not easy in windows :-(
         # want to detect: new file,  move, drop, rename, write/append to file
         # only FILE_NOTIFY_CHANGE_LAST_WRITE: copy yes, no move
-        # for rec=True: event that subdirectory itself is updated (for file deletes in dir)
-        while True:
-            results = win32file.ReadDirectoryChangesW(
-                hdir,
-                8192,  # buffer size was 1024, do not want to miss anything
-                dir_watch['rec'],  # recursive
-                win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
-                # ~ win32con.FILE_NOTIFY_CHANGE_DIR_NAME |
-                # ~ win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES |
-                # ~ win32con.FILE_NOTIFY_CHANGE_SIZE |
-                # ~ win32con.FILE_NOTIFY_CHANGE_SECURITY |
-                # ~ win32con.FILE_NOTIFY_CHANGE_CREATION |       # unknown, does not work!
-                # ~ win32con.FILE_NOTIFsY_CHANGE_LAST_ACCESS |   # unknown, does not work!
-                win32con.FILE_NOTIFY_CHANGE_LAST_WRITE,
-                None,
-                None,
-            )
-            if results:
+        try:
+            while not stop.is_set():
+                win32event.ResetEvent(overlapped.hEvent)
+                win32file.ReadDirectoryChangesW(
+                    hdir,
+                    buffer,
+                    recursive,
+                    win32con.FILE_NOTIFY_CHANGE_FILE_NAME | win32con.FILE_NOTIFY_CHANGE_LAST_WRITE,
+                    overlapped,
+                    None,
+                )
+                while win32event.WaitForSingleObject(overlapped.hEvent, 500) != win32event.WAIT_OBJECT_0:
+                    if stop.is_set():
+                        win32file.CancelIo(hdir)
+                        return
+                nbytes = win32file.GetOverlappedResult(hdir, overlapped, True)
+                results = win32file.FILE_NOTIFY_INFORMATION(buffer, nbytes) if nbytes else []
                 # for each incoming event: place route to run in a set. Main thread takes action.
                 for action, filename in results:
                     logger.debug(
                         'Event: %(action)s %(filename)s',
                         {'action': ACTIONS.get(action, 'Unknown'), 'filename': filename},
                     )
-                for action, filename in results:
-                    if action in [1, 3, 5] and filename in glob.glob(
-                            os.path.join(dir_watch['path'], dir_watch['filemask'])):
-                        cond.acquire()
+                if not nbytes or any(
+                        action in [1, 3, 5] and event_matches(dir_watch, filename) for action, filename in results):
+                    # (nbytes 0: more events than fit in the buffer: something happened in the directory)
+                    with cond:
                         tasks.add(dir_watch['idroute'])
                         cond.notify()
-                        cond.release()
-                        # the route is triggered, do not need to trigger more often
-                        break
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error(_('Error in watching directory "%(path)s": %(exc)s'), {'path': dir_watch['path'], 'exc': exc})
+        finally:
+            win32file.CloseHandle(hdir)
+            win32file.CloseHandle(overlapped.hEvent)
 
     # end of windows-specific #####################################################################
 
@@ -221,8 +263,9 @@ elif os.name == 'posix':
         def process_IN_CREATE(self, event):
             """these event are needed for auto_add with pyinotify.IN_CREATE mask."""
 
-        # def process_IN_MODIFY(self, event):
-        #     """pyinotify.IN_MODIFY event."""
+        def process_IN_MODIFY(self, event):
+            """pyinotify.IN_MODIFY event; only watched with bots.ini, [dirmonitor] trigger_on_modify = True"""
+            self.process_event(event)
 
         def process_IN_CLOSE_WRITE(self, event):
             """pyinotify.IN_CLOSE_WRITE event."""
@@ -241,20 +284,17 @@ elif os.name == 'posix':
             #         and event.dir and self.watch_data[event.wd][2]:
             # logger.info('new directory!!"%s %s".', *event)
             logger.debug('Process event: %s', event)
+            if event.dir:
+                return
             for dir_watch in self.dir_watch_data:
-                if event.pathname.startswith(dir_watch['path'].split('*')[0]):
-                    if event.pathname in glob.glob(
-                            os.path.join(dir_watch['path'], dir_watch['filemask'])):
-                        logger.debug('Event match: %s', dir_watch)
-                        # if os.path.isfile(event.pathname):
-                        logger.info(
-                            'New file for route %s: %s',
-                            dir_watch['idroute'], event.pathname)
-                        self.cond.acquire()
+                if event_matches(dir_watch, event.pathname):
+                    logger.debug('Event match: %s', dir_watch)
+                    logger.info(
+                        'New file for route %s: %s',
+                        dir_watch['idroute'], event.pathname)
+                    with self.cond:
                         self.tasks.add(dir_watch['idroute'])
                         self.cond.notify()
-                        self.cond.release()
-                        break
 
     # pylint: disable=no-member
     MASK = (
@@ -272,14 +312,19 @@ elif os.name == 'posix':
 
         def __init__(self, dir_watch_data, *args, **kwargs):
             super().__init__(*args, **kwargs)
+            mask = MASK
+            if botsglobal.ini.getboolean('dirmonitor', 'trigger_on_modify', False):
+                # also when a file is written to (and not closed)
+                mask |= pyinotify.IN_MODIFY
             for dir_watch in dir_watch_data:
                 logger.info(_('Watched directory: %s'), dir_watch['path'])
+                wildcards = any(char in dir_watch['path'] for char in GLOBCHARS)
                 self.add_watch(
-                    path=dir_watch['path'].split('*')[0],
-                    mask=MASK,
-                    rec=dir_watch['rec'],
-                    auto_add='*' in dir_watch['path'],
-                    do_glob=True
+                    path=watch_root(dir_watch['path']),
+                    mask=mask,
+                    # new sub-directories are watched too
+                    rec=bool(dir_watch['rec'] or wildcards),
+                    auto_add=bool(dir_watch['rec'] or wildcards),
                 )
 
     def linux_event_handler(dir_watch_data, cond, tasks):
@@ -306,10 +351,10 @@ def start():
     bots-dirmonitor run a specific route when new file(s) arrived in a configured directory
 
     Usage:
-        %(name)s -c<directory>
+        {os.path.basename(sys.argv[0])} -c<directory>
 
     Options:
-        -c<drrectory>   directory for configuration files (default: config).
+        -c<directory>   directory for configuration files (default: config).
         --reload        Reload bots-dirmonitor if already running.
 
     """
@@ -377,8 +422,11 @@ def dirmonitoring(tasks: set) -> bool:
     # Add dirmonitor sections in bots.ini
     for section in botsglobal.ini.sections():
         if section.startswith('dirmonitor') and section[len('dirmonitor'):]:
+            if not botsglobal.ini.get(section, 'path', ''):
+                # section without path (as in the bots.ini that is installed): nothing to watch
+                continue
             watch_data = {
-                'path': botsglobal.ini.get(section, 'path'),
+                'path': os.path.abspath(botsglobal.ini.get(section, 'path')),
                 'rec': botsglobal.ini.getboolean(section, 'recursive', False),
                 'filemask': botsglobal.ini.get(section, 'filemask', '*'),
                 'idroute': botsglobal.ini.get(section, 'route', ''),
@@ -405,8 +453,8 @@ def dirmonitoring(tasks: set) -> bool:
     for route in models.routes.objects.filter(active=True, dirmonitor=True):
         logger.info('Monitored route found: %s', route)
         watch_data = {
-            'path': route.fromchannel.path,
-            'rec': '*' in route.fromchannel.path,
+            'path': os.path.abspath(botslib_join(route.fromchannel.path)),
+            'rec': False,
             'filemask': route.fromchannel.filename,
             'idroute': route.idroute,
             'route': route,
@@ -417,10 +465,10 @@ def dirmonitoring(tasks: set) -> bool:
                 logger.warning(
                     'Skipping already watched path for route "%s": %s%s%s',
                     watch_data['route'], watch_data['path'], os.sep, watch_data['filemask'])
-                if watched_path[watch_data['path']][watch_data['filemask']] != watch_data['route']:
+                if watched_path[watch_data['path']][watch_data['filemask']] != watch_data['idroute']:
                     logger.error(
                         'Several routes to run for same watched path/filemask: "%s" != "%s"',
-                        watch_data['route'],
+                        watch_data['idroute'],
                         watched_path[watch_data['path']][watch_data['filemask']])
                 continue
         logger.info(
@@ -435,23 +483,24 @@ def dirmonitoring(tasks: set) -> bool:
     # Add dirmonitor trigger
     dirmonitor_trigger = botsglobal.ini.get('dirmonitor', 'trigger')
     dir_watch_data.append({
-        'path': os.path.dirname(dirmonitor_trigger),
+        'path': os.path.dirname(os.path.abspath(dirmonitor_trigger)),
         'rec': False,
         'filemask': os.path.basename(dirmonitor_trigger),
         'idroute': 'dirmonitor-trigger',
     })
 
-    # process existings files before watcher
-    if botsglobal.ini.getboolean('dirmonitor', 'process_existing', True):
-        process_existing_files(dir_watch_data)
-
     if os.name == 'nt':
         # for windows: start a thread per directory watcher
         dir_watch_threads = []
+        stop_watching = threading.Event()
         for dir_watch in dir_watch_data:
+            if not os.path.isdir(watch_root(dir_watch['path'])):
+                logger.error(
+                    _('Directory to watch for route "%(idroute)s" does not exist: %(path)s'), dir_watch)
+                continue
             dir_watch_thread = threading.Thread(
                 target=windows_event_handler,
-                args=(dir_watch, cond, tasks),
+                args=(dir_watch, cond, tasks, stop_watching),
             )
             # do not wait for thread when exiting
             dir_watch_thread.daemon = True
@@ -467,8 +516,13 @@ def dirmonitoring(tasks: set) -> bool:
         notifier = pyinotify.ThreadedNotifier(watch_manager, event_handler)
         notifier.start()
 
+    # process existing files. After the watchers are started: a file that arrives now is not missed.
+    if botsglobal.ini.getboolean('dirmonitor', 'process_existing', True):
+        process_existing_files(dir_watch_data)
+
     # this main thread get the results from the watch-thread(s).
     active_receiving = False
+    not_queued = set()
     timeout = 2.0
     cond.acquire()
     logger.info(_('Started.'))
@@ -521,15 +575,17 @@ def dirmonitoring(tasks: set) -> bool:
                                                         if task in tasks:
                                                             tasks.remove(task)
                                                     elif os.name == 'nt':
+                                                        stop_watching.set()
                                                         for dir_watch_thread in dir_watch_threads:
-                                                            dir_watch_thread.do_run = False
-                                                            dir_watch_thread.join()
+                                                            dir_watch_thread.join(10)
+                                                        tasks.discard(task)
                                                     cond.release()
                                                     return True
                                                 if todo:
                                                     logger.error(_('Unknown request: %s'), todo)
-                                else:
-                                    add_job(task)
+                                elif add_job(task) == 1:
+                                    # jobqueue-server is not there: try again later
+                                    not_queued.add(task)
                         # pylint: disable=broad-exception-caught
                         except Exception as exc:
                             logger.error(
@@ -537,6 +593,11 @@ def dirmonitoring(tasks: set) -> bool:
                                 {'exc': exc}
                             )
                         active_receiving = False
+                        if not_queued:
+                            tasks.update(not_queued)
+                            not_queued.clear()
+                            # do not fill the log while jobqueue-server is away
+                            cond.wait(timeout=10)
                     else:
                         # cond.wait returned probably because of a timeout
                         logger.debug(_('time difference to small.'))
@@ -548,6 +609,8 @@ def dirmonitoring(tasks: set) -> bool:
     logger.info(_('Exiting ...'))
     if os.name == 'posix':
         notifier.stop()
+    else:
+        stop_watching.set()
     # pylint: disable=protected-access
     if cond._is_owned():
         cond.release()

@@ -73,7 +73,7 @@ DATABASES = {
 #         'PASSWORD': 'botsbots',
 #         'HOST': '127.0.0.1',
 #         'PORT': '3306',
-#         'OPTIONS': {'use_unicode':True,'charset':'utf8','init_command': 'SET storage_engine=INNODB'},
+#         'OPTIONS': {'use_unicode':True,'charset':'utf8','init_command': 'SET default_storage_engine=INNODB'},
 #     }
 # }
 # PostgreSQL:

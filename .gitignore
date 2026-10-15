@@ -99,3 +99,6 @@ coverage.xml
 .venv/
 venv/
 ENV/
+
+# the built manual (python docs/manual/build.py)
+docs/manual/site/

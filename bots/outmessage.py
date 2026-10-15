@@ -108,7 +108,7 @@ class Outmessage(message.Message):
                 # partner syntax overrules!
                 self.defmessage.syntax.update(partnersyntax.syntax)
                 botsglobal.logger.debug(
-                    'Partner syntax imported "%(filename)s".', partnersyntax.module.__file__)
+                    'Partner syntax imported "%(filename)s".', {'filename': partnersyntax.module.__file__})
 
             except BotsImportError:
                 # No partner specific syntax found (is not an error).
@@ -124,7 +124,7 @@ class Outmessage(message.Message):
                 # partner syntax overrules!
                 self.defmessage.syntax.update(partnersyntax.syntax)
                 botsglobal.logger.debug(
-                    'Partner syntax imported "%(filename)s".', partnersyntax.module.__file__)
+                    'Partner syntax imported "%(filename)s".', {'filename': partnersyntax.module.__file__})
 
             except BotsImportError:
                 # No partner specific syntax found (is not an error).
@@ -466,7 +466,9 @@ class Outmessage(message.Message):
                     }
                 )
         elif field_definition[BFORMAT] == "B":
-            # Boolean (json)
+            # Boolean (json). put() makes a string of every value: 'True', 'False' (also: true/false, 1/0)
+            if isinstance(value, str) and value.strip().lower() in ('true', 'false', '1', '0'):
+                value = value.strip().lower() in ('true', '1')
             if not isinstance(value, bool):
                 self.add2errorlist(
                     _('[F35]: Record "%(record)s" field "%(field)s" is not of type bool.\n')
@@ -1066,6 +1068,7 @@ class xml(Outmessage):
                     attributedict[field] = {}
                 attributedict[field][attribute] = value
                 # ~ del noderecord[key]
+        attributedict = _attributes_sorted(attributedict)
         # generate xml-record-entity***************************
         xmlrecord = ET.Element(recordtag, attributedict.get(recordtag, {}))
         # ***add BOTSCONTENT as the content of the xml-record-entity
@@ -1088,13 +1091,22 @@ class xml(Outmessage):
         self._outstream = botslib.opendata_bin(self.ta_info['filename'], 'wb')
 
 
+def _attributes_sorted(attributedict):
+    """The attributes of each xml element in alphabetical order, as bots 3 wrote them (ElementTree of python 2
+    sorted attributes; since python 3.8 it writes them in the order they are given, here: the order in which
+    the mapping did its puts)."""
+    return dict((field, dict(sorted(attributes.items()))) for field, attributes in attributedict.items())
+
+
 class xmlnocheck(xml):
     def _node2xmlfields(self, noderecord):
         """write record as xml-record-entity plus xml-field-entities within the xml-record-entity.
         output is sorted alfabetically, attributes alfabetically.
         """
         recordtag = noderecord.pop('BOTSID')
-        del noderecord['BOTSIDnr']
+        # BOTSIDnr never goes to the output. As in bots 3: it does not have to be there
+        # (a mapping can have made or changed the records itself).
+        noderecord.pop('BOTSIDnr', None)
         BOTSCONTENT = noderecord.pop('BOTSCONTENT', None)
         # ***collect from noderecord all entities and attributes***************************
         attributemarker = self.ta_info['attributemarker']
@@ -1107,6 +1119,7 @@ class xmlnocheck(xml):
                 attributedict[field][attribute] = value
             else:
                 attributedict.setdefault(key, {})
+        attributedict = _attributes_sorted(attributedict)
         # ***generate the xml-record-entity***************************
         # pop from attributedict->do not use later
         xmlrecord = ET.Element(recordtag, attributedict.pop(recordtag, {}))
@@ -1122,12 +1135,12 @@ class xmlnocheck(xml):
 class json(Outmessage):
     def _initwrite(self):
         super()._initwrite()
-        # either write list of messages or one message
-        if self.defmessage.structure[0][MAX] > 1 or self.ta_info['force_list']:
-            self.write_json_list = True
+        # either write list of messages or one message.
+        # As in bots 3.x: a list when there are several messages in the out-tree, else one object.
+        # Syntax parameter 'force_list' always writes a list.
+        self.write_json_list = bool(self.multiplewrite or self.ta_info.get('force_list'))
+        if self.write_json_list:
             self._outstream.write("[")
-        else:
-            self.write_json_list = False
 
     def _write(self, node_instance):
         """
@@ -1180,7 +1193,9 @@ class json(Outmessage):
         """
         # verify as usual
         super()._canonicaltree(node_instance, structure)
-        if not self.ta_info['force_list']:
+        # default (as bots 3): records in a record are always written as a list.
+        # syntax parameter 'max1_as_object': a record that can occur once (MAX 1) is written as object.
+        if self.ta_info.get('max1_as_object') and not self.ta_info.get('force_list'):
             self.correct_max_one_occurence(node_instance, structure)
 
     def correct_max_one_occurence(self, node_instance, structure):
@@ -1196,7 +1211,7 @@ class json(Outmessage):
                 for childnode in node_instance.children:
                     # if it is not the right NODE":
                     if childnode.record['BOTSID'] != record_definition[ID] \
-                            or childnode.record.get("BOTSIDnr") != record_definition[BOTSIDNR]:
+                            or childnode.record.get("BOTSIDnr", record_definition[BOTSIDNR]) != record_definition[BOTSIDNR]:
                         continue
                     if record_definition[MAX] == 1:
                         # misuse linpos_info to indicate this node occurs only once -> dict in json,
@@ -1233,16 +1248,13 @@ class json(Outmessage):
             new_noderecord[field_definition[ID]] = self._formatfield(
                 value, field_definition, record_definition, node_instance
             )
+        if 'BOTSIDnr' in noderecord:
+            # needed to find the definition of the record (2 records with the same name); not written
+            new_noderecord['BOTSIDnr'] = noderecord['BOTSIDnr']
         node_instance.record = new_noderecord
 
 
 class jsonnocheck(json):
-
-    def _initwrite(self):
-        super()._initwrite()
-        self.write_json_list = True
-        if self.write_json_list:
-            self._outstream.write('[')
 
     def _node2json(self, node_instance):
         """recursive method."""

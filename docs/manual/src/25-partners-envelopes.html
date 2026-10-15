@@ -1,0 +1,837 @@
+<section id="partners" data-title="Partners and partner groups" data-group="Configure">
+<h2>Partners and partner groups</h2>
+<p class="lead">A partner is a company you exchange EDI files with, and your own company is a partner too. You enter partners in Bots when you want a translation, a route, a confirm rule or a mail address to depend on who sends or receives a file. Partner groups let you treat several partners the same way.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Every file in Bots carries two labels: who sent it (<b>frompartner</b>) and who should get it (<b>topartner</b>). Bots reads those labels from the file itself, from the route, from a mail address, or your mapping sets them. The partner list in the web interface is the address book that gives those labels a meaning: a name, mail addresses, groups and some free fields.</p></div>
+
+<h3 id="partners--how">How it works</h3>
+<p>A partner is identified by its <b>partner ID</b> (<code>idpartner</code>), for example <code>PARTNERA</code>. Bots stores the IDs of the sender and the receiver with every file and every message it handles (in the fields <code>frompartner</code> and <code>topartner</code> of its transaction table). These IDs are plain text. Bots does not check that a partner record exists for them: an envelope, for example, is made from the IDs alone. A partner record is needed where Bots <b>looks the partner up</b>:</p>
+<ul>
+<li>choosing a <a href="#translations">translation</a> for a partner or a partner group;</li>
+<li>the outgoing filters of a <a href="#routes">route</a> (<span class="ui">Frompartner tochannel</span>, <span class="ui">Topartner tochannel</span>), which also accept a group;</li>
+<li><a href="#confirm-rules">confirm rules</a> for one sender or receiver;</li>
+<li>mail: the partner of a received mail is found by its address, and the address of an outgoing mail is found by the partner (see <a href="#channel-mail">Mail channels</a>);</li>
+<li>a mapping that reads partner data with <code>transform.partnerlookup()</code> (see <a href="#mapping-functions">Mapping functions</a>).</li>
+</ul>
+
+<h4 id="partners--find">How Bots finds the partners of a file</h4>
+<p>The partner IDs of a file are filled in steps. A later step overwrites an earlier one, but only with a value that is not empty.</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Four sources of partner IDs, in the order Bots uses them: mail address, route, envelope of the file, mapping">
+<defs><marker id="arrow-partners-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="165" height="80" rx="10"/><text x="92" y="64" text-anchor="middle" font-weight="600">1. Mail address</text><text class="small" x="92" y="86" text-anchor="middle">From / To of a mail</text>
+<path class="arrow" d="M178,70 L198,70" marker-end="url(#arrow-partners-1)"/>
+<rect class="box in" x="200" y="30" width="165" height="80" rx="10"/><text x="282" y="64" text-anchor="middle" font-weight="600">2. Route</text><text class="small" x="282" y="86" text-anchor="middle">frompartner / topartner</text>
+<path class="arrow" d="M368,70 L388,70" marker-end="url(#arrow-partners-1)"/>
+<rect class="box mid" x="390" y="30" width="165" height="80" rx="10"/><text x="472" y="64" text-anchor="middle" font-weight="600">3. Envelope</text><text class="small" x="472" y="86" text-anchor="middle">QUERIES in the grammar</text>
+<path class="arrow" d="M558,70 L578,70" marker-end="url(#arrow-partners-1)"/>
+<rect class="box out" x="580" y="30" width="165" height="80" rx="10"/><text x="662" y="64" text-anchor="middle" font-weight="600">4. Mapping</text><text class="small" x="662" y="86" text-anchor="middle">out.ta_info[...]</text>
+</svg></div>
+<ol>
+<li><b>Mail address.</b> A mail channel (pop3, imap4 and their variants) looks up the <code>From</code> address to find the frompartner and the <code>To</code> addresses to find the topartner. Bots searches, without regard to upper or lower case: first the <span class="ui">email address per channel</span> entries of active partners for this channel, then the <span class="ui">Mail</span> field of the active partners, then their <span class="ui">Cc</span> field. An address has to be equal to one of the addresses in the field. An unknown address is an error, unless the channel has <span class="ui">No check from-address</span> or <span class="ui">No check to-address</span> ticked; then that partner stays empty.</li>
+<li><b>Route.</b> If the route part has a <span class="ui">Frompartner</span> or <span class="ui">Topartner</span>, every file received by that route part gets it. Use this when a channel only receives files of one partner (for example an SFTP folder of PartnerA).</li>
+<li><b>Envelope of the file.</b> While Bots reads (parses) the file, the <code>QUERIES</code> of the grammar pick the IDs out of the file, for example the sender and receiver in the EDIFACT <code>UNB</code> segment or in the X12 <code>ISA</code>/<code>GS</code> segments. These are set per message. See <a href="#grammar-records">Records and structure</a>.</li>
+<li><b>Mapping.</b> A mapping can set the partners of the outgoing message: <code>out.ta_info['frompartner'] = 'MYCOMPANY'</code>, <code>out.ta_info['topartner'] = 'PARTNERA'</code>. Without this, the outgoing message gets the partners of the incoming message.</li>
+</ol>
+
+<h4 id="partners--groups">Partner groups</h4>
+<p>A partner group is a partner record with <code>isgroup</code> set. You make it under <span class="ui">Partnergroups</span> and you put partners in it from the partner itself (<span class="ui">Is in groups</span>). A partner can be in several groups. Bots uses groups in two places:</p>
+<ul>
+<li><b>Translations:</b> a translation with the group <code>Retailers</code> as frompartner (or topartner) is used for messages of every partner that is a member of <code>Retailers</code>.</li>
+<li><b>Route filters for the outgoing channel:</b> <span class="ui">Frompartner tochannel</span> and <span class="ui">Topartner tochannel</span> accept a partner or a group.</li>
+</ul>
+<p>Groups are <b>not</b> used in confirm rules and in the <span class="ui">Frompartner</span>/<span class="ui">Topartner</span> of a route: those fields only offer partners. Bots only follows direct membership: a group inside a group does not make its partners members of the outer group.</p>
+
+<h4 id="partners--used">What "active" does</h4>
+<p>Only active partners are found by mail address and only active partners give a mail address for outgoing mail. Active partners are also the ones offered in the selection lists of the report screens. The translation lookup and the route filters do <b>not</b> look at <span class="ui">Active</span>: an inactive partner still gets its partner-specific translation. The <span class="ui">Startdate</span> and <span class="ui">Enddate</span> fields are for your information only; Bots does not use them.</p>
+
+<h4 id="partners--syntax">Partner-specific syntax</h4>
+<p>Some partners want their envelope or file a little different: another ID qualifier, the test indicator, another separator. For this you write a small Python file with a <code>syntax</code> dictionary in <code>usersys/partners/&lt;editype&gt;/&lt;partner ID&gt;.py</code>. When Bots writes an outgoing message or its envelope, it reads the grammar, then the syntax file of the frompartner, then that of the topartner; the topartner file wins. Values that the mapping set in <code>out.ta_info</code> win over all of these. See <a href="#envelopes">Envelopes</a> for the settings that are used most.</p>
+
+<h3 id="partners--howto-add">How to add a partner</h3>
+<ol class="steps">
+<li><b>Open the partner list.</b> Click <span class="ui">Configuration</span> → <span class="ui">Partners</span> → <span class="ui">Add</span>.</li>
+<li><b>Tick <span class="ui">Active</span>.</b> A new partner is not active by default.</li>
+<li><b>Type the partner ID</b> in <span class="ui">Partner identification</span>, for example <code>PARTNERA</code>. Use exactly the ID that is in the files (for example the UNB sender of PartnerA), because Bots compares the text as it is. Use letters, digits and <code>_</code> only if you want a partner-specific syntax file: the ID becomes a Python file name.</li>
+<li><b>Type a name</b> in <span class="ui">Name</span>, for example <code>PartnerA</code>. The name is only shown to you.</li>
+<li><b>Type the mail addresses</b> if you exchange mail with this partner: <span class="ui">Mail</span> <code>orders@partnera.example</code>; more addresses separated by commas. <span class="ui">Cc</span> gets the copy addresses.</li>
+<li><b>Optionally open <span class="ui">Address</span>, <span class="ui">Is in groups</span> and <span class="ui">User defined</span></b> and fill what you need.</li>
+<li><b>Click <span class="ui">Save</span>.</b> The partner is in the list as <code>PARTNERA (PartnerA)</code>.</li>
+</ol>
+<p>Add your own company in the same way, for example <code>MYCOMPANY</code>, if a translation, route filter or mail depends on it.</p>
+
+<h3 id="partners--howto-group">How to make a partner group</h3>
+<ol class="steps">
+<li><b>Add the group.</b> Click <span class="ui">Configuration</span> → <span class="ui">Partnergroups</span> → <span class="ui">Add</span>.</li>
+<li><b>Fill in the group.</b> Tick <span class="ui">Active</span>, type the ID <code>Retailers</code> and a name, and click <span class="ui">Save</span>.</li>
+<li><b>Open a member.</b> Click <span class="ui">Configuration</span> → <span class="ui">Partners</span> and click <code>PARTNERA</code>.</li>
+<li><b>Add the group to the partner.</b> Open <span class="ui">Is in groups</span>, select <code>Retailers</code> in the left list and click the arrow to move it to the right list.</li>
+<li><b>Click <span class="ui">Save</span>.</b> In the partner list you can now filter on the group (filter <span class="ui">By group</span> on the right).</li>
+</ol>
+
+<h3 id="partners--howto-mail">How to give a partner another mail address for one channel</h3>
+<p>Use this when PartnerA sends orders from one address and wants invoices at another address, each via its own mail channel.</p>
+<ol class="steps">
+<li><b>Open the partner.</b> <span class="ui">Configuration</span> → <span class="ui">Partners</span> → <code>PARTNERA</code>.</li>
+<li><b>Go to the table <span class="ui">Email address per channel</span></b> at the bottom of the page.</li>
+<li><b>Choose the channel</b>, for example <code>mail_in</code>, and type the address in <span class="ui">Mail</span> (required) and, if needed, <span class="ui">Cc</span>.</li>
+<li><b>Click <span class="ui">Save</span>.</b> For that channel Bots now uses this address first, both to recognise incoming mail and to address outgoing mail. For other channels it uses the <span class="ui">Mail</span> field of the partner.</li>
+</ol>
+
+<h3 id="partners--howto-syntax">How to give one partner other envelope settings</h3>
+<ol class="steps">
+<li><b>Make the file</b> <code>usersys/partners/x12/PARTNERA.py</code> (for EDIFACT: <code>usersys/partners/edifact/PARTNERA.py</code>). The folder exists in a new usersys; the file name is the partner ID plus <code>.py</code>.</li>
+<li><b>Put the settings in it</b>, for example the ID qualifiers and the test indicator:
+<pre><code class="language-python">syntax = {
+    'ISA05': 'ZZ',   # qualifier of the sender ID (MYCOMPANY)
+    'ISA07': 'ZZ',   # qualifier of the receiver ID (PARTNERA)
+    'ISA15': 'T',    # T = test, P = production
+}</code></pre></li>
+<li><b>Run the route.</b> With the log level at DEBUG the log shows <code>Partner syntax imported "…PARTNERA.py".</code></li>
+</ol>
+
+<h3 id="partners--howto-attr">How to use partner data in a mapping</h3>
+<p>The fields <span class="ui">attr1</span> to <span class="ui">attr5</span> are free fields for your own data, for example the customer number of PartnerA in your ERP system. Read them in a mapping:</p>
+<pre><code class="language-python">from bots import transform
+
+def main(inn, out):
+    erp_customer = transform.partnerlookup(inn.ta_info['frompartner'], 'attr1')
+    out.put({'BOTSID': 'HEADER', 'customer': erp_customer})</code></pre>
+<p><code>partnerlookup(value, field, search_field='idpartner', safe=False)</code> searches the partner whose <code>search_field</code> equals <code>value</code> and returns <code>field</code>. With <code>safe=True</code> it returns <code>value</code> when nothing is found, with <code>safe=None</code> it returns <code>None</code>; otherwise it raises an error. An empty field counts as not found.</p>
+
+<h3 id="partners--reference">Reference</h3>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">Partners</span> (table <code>partner</code>).</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Active</span> (<code>active</code>)</td><td>Only active partners are found by mail address and give a mail address; only they are offered in report selections. Not used by translations and route filters.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Partner identification</span> (<code>idpartner</code>)</td><td>The partner ID. Bots compares it as text with the IDs of files, translations, routes and confirm rules. It is also the file name of a partner-specific syntax. Changing the ID of a saved partner saves a copy under the new ID.</td><td>(required)</td><td>up to 35 characters; <code>PARTNERA</code></td></tr>
+<tr><td><span class="ui">Name</span> (<code>name</code>)</td><td>Name shown in lists and selections.</td><td>(required)</td><td>up to 256 characters; <code>PartnerA</code></td></tr>
+<tr><td><span class="ui">Mail</span> (<code>mail</code>)</td><td>Mail address(es) of the partner: to recognise incoming mail and to address outgoing mail, and for <code>transform.sendbotsemail()</code>.</td><td>empty</td><td>comma-separated; <code>orders@partnera.example</code></td></tr>
+<tr><td><span class="ui">Cc</span> (<code>cc</code>)</td><td>Copy addresses for outgoing mail. An incoming mail from an address in this field is also recognised as this partner (after the <span class="ui">Mail</span> fields of all partners).</td><td>empty</td><td>comma-separated</td></tr>
+<tr><td><span class="ui">Description</span> (<code>desc</code>)</td><td>Free text.</td><td>empty</td><td>any text</td></tr>
+<tr><td><span class="ui">Startdate</span>, <span class="ui">Enddate</span></td><td>For your information; Bots does not use them.</td><td>empty</td><td>a date</td></tr>
+<tr><td><span class="ui">Name1</span>, <span class="ui">Name2</span>, <span class="ui">Name3</span></td><td>Name lines, for use in mappings (<code>partnerlookup</code>).</td><td>empty</td><td>up to 70 characters each</td></tr>
+<tr><td><span class="ui">Address1</span>, <span class="ui">Address2</span>, <span class="ui">Address3</span></td><td>Address lines, for use in mappings.</td><td>empty</td><td>up to 70 characters each</td></tr>
+<tr><td><span class="ui">Postalcode</span>, <span class="ui">City</span></td><td>For use in mappings.</td><td>empty</td><td>17 / 35 characters</td></tr>
+<tr><td><span class="ui">Countrycode</span>, <span class="ui">Countrysubdivision</span></td><td>For use in mappings.</td><td>empty</td><td>3 / 9 characters; <code>NL</code></td></tr>
+<tr><td><span class="ui">Phone1</span>, <span class="ui">Phone2</span></td><td>For use in mappings.</td><td>empty</td><td>up to 17 characters</td></tr>
+<tr><td><span class="ui">Group</span> (<span class="ui">Is in groups</span>)</td><td>The partner groups this partner is a member of.</td><td>none</td><td><code>Retailers</code></td></tr>
+<tr><td><span class="ui">attr1</span> … <span class="ui">attr5</span></td><td>Free fields for your own data, for use in mappings.</td><td>empty</td><td>up to 35 characters each</td></tr>
+<tr><td><code>isgroup</code> <span class="badge gray">advanced</span></td><td>Marks a partner group. Set by the <span class="ui">Partnergroups</span> screen; not shown in the form.</td><td>off</td><td>on for groups</td></tr>
+<tr><td><code>rsrv1</code>, <code>rsrv2</code> <span class="badge gray">advanced</span></td><td>Reserved; not used and not in the form.</td><td>empty</td><td>-</td></tr>
+</table></div>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">Partnergroups</span>: the fields <span class="ui">Active</span>, <span class="ui">Partner identification</span> (the group ID), <span class="ui">Name</span>, <span class="ui">Description</span>, <span class="ui">Startdate</span>, <span class="ui">Enddate</span>, with the same meaning. The <span class="ui">Active</span> of a group is not used by Bots.</p>
+<p>Table <span class="ui">Email address per channel</span> on the partner (table <code>chanpar</code>; one entry per partner and channel):</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Channel</span></td><td>The mail channel this address is for.</td><td>(required)</td><td><code>mail_in</code></td></tr>
+<tr><td><span class="ui">Mail</span></td><td>Address(es) for this partner on this channel. Searched first when a mail comes in on the channel; used first for outgoing mail on the channel.</td><td>(required)</td><td>comma-separated</td></tr>
+<tr><td><span class="ui">Cc</span></td><td>Copy addresses for outgoing mail on this channel.</td><td>empty</td><td>comma-separated</td></tr>
+<tr><td><code>askmdn</code>, <code>sendmdn</code> <span class="badge gray">advanced</span></td><td>Not used any more (since Bots 2); not in the form.</td><td>off</td><td>-</td></tr>
+</table></div>
+<p>Related settings: <code>[webserver] validate_email_address</code> in <code>bots.ini</code> (default <code>True</code>) switches the check of mail addresses in these forms on or off. See <a href="#bots-ini">bots.ini</a>.</p>
+
+<h3 id="partners--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>"From" emailaddress(es) orders@partnera.example not authorised/unknown for channel "mail_in".</code></td><td>No active partner has this address in <span class="ui">Email address per channel</span> for this channel, in <span class="ui">Mail</span> or in <span class="ui">Cc</span>.</td><td>1. Add the address to the partner (or to its entry for this channel). 2. Check that the partner is <span class="ui">Active</span>. 3. If you accept mail from anyone, tick <span class="ui">No check from-address</span> on the channel. 4. Rereceive the mail.</td></tr>
+<tr><td><code>"To" emailaddress(es) ['edi@mycompany.example'] not authorised/unknown for channel "mail_in".</code></td><td>None of the <code>To</code> addresses belongs to an active partner. Usually your own company is missing.</td><td>1. Add partner <code>MYCOMPANY</code> with <span class="ui">Mail</span> <code>edi@mycompany.example</code>, or 2. tick <span class="ui">No check to-address</span> on the channel.</td></tr>
+<tr><td><code>No mail-address for partner "PARTNERA" (channel "partnera_mail_out").</code></td><td>Outgoing mail: the topartner (or frompartner) has no mail address, is not active, or the partner ID of the file is not in the partner list.</td><td>1. Open the outgoing file in <span class="ui">Outgoing</span> and check its partners. 2. Give that partner a <span class="ui">Mail</span> and tick <span class="ui">Active</span>. 3. Resend the file.</td></tr>
+<tr><td><code>Enter valid e-mail address(es) separated by commas.</code> when you save</td><td>An address does not pass the check of Bots.</td><td>1. Separate addresses with commas, not semicolons. 2. If the address is valid but unusual (for example an X.400 address), set <code>validate_email_address = False</code> in <code>[webserver]</code> of <code>bots.ini</code> and restart the web server.</td></tr>
+<tr><td><code>Deleting the partner … would require deleting the following protected related objects</code></td><td>A translation or a route filter (<span class="ui">Frompartner tochannel</span>, <span class="ui">Topartner tochannel</span>) uses the partner.</td><td>1. Change or delete those translations and routes first. 2. Or make the partner inactive instead of deleting it.</td></tr>
+<tr><td>A confirm rule or a mail address per channel is gone after deleting a partner</td><td>Confirm rules and mail addresses per channel of a partner are deleted with it. A route that had the partner as <span class="ui">Frompartner</span>/<span class="ui">Topartner</span> loses the value.</td><td>1. Restore from a backup plugin (<span class="ui">SysTasks</span> → <span class="ui">Plugins</span> → <span class="ui">Make backup plugin</span> before big changes). 2. Prefer making a partner inactive.</td></tr>
+<tr><td>The group translation is not used for a partner</td><td>The partner is not a direct member of the group (for example it is in a group that is in <code>Retailers</code>), or the partner ID in the file differs from the ID in Bots (upper/lower case, spaces, a qualifier).</td><td>1. Open the file in <span class="ui">Incoming</span> and compare the frompartner with the partner ID. 2. Add the partner to the group itself.</td></tr>
+<tr><td>The partner syntax file is ignored</td><td>The file name is not exactly the partner ID, it is in the folder of another editype, or the ID is not a valid Python module name.</td><td>1. Check <code>usersys/partners/&lt;editype&gt;/&lt;ID&gt;.py</code>. 2. Set the log level to DEBUG and look for <code>Partner syntax imported</code>. 3. Run <code>bots-checkusersys</code> to find import errors.</td></tr>
+<tr><td><code>No result found for partner lookup where idpartner="PARTNERX"; either record does not exist or field "attr1" has no value.</code></td><td><code>transform.partnerlookup()</code> in a mapping found no partner, or the field is empty.</td><td>1. Add the partner or fill the field. 2. Or call it with <code>safe=True</code> or <code>safe=None</code> if a missing value is allowed.</td></tr>
+</table></div>
+</section>
+
+
+<section id="translations" data-title="Translations" data-group="Configure">
+<h2>Translations</h2>
+<p class="lead">A translation rule tells Bots which mapping script turns a message of one type into a message of another type. You need one for every kind of message a route translates, and more when partners need different mappings.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>When Bots has read a message, it asks: "what is this, who sent it, who gets it?" and looks in the translation list for the best fitting line. That line names the mapping (the recipe) and what the result must be. No fitting line means the message stops with an error.</p></div>
+
+<h3 id="translations--how">How it works</h3>
+<p>In a route part with <span class="ui">Translate</span> set to <span class="ui">Translate</span>, Bots reads each received file with its grammar and splits it into messages. For every message it knows five things: the <b>editype</b> (for example <code>x12</code>), the <b>messagetype</b> (for example <code>850004010</code>), the <b>frompartner</b>, the <b>topartner</b> and the <b>alt</b> value (an extra label, empty by default). With these it searches the active translation rules:</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="A parsed message is looked up in the translation rules; the mapping script runs and writes the outgoing message">
+<defs><marker id="arrow-translations-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Message read</text><text class="small" x="120" y="86" text-anchor="middle">editype, type, partners, alt</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-translations-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Find translation</text><text class="small" x="380" y="86" text-anchor="middle">best matching active rule</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-translations-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Run mapping</text><text class="small" x="640" y="86" text-anchor="middle">write to-editype / to-messagetype</text>
+</svg></div>
+
+<h4 id="translations--choose">How Bots chooses a translation</h4>
+<p>A rule <b>matches</b> a message when all of these are true:</p>
+<ol>
+<li>the rule is <span class="ui">Active</span>;</li>
+<li><span class="ui">Fromeditype</span> and <span class="ui">Frommessagetype</span> are equal to those of the message (exact text);</li>
+<li><span class="ui">Alt</span> of the rule is empty, or equal to the alt of the message;</li>
+<li><span class="ui">Frompartner</span> of the rule is empty, or equal to the frompartner of the message, or a group of which the frompartner is a direct member;</li>
+<li>the same for <span class="ui">Topartner</span>.</li>
+</ol>
+<p>When several rules match, Bots takes the first one in this order:</p>
+<ol>
+<li>a rule with an <span class="ui">Alt</span> before a rule without (alt sorted from high to low);</li>
+<li>then a rule with a frompartner before a rule without; among rules with a frompartner, sorted by the partner ID (as text, character by character, so upper-case letters come before lower-case letters);</li>
+<li>then the same for the topartner.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>A rule for one partner does not automatically win over a rule for a group. If PartnerA (<code>PARTNERA</code>) is in group <code>Retailers</code> and there is a rule for each, the one with the ID that sorts first wins (<code>PARTNERA</code> before <code>Retailers</code>). Give groups and partners IDs that sort the way you want, or avoid overlapping rules.</p></div>
+<p><span class="badge orange">changed in 4.0</span> The order is made by Bots itself, the same on every database (as SQLite and Bots 3 on SQLite sort). In Bots 3 on another database the order could depend on the database.</p>
+<p>When no rule matches, Bots calls the function <code>gettranslation(idroute, message)</code> in <code>usersys/mappings/translation.py</code> if that file exists. It must return <code>(mapping script, toeditype, tomessagetype)</code>, or <code>None</code> values when it has no answer. When still nothing is found, the message gets the error <code>Translation not found for …</code>.</p>
+
+<h4 id="translations--mapping">What happens with the chosen rule</h4>
+<ol>
+<li>Bots imports the mapping <code>usersys/mappings/&lt;fromeditype&gt;/&lt;mapping script&gt;.py</code>. A dot in the name is a sub-folder: <code>partnera.orders_x12_to_csv</code> is <code>usersys/mappings/x12/partnera/orders_x12_to_csv.py</code>.</li>
+<li>It makes an empty outgoing message of <span class="ui">Toeditype</span> / <span class="ui">Tomessagetype</span>. The outgoing message gets the partners, test indicator and alt of the incoming message and a new message number (counter <code>messagecounter</code>, see <a href="#counters">Counters</a>).</li>
+<li>It runs <code>main(inn, out)</code> of the mapping. See <a href="#mappings">Mappings</a>.</li>
+<li>What <code>main()</code> returns decides what comes next (see below). When it returns nothing, the outgoing message is written with the grammar <code>usersys/grammars/&lt;toeditype&gt;/&lt;tomessagetype&gt;.py</code>.</li>
+</ol>
+
+<h4 id="translations--chain">Chained translations with alt</h4>
+<p>One incoming message can give several outgoing messages: the mapping returns a value and Bots looks up a translation again for the same message, now with that value as alt.</p>
+<div class="table-wrap"><table>
+<tr><th><code>main()</code> returns</th><th>What Bots does</th></tr>
+<tr><td><code>None</code> (nothing)</td><td>Writes the outgoing message. Done with this message.</td></tr>
+<tr><td>a text, for example <code>'copy_for_erp'</code></td><td>Writes the outgoing message, sets alt of the incoming message to that text and looks up the next translation with it. The same incoming message (<code>inn</code>) is used again with a new <code>out</code>.</td></tr>
+<tr><td><code>{'type': 'out_as_inn', 'alt': 'warning_mail'}</code></td><td>Writes the outgoing message, then uses the outgoing message as the incoming message for the next translation (lookup with the editype and messagetype of the outgoing message and the given alt). Use case: from an order, first make the ERP file, then a warning mail made from that file.</td></tr>
+<tr><td><code>{'type': 'no_check_on_infinite_loop', 'alt': 'next'}</code> <span class="badge gray">advanced</span></td><td>As a text, but Bots does not stop when the same alt comes back many times. The mapping must end the loop itself.</td></tr>
+</table></div>
+<p>When a mapping returns the same alt more than 10 times in a row, Bots stops with <code>Mappingscript returns same alt value over and over again (infinite loop?)</code>. Remember that a rule with an empty <span class="ui">Alt</span> also matches a message with an alt: if there is no rule for the new alt, the general rule runs again and you get this loop.</p>
+
+<h4 id="translations--alt-route">Alt from the route</h4>
+<p>A route part has its own field <span class="ui">Alternative translation</span>. Every file received by that route part gets this alt. Use it when the same message type arrives on two routes and must be translated differently: route <code>orders_in</code> with alt <code>shop</code> uses the rule with alt <code>shop</code>.</p>
+
+<h3 id="translations--howto-add">How to add a translation</h3>
+<ol class="steps">
+<li><b>Put the grammar and mapping files in usersys.</b> For example <code>usersys/grammars/x12/850004010.py</code>, <code>usersys/grammars/csv/orders_erp.py</code> and <code>usersys/mappings/x12/orders_x12_to_csv.py</code>.</li>
+<li><b>Open the form.</b> <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>.</li>
+<li><b>Tick <span class="ui">Active</span>.</b></li>
+<li><b>Choose <span class="ui">Fromeditype</span></b> <code>x12</code> and type or choose <span class="ui">Frommessagetype</span> <code>850004010</code>. The form offers the grammars it finds in usersys.</li>
+<li><b>Choose <span class="ui">Mapping Script</span></b> <code>orders_x12_to_csv</code> (without <code>.py</code>).</li>
+<li><b>Choose <span class="ui">Toeditype</span></b> <code>csv</code> and <span class="ui">Tomessagetype</span> <code>orders_erp</code>.</li>
+<li><b>Leave <span class="ui">Alt</span>, <span class="ui">Frompartner</span> and <span class="ui">Topartner</span> empty</b> for a rule that is valid for everybody.</li>
+<li><b>Click <span class="ui">Save</span>.</b> In the list, the mapping and message types are links; a red cross in front means the file is not found in usersys.</li>
+</ol>
+
+<h3 id="translations--howto-partner">How to use another mapping for one partner or a group</h3>
+<ol class="steps">
+<li><b>Keep the general rule</b> (no partners) for all other partners.</li>
+<li><b>Add a second rule</b> with the same <span class="ui">Fromeditype</span> and <span class="ui">Frommessagetype</span>, the special mapping (for example <code>orders_x12_to_csv_partnera</code>) and, under <span class="ui">Multiple translations per editype/messagetype</span>, <span class="ui">Frompartner</span> <code>PARTNERA</code> (or the group <code>Retailers</code>).</li>
+<li><b>Save and test.</b> Open the result in <span class="ui">Outgoing</span>: the column with the mapping name shows which mapping was used.</li>
+</ol>
+
+<h3 id="translations--howto-chain">How to make two outputs from one message</h3>
+<ol class="steps">
+<li><b>End the first mapping with a return value.</b>
+<pre><code class="language-python">def main(inn, out):
+    # ... map the order to the ERP file ...
+    return 'order_confirmation'   # next: translate the same order again with this alt</code></pre></li>
+<li><b>Add a second rule</b> with the same from-editype and messagetype, <span class="ui">Alt</span> <code>order_confirmation</code>, and the mapping and to-messagetype of the second output.</li>
+<li><b>Make the second mapping return nothing</b>, so the chain ends.</li>
+<li><b>Send both outputs to their channels</b> with the outgoing filters of the route (<span class="ui">Toeditype</span>, <span class="ui">Tomessagetype</span>); see <a href="#routes">Routes</a>.</li>
+</ol>
+
+<h3 id="translations--reference">Reference</h3>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">Translations</span> (table <code>translate</code>). The combination of fromeditype, frommessagetype, alt, frompartner and topartner must be unique.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Active</span></td><td>Only active rules are used.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Fromeditype</span></td><td>Editype of the incoming message. Also the folder of the mapping script.</td><td>(required)</td><td><code>x12</code>, <code>edifact</code>, <code>csv</code>, <code>fixed</code>, <code>xml</code>, <code>json</code>, <code>idoc</code>, <code>tradacoms</code>, <code>excel</code>, <code>db</code>, <code>raw</code>, …</td></tr>
+<tr><td><span class="ui">Frommessagetype</span></td><td>Messagetype of the incoming message, as the grammar and its QUERIES give it. For X12 it is ST01 + GS08, for EDIFACT the message type with version.</td><td>(required)</td><td><code>850004010</code>, <code>ORDERSD96AUN</code>, <code>orders_erp</code>; up to 35 characters</td></tr>
+<tr><td><span class="ui">Mapping Script</span> (<code>tscript</code>)</td><td>Name of the mapping in <code>usersys/mappings/&lt;fromeditype&gt;/</code>, without <code>.py</code>; dots for sub-folders.</td><td>(required)</td><td><code>orders_x12_to_csv</code></td></tr>
+<tr><td><span class="ui">Toeditype</span></td><td>Editype of the outgoing message.</td><td>(required)</td><td>as fromeditype</td></tr>
+<tr><td><span class="ui">Tomessagetype</span></td><td>Messagetype (grammar) of the outgoing message.</td><td>(required)</td><td><code>orders_erp</code>, <code>INVOICD96AUN</code></td></tr>
+<tr><td><span class="ui">Description</span></td><td>Free text.</td><td>empty</td><td>any text</td></tr>
+<tr><td><span class="ui">Alternative translation</span> (<code>alt</code>)</td><td>Rule only for messages with this alt (from the route or a chained translation). Empty: for every alt.</td><td>empty</td><td><code>order_confirmation</code></td></tr>
+<tr><td><span class="ui">Frompartner</span></td><td>Rule only for this sender, or for members of this group. Empty: any sender.</td><td>empty</td><td><code>PARTNERA</code>, <code>Retailers</code></td></tr>
+<tr><td><span class="ui">Topartner</span></td><td>Rule only for this receiver, or members of this group. Empty: any receiver.</td><td>empty</td><td><code>MYCOMPANY</code></td></tr>
+<tr><td><code>rsrv1</code>, <code>rsrv2</code> <span class="badge gray">advanced</span></td><td>Reserved, not used, not in the form.</td><td>empty</td><td>-</td></tr>
+</table></div>
+<p>Other things that influence the choice:</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Route field <span class="ui">Alternative translation</span></td><td>Alt given to every file received by the route part.</td><td>empty</td><td><code>shop</code></td></tr>
+<tr><td><code>usersys/mappings/translation.py</code>, function <code>gettranslation(idroute, message)</code> <span class="badge gray">advanced</span></td><td>Called when no rule matches; returns <code>(tscript, toeditype, tomessagetype)</code>.</td><td>not present</td><td>Python file</td></tr>
+<tr><td>Actions in the list (superuser)</td><td><span class="ui">Make bots plugin with selected entries</span>, and two variants without grammars or with grammars only; <span class="ui">activate/de-activate</span>.</td><td>-</td><td>see <a href="#plugins">Plugins</a></td></tr>
+</table></div>
+<p>Rules for acknowledgements: a translation with frommessagetype <code>997</code> (editype <code>x12</code>) or <code>CONTRL</code> (editype <code>edifact</code>) is not for received messages but replaces the mapping Bots uses to <b>make</b> a 997 or CONTRL. See <a href="#acknowledgements">Acknowledgements</a>.</p>
+
+<h3 id="translations--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Translation not found for editype "x12", messagetype "850004010", frompartner "PARTNERA", topartner "MYCOMPANY", alt "".</code></td><td>No active rule has exactly this editype and messagetype, or the rule is limited to other partners or another alt.</td><td>1. Compare the values in the message with your rules, including upper/lower case and version. 2. Check <span class="ui">Active</span>. 3. If the rule is for a group, check that the partner is a direct member. 4. Add or correct the rule and rereceive the file.</td></tr>
+<tr><td><code>Combination of fromeditype, frommessagetype, alt, frompartner, topartner already exists.</code></td><td>Another rule has the same five values.</td><td>Change the existing rule, or give the new one an alt or a partner.</td></tr>
+<tr><td><code>Mappingscript returns same alt value over and over again (infinite loop?). Alt: "order_confirmation".</code></td><td>A chained translation keeps finding the same mapping, usually because there is no rule for the alt and the rule with an empty alt matches again.</td><td>1. Add the rule with <span class="ui">Alt</span> <code>order_confirmation</code>. 2. Make sure the last mapping in the chain returns nothing.</td></tr>
+<tr><td><code>Mappingscript returned dict with an unknown "type": …</code></td><td>The mapping returned a dict whose <code>type</code> is not <code>out_as_inn</code> or <code>no_check_on_infinite_loop</code>.</td><td>Correct the return value.</td></tr>
+<tr><td><code>No import of module "…/usersys/mappings/x12/orders_x12_to_csv": …</code></td><td>The mapping file does not exist under the from-editype, or its name in the rule differs.</td><td>1. Check the file name and folder (<code>mappings/&lt;fromeditype&gt;/</code>). 2. In the list, a red cross before the mapping name shows a missing file.</td></tr>
+<tr><td><code>Userscript "…orders_x12_to_csv.py": "…"</code></td><td>An error inside the mapping.</td><td>Read the error text after the file name; see <a href="#mappings">Mappings</a> and <a href="#error-messages">Error messages</a>.</td></tr>
+<tr><td>The wrong mapping is used for a partner</td><td>Several rules match; the one with an alt wins, then the one whose frompartner ID sorts first, then topartner.</td><td>1. Look at the mapping name in <span class="ui">Outgoing</span>. 2. Remove overlapping rules or give them IDs/alts that sort as needed.</td></tr>
+<tr><td>A rule for an inactive partner is still used</td><td>The translation lookup does not look at the <span class="ui">Active</span> of a partner.</td><td>Make the translation rule inactive instead.</td></tr>
+</table></div>
+</section>
+
+
+<section id="confirm-rules" data-title="Confirm rules" data-group="Configure">
+<h2>Confirm rules</h2>
+<p class="lead">Confirm rules decide when Bots sends an acknowledgement for a received file and when it expects one for a sent file. You need them for X12 997, EDIFACT CONTRL and mail MDN.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>An acknowledgement is a receipt: "I got your file". Confirm rules are your instructions to Bots: "send a receipt to everyone who sends X12, except PartnerC", or "remember that we want a receipt from PartnerA". How the receipts themselves are made and checked is in <a href="#acknowledgements">Acknowledgements</a>.</p></div>
+
+<h3 id="confirm-rules--how">How it works</h3>
+<p>Each rule has a <b>confirm type</b> (what kind of acknowledgement, and whether you send it or ask for it) and a <b>rule type</b> (to which files it applies). At the moment an acknowledgement could be made or asked, Bots checks all active rules of that confirm type:</p>
+<ol>
+<li>It starts with "no".</li>
+<li>It goes through the <b>positive</b> rules, then the <b>negative</b> rules (<span class="ui">Negativerule</span> ticked).</li>
+<li>Each rule that matches the file sets the answer: a positive rule to "yes", a negative rule to "no". The last matching rule decides.</li>
+</ol>
+<p>So you include first and then exclude: rule 1 "all", rule 2 negative "frompartner PARTNERC" gives an acknowledgement to everyone except PartnerC.</p>
+<p>When Bots checks the rules, and with which values:</p>
+<div class="table-wrap"><table>
+<tr><th>Confirm type</th><th>When checked</th><th>Route / channel</th><th>Frompartner / topartner</th><th>Messagetype</th></tr>
+<tr><td><code>send-x12-997</code></td><td>After translating a received X12 file, per message (ST)</td><td>the route, the incoming channel</td><td>GS02 / GS03 of the received group</td><td>messagetype of the message</td></tr>
+<tr><td><code>send-edifact-CONTRL</code></td><td>After translating a received EDIFACT file, per message (UNH)</td><td>the route, the incoming channel</td><td>UNB sender / receiver (or the QUERIES of the envelope grammar)</td><td>messagetype of the message</td></tr>
+<tr><td><code>send-email-MDN</code></td><td>When a received mail asks for a receipt (header <code>Disposition-Notification-To</code>)</td><td>the route, the mail channel</td><td>the partners found by mail address</td><td>not checked</td></tr>
+<tr><td><code>ask-x12-997</code>, <code>ask-edifact-CONTRL</code></td><td>When outgoing interchanges are given to the outgoing channel</td><td>the route, the outgoing channel</td><td>partners of the interchange</td><td>messagetype of the interchange</td></tr>
+<tr><td><code>ask-email-MDN</code></td><td>When an outgoing mail is made</td><td>the route, the mail channel</td><td>partners of the file</td><td>not checked</td></tr>
+</table></div>
+<p>The partners in a rule are compared as text with these values. For an X12 997 that is GS02/GS03 of the received file, so a partner ID must equal what is in GS02/GS03. Groups cannot be used in confirm rules.</p>
+
+<h3 id="confirm-rules--howto-send">How to send a 997 to all X12 partners except one</h3>
+<ol class="steps">
+<li><b>Open the form.</b> <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span> → <span class="ui">Add</span>.</li>
+<li><b>Make the positive rule.</b> Tick <span class="ui">Active</span>, choose <span class="ui">Confirmtype</span> <span class="ui">send a x12 confirmation (997) when receiving</span> and <span class="ui">Ruletype</span> <span class="ui">Confirm all</span>. Click <span class="ui">Save and add another</span>.</li>
+<li><b>Make the negative rule.</b> Tick <span class="ui">Active</span> and <span class="ui">Negativerule</span>, the same confirm type, <span class="ui">Ruletype</span> <span class="ui">Frompartner</span>, <span class="ui">Frompartner</span> <code>PARTNERC</code>. Click <span class="ui">Save</span>.</li>
+<li><b>Send the 997.</b> The 997 is made in the route that received the file; add a route part that sends it (see <a href="#acknowledgements--howto-997">Acknowledgements</a>).</li>
+</ol>
+
+<h3 id="confirm-rules--howto-asked">How to send a 997 only when the partner asks for it</h3>
+<ol class="steps">
+<li><b>Add a rule</b> with <span class="ui">Confirmtype</span> <span class="ui">send a x12 confirmation (997) when receiving</span> and <span class="ui">Ruletype</span> <span class="ui">Confirm asked</span>.</li>
+<li><b>Save.</b> A 997 is now made only for files whose <code>ISA14</code> is <code>1</code> (acknowledgement requested).</li>
+</ol>
+
+<h3 id="confirm-rules--howto-ask">How to expect a CONTRL from PartnerB</h3>
+<ol class="steps">
+<li><b>Add a rule</b> with <span class="ui">Confirmtype</span> <span class="ui">ask an edifact confirmation (CONTRL) when sending</span>, <span class="ui">Ruletype</span> <span class="ui">Topartner</span>, <span class="ui">Topartner</span> <code>PARTNERB</code>.</li>
+<li><b>Ask the partner in the envelope too.</b> The rule only makes Bots remember that a CONTRL is expected. To ask for it in the file, set <code>'UNB.0031': '1'</code> in the EDIFACT syntax for PartnerB (see <a href="#envelopes">Envelopes</a>).</li>
+<li><b>Check.</b> After the next run, <span class="ui">All runs</span> → <span class="ui">Confirmations</span> → <span class="ui">Unconfirmed</span> lists the interchange.</li>
+</ol>
+
+<h3 id="confirm-rules--reference">Reference</h3>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span> (table <code>confirmrule</code>). The form shows the fields for the chosen rule type.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Active</span></td><td>Only active rules are used. Bots reads them once at the start of a run.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Negativerule</span></td><td>Excludes: a matching negative rule sets the answer to "no". Negative rules are checked after the positive ones.</td><td>off</td><td>on / off</td></tr>
+<tr><td><span class="ui">Confirmtype</span></td><td>The kind of acknowledgement and the direction.</td><td>(required)</td><td>see the next table</td></tr>
+<tr><td><span class="ui">Ruletype</span></td><td>Which files the rule applies to.</td><td>(required)</td><td>see the table of rule types</td></tr>
+<tr><td><span class="ui">Frompartner</span></td><td>For rule type <span class="ui">Frompartner</span>: the sender. Partners only, no groups.</td><td>empty</td><td><code>PARTNERA</code></td></tr>
+<tr><td><span class="ui">Topartner</span></td><td>For rule type <span class="ui">Topartner</span>: the receiver.</td><td>empty</td><td><code>PARTNERB</code></td></tr>
+<tr><td><span class="ui">Route</span> (<code>idroute</code>)</td><td>For rule type <span class="ui">Route</span>.</td><td>empty</td><td><code>orders_in</code></td></tr>
+<tr><td><span class="ui">Channel</span> (<code>idchannel</code>)</td><td>For rule type <span class="ui">Channel</span>: the incoming channel (send-…) or the outgoing channel (ask-…).</td><td>empty</td><td><code>partnera_sftp_in</code></td></tr>
+<tr><td><span class="ui">Messagetype</span></td><td>For rule type <span class="ui">Messagetype</span>.</td><td>empty</td><td><code>850004010</code>, <code>ORDERSD96AUN</code></td></tr>
+<tr><td><code>editype</code> <span class="badge gray">advanced</span></td><td>Not used (the editype is clear from the confirm type); not in the form.</td><td>empty</td><td>-</td></tr>
+<tr><td><code>rsrv1</code>, <code>rsrv2</code> <span class="badge gray">advanced</span></td><td>Reserved, not used.</td><td>empty</td><td>-</td></tr>
+</table></div>
+<p>Confirm types:</p>
+<div class="table-wrap"><table>
+<tr><th>Value</th><th>Shown as</th><th>Effect</th></tr>
+<tr><td><code>ask-email-MDN</code></td><td>ask an email confirmation (MDN) when sending</td><td>Outgoing mail gets the header <code>Disposition-Notification-To</code>; the mail is listed as waiting for confirmation.</td></tr>
+<tr><td><code>send-email-MDN</code></td><td>send an email confirmation (MDN) when receiving</td><td>When a received mail asks for a receipt, Bots makes an MDN.</td></tr>
+<tr><td><code>ask-x12-997</code></td><td>ask a x12 confirmation (997) when sending</td><td>The outgoing X12 interchange is listed as waiting for a 997. Does not change <code>ISA14</code>.</td></tr>
+<tr><td><code>send-x12-997</code></td><td>send a x12 confirmation (997) when receiving</td><td>Bots makes a 997 for each received group (GS), for the messages that match.</td></tr>
+<tr><td><code>ask-edifact-CONTRL</code></td><td>ask an edifact confirmation (CONTRL) when sending</td><td>The outgoing EDIFACT interchange is listed as waiting for a CONTRL. Does not change the UNB.</td></tr>
+<tr><td><code>send-edifact-CONTRL</code></td><td>send an edifact confirmation (CONTRL) when receiving</td><td>Bots makes a CONTRL for each received interchange (UNB), for the messages that match.</td></tr>
+</table></div>
+<p>Rule types:</p>
+<div class="table-wrap"><table>
+<tr><th>Value</th><th>Shown as</th><th>Matches when</th></tr>
+<tr><td><code>all</code></td><td>Confirm all</td><td>always</td></tr>
+<tr><td><code>confirmasked</code></td><td>Confirm asked</td><td>the received X12 file has <code>ISA14</code> = <code>1</code>. Only allowed with <code>send-x12-997</code>.</td></tr>
+<tr><td><code>route</code></td><td>Route</td><td>the route is the chosen route</td></tr>
+<tr><td><code>channel</code></td><td>Channel</td><td>the channel is the chosen channel</td></tr>
+<tr><td><code>frompartner</code></td><td>Frompartner</td><td>the sender is the chosen partner</td></tr>
+<tr><td><code>topartner</code></td><td>Topartner</td><td>the receiver is the chosen partner</td></tr>
+<tr><td><code>messagetype</code></td><td>Messagetype</td><td>the messagetype is the given text (not for MDN)</td></tr>
+</table></div>
+
+<h3 id="confirm-rules--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Confirm asked ruletype work only with "send-x12-997" confirmtype.</code></td><td>Rule type <span class="ui">Confirm asked</span> with another confirm type.</td><td>Choose <code>send-x12-997</code>, or another rule type.</td></tr>
+<tr><td><code>For ruletype "route" it is required to indicate a route.</code> (also for channel, frompartner, topartner, messagetype)</td><td>The field that belongs to the rule type is empty.</td><td>Fill the field shown next to the rule type.</td></tr>
+<tr><td>No 997 or CONTRL is made</td><td>No active rule matches, the partner ID in the rule differs from GS02/GS03 or the UNB IDs, or a negative rule matches.</td><td>1. Open the file in <span class="ui">Incoming</span> and read the partners. 2. Compare them with the rules. 3. Test with one rule <span class="ui">Confirm all</span>.</td></tr>
+<tr><td>A rule with <span class="ui">Messagetype</span> never matches for MDN</td><td>For MDN Bots does not pass a messagetype.</td><td>Use route, channel or partner rules for MDN.</td></tr>
+<tr><td>A changed rule has no effect in a running engine</td><td>Rules are read at the start of each run.</td><td>Wait for the next run.</td></tr>
+<tr><td>A confirm rule disappeared</td><td>Its partner or channel was deleted; the rule is deleted with it.</td><td>Make the rule again; deactivate partners and channels instead of deleting them.</td></tr>
+</table></div>
+</section>
+
+
+<section id="code-lists" data-title="Code lists" data-group="Configure">
+<h2>Code lists</h2>
+<p class="lead">Code lists (in the web interface: user codes) are tables of code pairs that mappings use to translate one code into another, for example your unit codes into the unit codes of an EDIFACT message. You keep them in the web interface, so you can change a code without changing a mapping.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A code list is a two-column translation table: on the left the code as you know it, on the right the code the other side uses. A mapping asks "what is the right-hand code for <code>PCS</code> in the list <code>units</code>?" and gets <code>PCE</code>. Up to eight extra columns can hold more data per code.</p></div>
+
+<h3 id="code-lists--how">How it works</h3>
+<p>There are two tables:</p>
+<ul>
+<li><b>User code types</b> (<code>ccodetrigger</code>): the names of your lists, for example <code>units</code> or <code>article_numbers</code>.</li>
+<li><b>User codes</b> (<code>ccode</code>): the entries. Each entry belongs to one list and has a <code>leftcode</code>, a <code>rightcode</code> and <code>attr1</code> to <code>attr8</code>.</li>
+</ul>
+<p>A mapping reads the lists with functions of <code>transform</code>:</p>
+<div class="table-wrap"><table>
+<tr><th>Function</th><th>What it returns</th></tr>
+<tr><td><code>ccode(ccodeid, leftcode, field='rightcode', safe=False)</code></td><td>The <code>field</code> of the entry with this <code>leftcode</code>.</td></tr>
+<tr><td><code>reverse_ccode(ccodeid, rightcode, field='leftcode', safe=False)</code></td><td>The <code>field</code> of the entry with this <code>rightcode</code> (lookup in the other direction).</td></tr>
+<tr><td><code>getcodeset(ccodeid, leftcode, field='rightcode')</code></td><td>A list with the <code>field</code> of all entries with this <code>leftcode</code>, in the order they were added. Empty list when there are none.</td></tr>
+<tr><td><code>safe_ccode()</code>, <code>safe_reverse_ccode()</code>; old names <code>codetconversion</code>, <code>safecodetconversion</code>, <code>rcodetconversion</code>, <code>safercodetconversion</code></td><td>Deprecated; kept so old mappings work. Use <code>ccode(..., safe=True)</code>.</td></tr>
+</table></div>
+<p><code>field</code> can be <code>'leftcode'</code>, <code>'rightcode'</code> or <code>'attr1'</code> to <code>'attr8'</code>. <code>safe</code> decides what happens when the code is not in the list: <code>False</code> raises an error (the message gets an error), <code>True</code> returns the code you gave, <code>None</code> returns <code>None</code>. When a code occurs more than once, <code>ccode</code> returns one of the entries; use <code>getcodeset</code> to get all.</p>
+<pre><code class="language-python">from bots import transform
+
+def main(inn, out):
+    unit = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'PO1', 'PO103': None})
+    out.put({'BOTSID': 'LINE', 'unit': transform.ccode('units', unit)})               # error if unknown
+    text = transform.ccode('units', unit, field='attr1', safe=None)                  # None if unknown
+    ours = transform.reverse_ccode('units', 'PCE', safe=True)                        # 'PCE' if unknown</code></pre>
+<p>The list name <code>shortcut</code> is special: the web interface uses it for the shortcuts menu (see <a href="#web-interface">Web interface</a>). Do not use that name for your own codes.</p>
+
+<h3 id="code-lists--howto-add">How to make a code list</h3>
+<ol class="steps">
+<li><b>Add the list name.</b> <span class="ui">Configuration</span> → <span class="ui">User Code types</span> → <span class="ui">Add</span>. Type <code>units</code> in <span class="ui">Type of user code</span> and a description. Click <span class="ui">Save</span>.</li>
+<li><b>Add an entry.</b> <span class="ui">Configuration</span> → <span class="ui">User Codes list</span> → <span class="ui">Add</span>. Choose <span class="ui">Type of user code</span> <code>units</code>, type <span class="ui">Leftcode</span> <code>PCS</code> and <span class="ui">Rightcode</span> <code>PCE</code>, optionally <span class="ui">Attr1</span> <code>piece</code>.</li>
+<li><b>Click <span class="ui">Save and add another</span></b> for the next entry, or <span class="ui">Save</span> when done. The list shows all entries; filter on the list name on the right.</li>
+<li><b>Use the list in a mapping</b> as shown above.</li>
+</ol>
+
+<h3 id="code-lists--howto-move">How to copy code lists to another environment</h3>
+<p>Move code lists from one environment to another with a plugin:</p>
+<ol class="steps">
+<li><b>Select the entries.</b> In <span class="ui">User Codes list</span>, filter on the list and tick the entries (or the box in the header for all on the page).</li>
+<li><b>Choose the action</b> <span class="ui">Make bots plugin with selected entries</span> and click <span class="ui">Go</span> (superusers only). Do the same in <span class="ui">User Code types</span> for the list name.</li>
+<li><b>Read the plugin in the other environment</b> with <span class="ui">SysTasks</span> → <span class="ui">Plugins</span> → <span class="ui">Read plugin</span>. See <a href="#plugins">Plugins</a>.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>For large lists that come from another system, a small Python script that writes the rows with Django, or a database tool on the table <code>ccode</code>, is faster. Make a backup first.</p></div>
+
+<h3 id="code-lists--reference">Reference</h3>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">User Code types</span> (table <code>ccodetrigger</code>):</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Type of user code</span> (<code>ccodeid</code>)</td><td>Name of the list; the first argument of <code>ccode()</code>.</td><td>(required)</td><td>up to 35 characters; <code>units</code></td></tr>
+<tr><td><span class="ui">Description</span> (<code>ccodeid_desc</code>)</td><td>Free text.</td><td>empty</td><td>any text</td></tr>
+</table></div>
+<p>Screen <span class="ui">Configuration</span> → <span class="ui">User Codes list</span> (table <code>ccode</code>). The combination list, leftcode, rightcode must be unique.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Type of user code</span></td><td>The list this entry belongs to. Deleting the list deletes its entries.</td><td>(required)</td><td><code>units</code></td></tr>
+<tr><td><span class="ui">Leftcode</span></td><td>Code searched by <code>ccode()</code> and <code>getcodeset()</code>.</td><td>(required)</td><td>up to 35 characters; <code>PCS</code></td></tr>
+<tr><td><span class="ui">Rightcode</span></td><td>Code returned by <code>ccode()</code>; searched by <code>reverse_ccode()</code>.</td><td>(required)</td><td>up to 70 characters; <code>PCE</code></td></tr>
+<tr><td><span class="ui">Attr1</span></td><td>Extra data, read with <code>field='attr1'</code>.</td><td>empty</td><td>up to 70 characters</td></tr>
+<tr><td><span class="ui">Attr2</span> … <span class="ui">Attr8</span></td><td>Extra data, read with <code>field='attr2'</code> … <code>'attr8'</code>. For list <code>shortcut</code>, attr2 is the menu group and attr8 the user ID.</td><td>empty</td><td>up to 35 characters</td></tr>
+</table></div>
+<p>Spaces at the start and end of all fields are removed when you save.</p>
+
+<h3 id="code-lists--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Value "BOX" not in code-conversion, user table "units".</code></td><td>The mapping called <code>ccode</code> or <code>reverse_ccode</code> with a code that is not in the list.</td><td>1. Add the entry. 2. Rereceive the file. 3. Or use <code>safe=True</code>/<code>safe=None</code> where a missing code is allowed.</td></tr>
+<tr><td>The code is in the list but is not found</td><td>Different upper/lower case, a space inside the code, the wrong list name, or <code>ccode</code> searching the left side while the code is on the right side.</td><td>Check the list name and the column; use <code>reverse_ccode</code> for the other direction.</td></tr>
+<tr><td><code>User code with this Type of user code, leftcode and rightcode already exists.</code></td><td>The same pair is already in the list.</td><td>Edit the existing entry.</td></tr>
+<tr><td>A non-superuser does not see some entries</td><td>Entries of list <code>shortcut</code> of other users are hidden.</td><td>Normal; these are personal menu shortcuts.</td></tr>
+<tr><td>All codes of a list are gone</td><td>The user code type was deleted; its entries are deleted with it.</td><td>Restore from a backup plugin or database backup.</td></tr>
+<tr><td><code>getcodeset</code> returns <code>[]</code></td><td>No entry with that leftcode; <code>getcodeset</code> does not raise an error.</td><td>Check for an empty list in the mapping.</td></tr>
+</table></div>
+</section>
+
+
+<section id="counters" data-title="Counters" data-group="Configure">
+<h2>Counters</h2>
+<p class="lead">Bots numbers interchanges, messages and file names with counters that it keeps in its database. You look at them when a partner reports a wrong or double control number, and you set them when you move to another system.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A counter is a named number that goes up by one every time Bots uses it, like a ticket machine. Partners check some of these numbers (the interchange control numbers) to find missing or double files, so they must never go back.</p></div>
+
+<h3 id="counters--how">How it works</h3>
+<p>All counters are rows in the table <code>uniek</code>: a name (<code>domein</code>) and the last number used (<code>nummer</code>). When Bots needs a number, it adds 1 to the row and uses the result. A counter that does not exist yet is made with 1. The database locks the row while it counts, so two engines running at the same time never get the same number. After 2147483647 the counter starts again at 0.</p>
+<p>The counters Bots makes itself:</p>
+<div class="table-wrap"><table>
+<tr><th>Counter name</th><th>Used for</th></tr>
+<tr><td><code>messagecounter</code></td><td>One counter for the whole environment: the reference of every outgoing message (for example the UNH or ST control number a mapping writes with <code>out.ta_info['reference']</code>), the ST02 of a 997 (at least 4 digits) and the UNH of a CONTRL.</td></tr>
+<tr><td><code>unbcounter_&lt;sender&gt;</code></td><td>EDIFACT interchange control reference (UNB 0020 / UNZ 0020) per UNB sender ID.</td></tr>
+<tr><td><code>isacounter_&lt;sender&gt;</code></td><td>X12 interchange control number (ISA13 / IEA02, also GS06 / GE02) per ISA06 sender ID.</td></tr>
+<tr><td><code>stxcounter_&lt;sender&gt;</code></td><td>TRADACOMS transmission reference (STX SNRF) per sender.</td></tr>
+<tr><td><code>…_&lt;sender&gt;_&lt;receiver&gt;</code></td><td>The same three counters per sender and receiver, when <code>interchangecontrolperpartner = True</code> in <code>bots.ini</code>.</td></tr>
+<tr><td><code>&lt;channel ID&gt;</code>, for example <code>erp_invoices_out</code></td><td>The <code>*</code> or <code>{unique}</code> in the file name of an outgoing channel (also the attachment name of a mail).</td></tr>
+<tr><td><code>bots_communication_failure_&lt;channel ID&gt;</code></td><td>The number of failed connections in a row, for <span class="ui">Max failures</span> of an incoming channel; reset to 0 after a good connection.</td></tr>
+<tr><td><code>bots__automaticretrycommunication</code></td><td>The last transaction number handled by an automatic retry of communication.</td></tr>
+<tr><td><code>bots_cleanup_day</code></td><td>The date (as <code>YYYYMMDD</code>) of the last full clean-up.</td></tr>
+<tr><td><code>bots_file_name</code>, <code>bots_outgoing_file_name</code> <span class="badge gray">advanced</span></td><td>Used by <code>bots-engine2</code> only.</td></tr>
+<tr><td>any name of your own</td><td>Counters a mapping makes with <code>transform.unique('my_counter')</code>.</td></tr>
+</table></div>
+<p>With <code>[acceptance] runacceptancetest = True</code> in <code>bots.ini</code> the counters in the database are not used: each run counts from 1 in memory, so test results are always the same. See <a href="#acceptance-testing">Acceptance testing</a>.</p>
+
+<h4 id="counters--interchange">Interchange control numbers per sender or per receiver</h4>
+<p>By default there is one interchange counter per sender ID, so all your partners together see one running number from <code>MYCOMPANY</code>. Many partners prefer that the numbers they receive have no gaps. Then set in <code>bots.ini</code>:</p>
+<pre><code class="language-ini">[settings]
+interchangecontrolperpartner = True</code></pre>
+<p>Now each sender/receiver pair has its own counter, for example <code>isacounter_MYCOMPANY_PARTNERA</code>.</p>
+<p><span class="badge orange">changed in 4.0</span> Bots 3 named the counter after the partner ID (<code>isacounter_MYCOMPANY</code>, or after the topartner with <code>interchangecontrolperpartner</code>). Bots 4 names it after the IDs that are written in the envelope. When a counter with the new name is used for the first time, it continues from the counter with the Bots 3 name (if that exists), so the numbers do not start at 1 again.</p>
+
+<h4 id="counters--mapping">Counters in mappings</h4>
+<ul>
+<li><code>transform.unique('my_counter')</code>: the next number of a counter in the database, as text.</li>
+<li><code>transform.unique('my_counter', updatewith=500)</code>: returns the current number and sets the counter to 500.</li>
+<li><code>transform.unique_runcounter('my_counter')</code>: a counter that starts at 1 in every run, not stored.</li>
+<li><code>transform.checkunique('PARTNERA_orders', received_number)</code>: checks that a number received from a partner is exactly 1 higher than the previous one. Returns <code>True</code> or <code>False</code>; on <code>False</code> the counter is not moved.</li>
+</ul>
+
+<h3 id="counters--howto-view">How to view or change a counter</h3>
+<ol class="steps">
+<li><b>Open the counters.</b> <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span> (superusers).</li>
+<li><b>Find the counter.</b> Type part of the name in the search box, for example <code>isacounter</code>.</li>
+<li><b>Click the counter name</b> to open it.</li>
+<li><b>Change <span class="ui">Last used number</span></b> and click <span class="ui">Save</span>. The next number Bots uses is this number plus 1.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>Do not lower an interchange counter that is in use: partners reject or ignore a control number they already received. Change counters only while no engine is running.</p></div>
+<p>You cannot add counters here (Bots makes them when it needs them). You can delete a counter, except <code>messagecounter</code> and <code>bots_cleanup_day</code>; a deleted counter starts again at 1 (an interchange counter continues from the Bots 3 counter if that still exists).</p>
+
+<h3 id="counters--howto-switch">How to keep the numbers right when you switch systems</h3>
+<ol class="steps">
+<li><b>Moving from Bots 3 to Bots 4:</b> the counters move with the database (<code>bots-portenv</code> / <code>bots-updatedb</code>) and continue where Bots 3 stopped. See <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</li>
+<li><b>After a test period in which the new system did not send to partners</b>, port the database again just before the switch, so the counters are current.</li>
+<li><b>On the first production run</b>, check the control number of the first interchange per partner in <span class="ui">Outgoing</span>.</li>
+<li><b>If you go back to the old system</b>, first copy the counters of the new system (table <code>uniek</code>, or by hand in <span class="ui">View/edit counters</span>) into the old one. Otherwise a partner gets a control number twice.</li>
+<li><b>Moving to another database</b> (for example SQLite to PostgreSQL): copy the table <code>uniek</code> with the rest of the data.</li>
+</ol>
+
+<h3 id="counters--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><span class="ui">Counter domain</span> (<code>domein</code>)</td><td>Name of the counter; read-only in the screen.</td><td>-</td><td>up to 128 characters <span class="badge orange">changed in 4.0</span>; <code>unbcounter_5412345000013</code></td></tr>
+<tr><td><span class="ui">Last used number</span> (<code>nummer</code>)</td><td>The last number given out.</td><td>1 for a new counter</td><td>0 … 2147483647</td></tr>
+<tr><td><code>[settings] interchangecontrolperpartner</code> in <code>bots.ini</code></td><td>Interchange counter per sender (False) or per sender and receiver (True).</td><td><code>False</code></td><td><code>True</code> / <code>False</code></td></tr>
+<tr><td><code>[acceptance] runacceptancetest</code> in <code>bots.ini</code></td><td>Counters count per run in memory; the database is not changed.</td><td><code>False</code></td><td><code>True</code> / <code>False</code></td></tr>
+</table></div>
+<p>A mapping can also set the interchange reference itself, instead of the counter: <code>out.envelope_content[0]['0020']</code> (EDIFACT), <code>['ISA13']</code> (X12) or <code>['SNRF']</code> (TRADACOMS). See <a href="#envelopes">Envelopes</a>.</p>
+
+<h3 id="counters--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>A partner reports a duplicate interchange control number</td><td>A counter was lowered or deleted, two environments send with the same sender ID, or the system was switched back without copying the counters.</td><td>1. Find the counter in <span class="ui">View/edit counters</span>. 2. Set it above the highest number the partner received. 3. Give each environment its own sender ID or keep one environment sending.</td></tr>
+<tr><td>A partner reports gaps in the control numbers</td><td>The counter is per sender and is shared by all partners.</td><td>Set <code>interchangecontrolperpartner = True</code>. The new per-partner counters continue from the per-sender counter.</td></tr>
+<tr><td>The numbers started at 1 after changing the sender ID or <code>interchangecontrolperpartner</code></td><td>A new counter name; it continues from the Bots 3-style counter only when that exists.</td><td>Set the new counter to the number the partner expects.</td></tr>
+<tr><td>Counters do not change during tests</td><td><code>runacceptancetest = True</code>: counters are counted per run in memory.</td><td>Normal for acceptance tests.</td></tr>
+<tr><td>You cannot delete <code>messagecounter</code></td><td>Bots does not allow it.</td><td>Change the number instead.</td></tr>
+<tr><td><code>transform.checkunique()</code> returns <code>False</code> for every file</td><td>The counter does not match the partner's sequence (for example the partner started at another number).</td><td>Set the counter to the last number received from the partner.</td></tr>
+</table></div>
+</section>
+
+
+<section id="envelopes" data-title="Envelopes" data-group="Envelopes, acknowledgements, scripts">
+<h2>Envelopes</h2>
+<p class="lead">An envelope is the header and trailer around one or more EDI messages: the <code>UNB</code>/<code>UNZ</code> of EDIFACT, the <code>ISA</code>/<code>GS</code>/<code>GE</code>/<code>IEA</code> of X12, the <code>STX</code>/<code>END</code> of TRADACOMS. Bots makes the envelope of outgoing files after translation, and can put many messages in one envelope.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Your mapping writes the letters; the envelope step puts them in an envelope with the address of the sender and the receiver and a running number. Letters for the same receiver can go in one envelope together (that is <b>merging</b>).</p></div>
+
+<h3 id="envelopes--how">How it works</h3>
+<p>After a mapping, the outgoing message is stored on its own, with the information Bots needs for the envelope: editype, messagetype, the <b>envelope</b> to use, <b>merge</b> yes/no, frompartner, topartner, test indicator, character set, and envelope data the mapping set. These come from the grammar syntax, the partner syntax and the mapping. Then, in the same route part, the envelope step runs:</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Translated messages are grouped, enveloped with header and trailer and handed to the outgoing channel">
+<defs><marker id="arrow-envelopes-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Translated messages</text><text class="small" x="120" y="86" text-anchor="middle">one per mapping run</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-envelopes-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Group and envelope</text><text class="small" x="380" y="86" text-anchor="middle">merge, header, trailer, counter</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-envelopes-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Outgoing file</text><text class="small" x="640" y="86" text-anchor="middle">to the outgoing channel</text>
+</svg></div>
+<ol>
+<li><b>Messages with merge off</b> each get their own envelope: one message, one file.</li>
+<li><b>Messages with merge on</b> are grouped. Messages go into the same file when they have the same editype, messagetype, envelope, frompartner, topartner, test indicator, character set, envelope criterion (<code>rsrv3</code>) and envelope data from the mapping. Only messages of the same route and the same run are merged.</li>
+<li>For each file Bots chooses the envelope: no envelope when the envelope name is empty; else a user envelope script <code>usersys/envelopescripts/&lt;editype&gt;/&lt;envelope&gt;.py</code> with a class of that name; else the built-in envelope of the editype.</li>
+<li>The envelope is written: header, the messages, trailer. The interchange gets a control number from a counter (see <a href="#counters">Counters</a>).</li>
+</ol>
+<p><span class="badge orange">changed in 4.0</span> Messages for which the mapping set different envelope data are no longer merged into one interchange; the groups are numbered in the same order on every database.</p>
+
+<h4 id="envelopes--types">The envelopes</h4>
+<div class="table-wrap"><table>
+<tr><th>Envelope (syntax <code>envelope</code>)</th><th>Default for</th><th>What it writes</th></tr>
+<tr><td><code>edifact</code></td><td>edifact (merge on)</td><td><code>UNA</code> (when <code>forceUNA</code> is on or the character set is not <code>UNOA</code>), <code>UNB</code>, the messages, <code>UNZ</code> with the number of messages.</td></tr>
+<tr><td><code>x12</code></td><td>x12 (merge on)</td><td><code>ISA</code>, one <code>GS</code>, the messages, <code>GE</code> with the number of messages, <code>IEA</code>. The separators are written in the ISA at their fixed places.</td></tr>
+<tr><td><code>tradacoms</code></td><td>tradacoms (merge off)</td><td><code>STX</code>, the messages, <code>END</code> with the number of messages.</td></tr>
+<tr><td><code>templatehtml</code></td><td>templatehtml (merge on)</td><td>An HTML page made with the template named in <code>envelope-template</code> (Genshi, or Django with <code>template_engine</code>), with all messages as data.</td></tr>
+<tr><td><code>csvheader</code></td><td>(set it yourself, editype csv)</td><td>A first line with the field names of the first record of the grammar, then the messages.</td></tr>
+<tr><td><code>json</code></td><td>json, jsonnocheck (merge off)</td><td>With merge on: all messages in one JSON list <code>[…, …]</code>.</td></tr>
+<tr><td><code>''</code> (empty)</td><td>csv, fixed (merge on), xml, xmlnocheck, idoc (merge off)</td><td>No envelope: the messages are put one after the other in one file.</td></tr>
+<tr><td>any other name</td><td>-</td><td>Your envelope script; see <a href="#envelope-scripts">Envelope scripts</a>.</td></tr>
+</table></div>
+<p>For <code>db</code> and <code>raw</code> output there is no envelope and no merging. For <code>xml</code> a grammar with merge on and no envelope is refused, because the result would not be valid XML.</p>
+
+<h4 id="envelopes--where">Where the values in the envelope come from</h4>
+<p>For each value the first one that is filled is used:</p>
+<ol>
+<li>the <b>mapping</b>: <code>out.envelope_content[0]</code> for the interchange level (UNB, ISA, STX fields) and <code>out.envelope_content[1]</code> for the X12 group level (GS fields), for example <code>out.envelope_content[0]['ISA15'] = 'T'</code>;</li>
+<li>the <b>syntax</b>: grammar defaults, then the envelope grammar, then the message grammar, then the partner syntax of the frompartner and then of the topartner (see <a href="#partners--syntax">Partner-specific syntax</a>);</li>
+<li>the <b>partner IDs</b> of the message.</li>
+</ol>
+<div class="table-wrap"><table>
+<tr><th>Envelope field</th><th>Mapping key</th><th>Syntax key</th><th>Otherwise</th></tr>
+<tr><td>UNB sender S002.0004</td><td><code>[0]['S002.0004']</code></td><td><code>S002.0004</code></td><td>frompartner</td></tr>
+<tr><td>UNB sender qualifier S002.0007</td><td><code>[0]['S002.0007']</code></td><td><code>UNB.S002.0007</code> (default <code>14</code>)</td><td>-</td></tr>
+<tr><td>UNB receiver S003.0010 / qualifier S003.0007</td><td><code>[0]['S003.0010']</code> / <code>['S003.0007']</code></td><td><code>S003.0010</code> / <code>UNB.S003.0007</code> (default <code>14</code>)</td><td>topartner</td></tr>
+<tr><td>UNB syntax id and version S001.0001 / S001.0002</td><td><code>[0]['S001.0001']</code> / <code>['S001.0002']</code></td><td><code>charset</code> (default <code>UNOA</code>) / <code>version</code> (default <code>3</code>)</td><td>-</td></tr>
+<tr><td>UNB date and time S004</td><td><code>[0]['S004.0017']</code>, <code>['S004.0019']</code></td><td>-</td><td>now; date <code>YYMMDD</code> for version 1 to 3, <code>YYYYMMDD</code> for version 4</td></tr>
+<tr><td>UNB reference 0020</td><td><code>[0]['0020']</code></td><td>-</td><td>counter <code>unbcounter_…</code></td></tr>
+<tr><td>UNB test indicator 0035</td><td><code>[0]['0035']</code></td><td><code>UNB.0035</code> (default <code>0</code>)</td><td>test indicator of the message; anything other than empty or <code>0</code> gives <code>1</code></td></tr>
+<tr><td>Other UNB fields (S001.0080, S001.0133, S002.0008, S002.0042, S003.0014, S003.0046, S005.0022, S005.0025, 0026, 0029, 0031, 0032)</td><td><code>[0]['&lt;field&gt;']</code></td><td><code>UNB.&lt;field&gt;</code> (default empty)</td><td>-</td></tr>
+<tr><td>ISA01 – ISA04 (authorisation, security)</td><td><code>[0]['ISA01']</code> …</td><td><code>ISA01</code>=<code>00</code>, <code>ISA02</code>=10 spaces, <code>ISA03</code>=<code>00</code>, <code>ISA04</code>=10 spaces</td><td>-</td></tr>
+<tr><td>ISA05 / ISA07 (ID qualifiers)</td><td><code>[0]['ISA05']</code> / <code>['ISA07']</code></td><td><code>ISA05</code> / <code>ISA07</code> (default <code>01</code>)</td><td>qualifier from the partner ID with <code>IDmode</code></td></tr>
+<tr><td>ISA06 / ISA08 (sender / receiver)</td><td><code>[0]['ISA06']</code> / <code>['ISA08']</code></td><td><code>ISA06</code> / <code>ISA08</code></td><td>frompartner / topartner, filled to 15 positions</td></tr>
+<tr><td>ISA09 / ISA10 (date / time)</td><td><code>[0]['ISA09']</code> / <code>['ISA10']</code></td><td>-</td><td>now (<code>YYMMDD</code>, <code>HHMM</code>)</td></tr>
+<tr><td>ISA11</td><td><code>[0]['ISA11']</code></td><td><code>ISA11</code> (default <code>U</code>)</td><td>from ISA version 00403 the repetition separator (syntax <code>reserve</code>) is written here</td></tr>
+<tr><td>ISA12 (version)</td><td><code>[0]['ISA12']</code></td><td><code>version</code> (default <code>00403</code>)</td><td>-</td></tr>
+<tr><td>ISA13 / IEA02 (control number)</td><td><code>[0]['ISA13']</code></td><td>-</td><td>counter <code>isacounter_…</code></td></tr>
+<tr><td>ISA14 (acknowledgement requested)</td><td><code>[0]['ISA14']</code></td><td><code>ISA14</code> (default <code>1</code>)</td><td>-</td></tr>
+<tr><td>ISA15 (usage: P / T)</td><td><code>[0]['ISA15']</code></td><td><code>ISA15</code> (default <code>P</code>)</td><td>test indicator of the message, when it is set and not <code>0</code></td></tr>
+<tr><td>GS01 (functional group)</td><td><code>[1]['GS01']</code></td><td><code>functionalgroup</code> (default <code>XX</code>; the message grammar should set it, for example <code>PO</code>)</td><td>-</td></tr>
+<tr><td>GS02 / GS03</td><td><code>[1]['GS02']</code> / <code>['GS03']</code></td><td><code>GS02</code> / <code>GS03</code></td><td>frompartner / topartner</td></tr>
+<tr><td>GS04 / GS05 (date / time)</td><td><code>[1]['GS04']</code> / <code>['GS05']</code></td><td>-</td><td>now; date 8 positions from version 004010, else 6</td></tr>
+<tr><td>GS06 / GE02 (group control number)</td><td><code>[1]['GS06']</code></td><td>-</td><td>the interchange control number</td></tr>
+<tr><td>GS07</td><td><code>[1]['GS07']</code></td><td><code>GS07</code> (default <code>X</code>)</td><td>-</td></tr>
+<tr><td>GS08 (version)</td><td><code>[1]['GS08']</code></td><td>-</td><td>messagetype without the first 3 characters: <code>850004010</code> gives <code>004010</code></td></tr>
+<tr><td>STX FROM.01 / UNTO.01</td><td><code>[0]['FROM.01']</code> / <code>['UNTO.01']</code></td><td><code>FROM.01</code> / <code>UNTO.01</code></td><td>frompartner / topartner</td></tr>
+<tr><td>STX SNRF (reference)</td><td><code>[0]['SNRF']</code></td><td>-</td><td>counter <code>stxcounter_…</code></td></tr>
+<tr><td>STX STDS1, STDS2, FROM.02, UNTO.02, APRF, PRCD</td><td>-</td><td><code>STX.STDS1</code> (<code>ANA</code>), <code>STX.STDS2</code> (<code>1</code>), <code>STX.FROM.02</code>, <code>STX.UNTO.02</code>, <code>STX.APRF</code>, <code>STX.PRCD</code> (empty)</td><td>-</td></tr>
+</table></div>
+<p>The partner IDs must be known: an EDIFACT, X12 or TRADACOMS envelope without frompartner or topartner is an error. The partners do not need a record in the partner list.</p>
+<p><span class="badge green">new in 4.0</span> With the syntax setting <code>IDmode</code> a partner ID can hold the qualifier and a second ID: <code>ISA_qualifier_GS</code> reads the partner ID as <code>ISA-ID|qualifier|GS-ID</code> (for example <code>MYCOMPANY|ZZ|MYCOMPANYGS</code>); <code>ISA_qualifier</code> and <code>UNB_qualifier</code> read it as <code>ID|qualifier</code>.</p>
+<p>Splitting is the opposite direction: received interchanges are split into messages by the incoming grammar (<code>nextmessage</code>); see <a href="#grammar-records">Records and structure</a>. While reading, Bots checks the counts and references of the received envelope (errors <code>[E01]</code> to <code>[E25]</code>).</p>
+
+<h3 id="envelopes--howto-x12">How to set your X12 IDs for all partners</h3>
+<ol class="steps">
+<li><b>Open the X12 envelope grammar</b> <code>usersys/grammars/x12/x12.py</code> (it comes with the X12 grammars; it holds the syntax for all X12 messages).</li>
+<li><b>Set the values</b> in its <code>syntax</code>:
+<pre><code class="language-python">syntax = {
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+    'ISA15': 'P',
+    'version': '00401',
+}</code></pre></li>
+<li><b>Set the functional group</b> in each message grammar, for example <code>'functionalgroup': 'IN'</code> in the syntax of <code>810004010.py</code>.</li>
+<li><b>Set the partners in the mapping</b> (or route): frompartner <code>MYCOMPANY</code>, topartner <code>PARTNERA</code>.</li>
+<li><b>Run and open the outgoing file.</b> The ISA reads <code>ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERA       *…</code>.</li>
+</ol>
+
+<h3 id="envelopes--howto-edifact">How to use your GLN in the UNB</h3>
+<ol class="steps">
+<li><b>Use the GLN as partner ID</b>, or keep <code>MYCOMPANY</code> as partner ID and give the UNB value in the partner syntax <code>usersys/partners/edifact/MYCOMPANY.py</code>:
+<pre><code class="language-python">syntax = {
+    'S002.0004': '5412345000013',   # UNB sender
+    'UNB.S002.0007': '14',          # qualifier: GLN
+}</code></pre></li>
+<li><b>Run and check</b> that the UNB starts with <code>UNB+UNOA:3+5412345000013:14+…</code>.</li>
+</ol>
+
+<h3 id="envelopes--howto-merge">How to send one file per message instead of one interchange</h3>
+<ol class="steps">
+<li><b>Set <code>'merge': False</code></b> in the syntax of the message grammar, or for one partner in its partner syntax.</li>
+<li><b>Run.</b> Each message now gets its own envelope and control number.</li>
+</ol>
+<p>The other way round, a mapping can keep messages apart that would be merged: set <code>out.ta_info['rsrv3']</code> to a value (for example the store number); messages with different values go in different interchanges.</p>
+
+<h3 id="envelopes--howto-test">How to mark an interchange as a test</h3>
+<ol class="steps">
+<li><b>For one partner:</b> in the partner syntax set <code>'ISA15': 'T'</code> (X12) or <code>'UNB.0035': '1'</code> (EDIFACT).</li>
+<li><b>For one message:</b> in the mapping set <code>out.ta_info['testindicator'] = '1'</code>. Bots writes <code>1</code> in UNB 0035; for X12 the value is written in ISA15, so use <code>'T'</code> there.</li>
+<li><b>Route test files apart</b> with the field <span class="ui">Testindicator</span> of the route part.</li>
+</ol>
+
+<h3 id="envelopes--reference">Reference</h3>
+<p>Syntax settings for envelopes (in the grammar, the envelope grammar or a partner syntax file). All settings of grammars are in <a href="#grammar-syntax">Grammar syntax</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>envelope</code></td><td>Envelope to use.</td><td>edifact: <code>edifact</code>; x12: <code>x12</code>; tradacoms: <code>tradacoms</code>; templatehtml: <code>templatehtml</code>; json: <code>json</code>; others empty</td><td><code>''</code>, <code>csvheader</code>, a script name</td></tr>
+<tr><td><code>merge</code></td><td>Put messages with the same envelope data in one file.</td><td>True for edifact, x12, csv, fixed, templatehtml; False for tradacoms, xml, json, idoc</td><td><code>True</code> / <code>False</code></td></tr>
+<tr><td><code>IDmode</code> <span class="badge green">new in 4.0</span> <span class="badge gray">advanced</span></td><td>Reads qualifier and inner ID from the partner ID.</td><td>not set</td><td><code>ISA_qualifier_GS</code>, <code>ISA_qualifier</code>, <code>UNB_qualifier</code></td></tr>
+<tr><td><code>charset</code></td><td>Character set; for EDIFACT also the UNB syntax identifier.</td><td>edifact <code>UNOA</code>; x12, tradacoms <code>us-ascii</code></td><td><code>UNOC</code></td></tr>
+<tr><td><code>version</code></td><td>EDIFACT syntax version (S001.0002) or X12 ISA version (ISA12).</td><td>edifact <code>3</code>; x12 <code>00403</code></td><td><code>4</code>, <code>00501</code></td></tr>
+<tr><td><code>forceUNA</code></td><td>Always write the UNA segment.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>UNB.S001.0080</code> … <code>UNB.0035</code></td><td>Default values of UNB fields (see table above).</td><td>empty; <code>UNB.S002.0007</code> and <code>UNB.S003.0007</code> <code>14</code>; <code>UNB.0035</code> <code>0</code></td><td><code>'UNB.0031': '1'</code> (ask acknowledgement)</td></tr>
+<tr><td><code>S002.0004</code>, <code>S003.0010</code></td><td>UNB sender / receiver instead of the partner ID.</td><td>not set</td><td><code>5412345000013</code></td></tr>
+<tr><td><code>ISA01</code> … <code>ISA15</code>, <code>GS07</code></td><td>Default values of ISA fields and GS07.</td><td>see table above</td><td><code>'ISA14': '0'</code></td></tr>
+<tr><td><code>ISA06</code>, <code>ISA08</code>, <code>GS02</code>, <code>GS03</code></td><td>X12 IDs instead of the partner ID.</td><td>not set</td><td><code>MYCOMPANY</code></td></tr>
+<tr><td><code>functionalgroup</code></td><td>GS01.</td><td><code>XX</code></td><td><code>PO</code>, <code>IN</code>, <code>SH</code>, <code>FA</code></td></tr>
+<tr><td><code>STX.STDS1</code>, <code>STX.STDS2</code>, <code>STX.FROM.02</code>, <code>STX.UNTO.02</code>, <code>STX.APRF</code>, <code>STX.PRCD</code></td><td>TRADACOMS STX values.</td><td><code>ANA</code>, <code>1</code>, empty …</td><td>-</td></tr>
+<tr><td><code>FROM.01</code>, <code>UNTO.01</code></td><td>TRADACOMS sender / receiver instead of the partner ID.</td><td>not set</td><td>-</td></tr>
+<tr><td><code>envelope-template</code></td><td>Template file for <code>templatehtml</code>, in <code>usersys/grammars/templatehtml/templates/</code>. Required.</td><td>empty</td><td><code>invoice_envelope.html</code></td></tr>
+<tr><td><code>template_engine</code></td><td>Template engine for <code>templatehtml</code>.</td><td><code>genshi</code></td><td><code>genshi</code>, <code>django</code></td></tr>
+<tr><td><code>field_sep</code>, <code>sfield_sep</code>, <code>record_sep</code>, <code>escape</code>, <code>reserve</code>, <code>decimaal</code>, <code>add_crlfafterrecord_sep</code></td><td>Separators; also written in the UNA and in the ISA.</td><td>per editype</td><td>see <a href="#grammar-syntax">Grammar syntax</a></td></tr>
+</table></div>
+<p>Other settings that affect envelopes:</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[settings] interchangecontrolperpartner</code> (bots.ini)</td><td>Interchange counter per sender or per sender and receiver.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>out.envelope_content[0]</code>, <code>[1]</code> (mapping)</td><td>Envelope field values for this message; they win over syntax.</td><td>empty</td><td><code>out.envelope_content[0]['ISA15'] = 'T'</code></td></tr>
+<tr><td><code>out.ta_info['frompartner']</code>, <code>['topartner']</code>, <code>['testindicator']</code>, <code>['merge']</code>, <code>['envelope']</code>, <code>['charset']</code> (mapping)</td><td>Values for this message; they win over syntax.</td><td>from the incoming message / syntax</td><td>-</td></tr>
+<tr><td><code>out.ta_info['rsrv3']</code> (mapping) <span class="badge gray">advanced</span></td><td>Extra criterion: only messages with the same value are merged.</td><td>empty</td><td><code>store_0042</code></td></tr>
+<tr><td>Envelope script <code>usersys/envelopescripts/&lt;editype&gt;/&lt;envelope&gt;.py</code></td><td>Replaces or extends an envelope; exits <code>ta_infocontent(ta_info)</code> and <code>envelopecontent(ta_info, out)</code>.</td><td>none</td><td>see <a href="#envelope-scripts">Envelope scripts</a></td></tr>
+</table></div>
+
+<h3 id="envelopes--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>In enveloping "frompartner" unknown.</code> / <code>In enveloping "topartner" unknown.</code></td><td>The outgoing message has no sender or receiver. Often the input (csv, xml from your ERP system) has no partners and the mapping does not set them.</td><td>1. Set <code>out.ta_info['frompartner']</code> and <code>['topartner']</code> in the mapping, or 2. set them on the route that receives the file, or 3. let the incoming grammar find them with QUERIES.</td></tr>
+<tr><td><code>Not found envelope "myenvelope" for editype "edifact".</code></td><td>The syntax names an envelope that has no script in <code>usersys/envelopescripts/edifact/</code> and is not a built-in envelope.</td><td>Correct <code>envelope</code>, or add the script with a class of that name.</td></tr>
+<tr><td><code>In enveloping: unknown value "…" for syntax parameter "IDmode".</code></td><td>Misspelled <code>IDmode</code>.</td><td>Use <code>ISA_qualifier_GS</code>, <code>ISA_qualifier</code> or <code>UNB_qualifier</code>.</td></tr>
+<tr><td><code>In enveloping "frompartner" is expected to have format "ISA_qualifier_GS", but is "MYCOMPANY".</code></td><td>With <code>IDmode</code> the partner ID must contain <code>|</code> parts.</td><td>Use IDs like <code>MYCOMPANY|ZZ|MYCOMPANY</code>, or remove <code>IDmode</code>.</td></tr>
+<tr><td><code>While enveloping in "templatehtml.invoice_html": syntax option "envelope-template" not filled; is required.</code></td><td>No template for the HTML envelope.</td><td>Set <code>envelope-template</code> in the grammar syntax.</td></tr>
+<tr><td><code>Dependency failure: editype "templatehtml" requires python library "genshi".</code></td><td>Genshi is not installed.</td><td>Install it in the Python of Bots (<code>pip install genshi</code>), or set <code>template_engine</code> to <code>django</code> and use a Django template.</td></tr>
+<tr><td><code>Grammar "…": in this xml grammar merge is "True" but no (user) enveloping is specified. This will lead to invalid xml files</code></td><td>XML messages cannot be put one after the other in one file.</td><td>Set <code>merge</code> to <code>False</code>, or write an envelope script.</td></tr>
+<tr><td>The partner receives one file per message, or everything in one file</td><td><code>merge</code> setting; or messages differ in partner, test indicator, messagetype or envelope data, so they are not grouped.</td><td>Check <code>merge</code> in grammar and partner syntax, and the values in <span class="ui">Outgoing</span>.</td></tr>
+<tr><td>The ISA has <code>01</code> qualifiers instead of <code>ZZ</code></td><td>The default of <code>ISA05</code>/<code>ISA07</code> is <code>01</code>.</td><td>Set them in the envelope grammar or partner syntax.</td></tr>
+<tr><td>GS01 is <code>XX</code></td><td>The message grammar has no <code>functionalgroup</code>.</td><td>Add it to the syntax of the message grammar.</td></tr>
+<tr><td><code>[E02]: Count of messages in UNZ is 3; should be equal to number of messages 2.</code> (or <code>[E13]</code> … <code>[E21]</code> for X12)</td><td>A <b>received</b> file has a wrong count or reference in its envelope.</td><td>Ask the partner to correct the file; see <a href="#error-messages">Error messages</a>.</td></tr>
+</table></div>
+</section>
+
+
+<section id="acknowledgements" data-title="Acknowledgements" data-group="Envelopes, acknowledgements, scripts">
+<h2>Acknowledgements</h2>
+<p class="lead">An acknowledgement is a technical receipt for an EDI file: the X12 997, the EDIFACT CONTRL and, for mail, the MDN (message disposition notification). Bots can make them for files it receives and can keep track of the ones it expects for files it sends.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>When PartnerA sends you an order, PartnerA wants to know that it arrived: Bots sends back a short "received, OK" or "received, with errors" file. When you send an invoice, you want the same from them: Bots notes that a receipt is due and shows in a list which receipts came and which are still missing.</p></div>
+
+<h3 id="acknowledgements--how">How it works</h3>
+<p>There are three tasks. <a href="#confirm-rules">Confirm rules</a> switch each one on.</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Sending an acknowledgement for a received file, asking one for a sent file, and processing a received acknowledgement">
+<defs><marker id="arrow-acknowledgements-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Send (send-…)</text><text class="small" x="120" y="86" text-anchor="middle">receipt for a received file</text>
+<rect class="box out" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Ask (ask-…)</text><text class="small" x="380" y="86" text-anchor="middle">note: receipt expected</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-acknowledgements-1)"/>
+<rect class="box mid" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Process received</text><text class="small" x="640" y="86" text-anchor="middle">mark as confirmed</text>
+</svg></div>
+
+<h4 id="acknowledgements--send997">Sending a 997 (X12)</h4>
+<ol>
+<li>After Bots translated a received X12 file, it checks the rules of type <code>send-x12-997</code> for each message (ST), per group (GS). Groups with GS01 <code>FA</code> (a 997 or 999) are skipped.</li>
+<li>For each group with at least one matching message it makes one 997, with an <code>AK1</code> for the group, an <code>AK2</code>/<code>AK5</code> per acknowledged message and an <code>AK9</code>. The code is <code>A</code> (accepted) when the file was translated without error and <code>R</code> (rejected) when there was an error. Messages that do not match a rule are left out.</li>
+<li>The 997 goes from the receiver to the sender: frompartner is GS03, topartner is GS02 of the received group. Its ST02 comes from the counter <code>messagecounter</code> (at least 4 digits).</li>
+<li>The 997 is written with grammar <code>997004010</code> (file <code>usersys/grammars/x12/997004010.py</code>, which comes with the X12 grammars). <span class="badge green">new in 4.0</span> With <code>[settings] x12_997_version_as_received = True</code> in <code>bots.ini</code> Bots uses the version of the received GS08 when that grammar exists (for example <code>997004060</code>), then the first 6 characters of GS08, then <code>997004010</code>.</li>
+<li>The 997 is an outgoing message of the same route. It is enveloped (ISA/GS) like other X12 messages and goes to the outgoing channel of the route part whose filters let it pass.</li>
+</ol>
+<p>A translation with fromeditype <code>x12</code>, frommessagetype <code>997</code> and frompartner = the receiver (your ID) replaces this: Bots runs its mapping with <code>main(inn, out, routedict, ta_fromfile)</code>, where <code>inn</code> is the received GS group, and writes it with the to-messagetype of the translation. A mapping with only a function <code>change(inn, out, routedict, ta_fromfile)</code> lets Bots make the 997 and then changes it.</p>
+<p>Bots does not make 999 acknowledgements. It does recognise a received 999: no 997 is made for it, and no 997 is asked for an outgoing 997 or 999.</p>
+
+<h4 id="acknowledgements--sendcontrl">Sending a CONTRL (EDIFACT)</h4>
+<ol>
+<li>After translating a received EDIFACT file, Bots checks the rules of type <code>send-edifact-CONTRL</code> for each message (UNH), per interchange (UNB). CONTRL and APERAK messages are not acknowledged.</li>
+<li>For each interchange with a matching message it makes one CONTRL with a <code>UCI</code> (the UNB reference, sender and receiver of the received interchange) and a <code>UCM</code> per acknowledged message. The code is <code>7</code> (acknowledged) or <code>4</code> (rejected, when there was an error).</li>
+<li>It is written with grammar <code>CONTRL22UNEAN002</code> (file <code>usersys/grammars/edifact/CONTRL22UNEAN002.py</code>), unless a translation with frommessagetype <code>CONTRL</code> gives a mapping and messagetype, as for the 997.</li>
+<li>It goes from the receiver to the sender (the UNB IDs, or the IDs the QUERIES of the envelope grammar found), and is enveloped and sent like the 997.</li>
+</ol>
+
+<h4 id="acknowledgements--ask">Asking for a 997 or CONTRL</h4>
+<p>When the outgoing interchanges of a route part are given to its outgoing channel, Bots checks the rules <code>ask-x12-997</code> or <code>ask-edifact-CONTRL</code>. For a match it marks the interchange as "confirmation asked" (not for an outgoing 997, 999, CONTRL or APERAK). The interchange then appears under <span class="ui">All runs</span> → <span class="ui">Confirmations</span> as unconfirmed.</p>
+<p>The rule does not change the file. To ask the partner in the file itself, use the envelope: <code>ISA14</code> is <code>1</code> by default (set <code>'ISA14': '0'</code> to not ask), and for EDIFACT set <code>'UNB.0031': '1'</code>. See <a href="#envelopes">Envelopes</a>.</p>
+
+<h4 id="acknowledgements--match">How a received 997 or CONTRL is matched</h4>
+<p>Bots does not do this on its own for 997 and CONTRL: you need a translation for the received acknowledgement with a mapping that marks the sent interchange as confirmed. The interchange Bots asked a confirmation for is stored with:</p>
+<ul>
+<li><code>reference</code>: the interchange control number (ISA13 without leading zeros, which is also GS06; or UNB 0020);</li>
+<li><code>status</code>: 400 (merged, <code>transform.MERGED</code>);</li>
+<li><code>confirmasked</code>: true, <code>confirmtype</code>: <code>ask-x12-997</code> or <code>ask-edifact-CONTRL</code>.</li>
+</ul>
+<p>The 997 that comes back holds that number in <code>AK102</code> (group control number); a CONTRL holds it in <code>UCI</code> 0020. The mapping sets <code>confirmed</code> and <code>confirmidta</code> (the number of the received file):</p>
+<pre><code class="language-python"># usersys/mappings/x12/acks_997_in.py
+from bots import transform
+
+def main(inn, out):
+    reference = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'AK1', 'AK102': None})
+    status = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'AK9', 'AK901': None})
+    if reference and status in ('A', 'E'):            # accepted, or accepted with errors
+        transform.changeq(
+            """UPDATE ta
+               SET confirmed=%(confirmed)s, confirmidta=%(confirmidta)s
+               WHERE reference=%(reference)s AND status=%(status)s
+               AND confirmasked=%(confirmasked)s AND confirmtype=%(confirmtype)s""",
+            {'confirmed': True,
+             'confirmidta': inn.ta_info['idta_fromfile'],
+             'reference': str(int(reference)),         # without leading zeros
+             'status': transform.MERGED,
+             'confirmasked': True,
+             'confirmtype': 'ask-x12-997'})
+    out.ta_info['statust'] = transform.DONE           # no output file for the 997</code></pre>
+<p>For a CONTRL read <code>inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'UCI', '0020': None})</code> and <code>'0083'</code> (<code>7</code> = OK) and use <code>'ask-edifact-CONTRL'</code>. The mpaths depend on your 997 and CONTRL grammars; check them with the grammar. This example is a starting point, test it with your own files.</p>
+
+<h4 id="acknowledgements--mdn">Mail receipts (MDN)</h4>
+<ul>
+<li><b>Ask</b> (<code>ask-email-MDN</code>): an outgoing mail gets the header <code>Disposition-Notification-To</code> with the sender address, and is listed as waiting for confirmation, with its <code>Message-ID</code> as reference.</li>
+<li><b>Receive</b>: a mail of type <code>multipart/report</code> that comes in on a mail channel is read as an MDN. Its <code>Original-Message-ID</code> is matched with the sent mail, which is marked confirmed. No mapping is needed. The incoming channel must accept the sender address (see <a href="#partners">Partners</a>).</li>
+<li><b>Send</b> (<code>send-email-MDN</code>): when a received mail has <code>Disposition-Notification-To</code> and a rule matches, Bots makes an MDN (<code>Return Receipt (displayed) - &lt;subject&gt;</code>) with editype <code>email-confirmation</code>, from the address the mail was sent to, to the address that asked. A route part with an outgoing mail channel (smtp) sends it.</li>
+</ul>
+
+<h4 id="acknowledgements--screen">The confirmations screen</h4>
+<p><span class="ui">All runs</span> → <span class="ui">Confirmations</span> lists every file for which a confirmation was asked or sent. Sub-menus: <span class="ui">Confirmed</span>, <span class="ui">Unconfirmed</span>, <span class="ui">Manual confirm</span> (confirmed by hand), <span class="ui">Pending …</span> (waiting), and <span class="ui">Select confirmations</span> to filter on date, partner, confirm type and more. For an asked confirmation that did not come, a user with the right to change transactions can confirm it by hand (<span class="ui">confirm</span> action); Bots then stores <code>-1</code> as the confirming file.</p>
+
+<h3 id="acknowledgements--howto-997">How to send 997s for received orders</h3>
+<ol class="steps">
+<li><b>Have a working route</b> <code>orders_in</code> that receives and translates X12 850 from PartnerA (part 1, for example to <code>erp_orders_out</code>).</li>
+<li><b>Check the grammar</b> <code>usersys/grammars/x12/997004010.py</code> exists.</li>
+<li><b>Add the confirm rule</b> <code>send-x12-997</code>, <span class="ui">Ruletype</span> <span class="ui">Route</span>, <span class="ui">Route</span> <code>orders_in</code> (see <a href="#confirm-rules">Confirm rules</a>).</li>
+<li><b>Limit part 1 to the order output.</b> In route part 1 set under <span class="ui">Filtering for outchannel</span> <span class="ui">Toeditype</span> <code>csv</code> (the editype of your ERP file), so the 997 does not go to the ERP folder.</li>
+<li><b>Add route part 2</b> with the same <span class="ui">Idroute</span> <code>orders_in</code>, <span class="ui">Sequence</span> <code>2</code>, no incoming channel, <span class="ui">Translate</span> <span class="ui">Nothing</span>, outgoing channel <code>partnera_sftp_out</code>, filter <span class="ui">Toeditype</span> <code>x12</code> and <span class="ui">Tomessagetype</span> <code>997004010</code>.</li>
+<li><b>Run and check.</b> <span class="ui">All runs</span> → <span class="ui">Confirmations</span> shows the order file with a confirmation sent; <span class="ui">Outgoing</span> shows the 997 to PartnerA.</li>
+</ol>
+
+<h3 id="acknowledgements--howto-ask">How to track 997s for your invoices</h3>
+<ol class="steps">
+<li><b>Add the confirm rule</b> <code>ask-x12-997</code>, <span class="ui">Ruletype</span> <span class="ui">Route</span>, <span class="ui">Route</span> <code>invoices_out</code>.</li>
+<li><b>Make the receiving side.</b> A route <code>acks_in</code> that receives the 997s, and a translation x12 / <code>997004010</code> with the mapping <code>acks_997_in</code> shown above (any to-editype and to-messagetype that exist, for example csv and a small grammar; the mapping discards the output).</li>
+<li><b>Run <code>invoices_out</code>.</b> The interchange is listed under <span class="ui">Confirmations</span> → <span class="ui">Unconfirmed</span>.</li>
+<li><b>Run <code>acks_in</code></b> after the partner sent the 997. The interchange moves to <span class="ui">Confirmed</span>, with a link to the 997.</li>
+</ol>
+
+<h3 id="acknowledgements--howto-contrl">How to send a CONTRL</h3>
+<ol class="steps">
+<li><b>Check the grammar</b> <code>usersys/grammars/edifact/CONTRL22UNEAN002.py</code> exists, or add a translation edifact / <code>CONTRL</code> with your own mapping and CONTRL messagetype.</li>
+<li><b>Add the confirm rule</b> <code>send-edifact-CONTRL</code> with the rule type you want.</li>
+<li><b>Add a route part</b> that sends editype <code>edifact</code> / messagetype <code>CONTRL22UNEAN002</code> to the partner, as for the 997.</li>
+</ol>
+
+<h3 id="acknowledgements--howto-mdn">How to work with mail receipts</h3>
+<ol class="steps">
+<li><b>To ask:</b> add rule <code>ask-email-MDN</code> for the outgoing mail channel. Receive the answers on a mail channel of a route that runs regularly; the MDN needs no translation.</li>
+<li><b>To send:</b> add rule <code>send-email-MDN</code> for the incoming mail channel, and a route part with an smtp channel and filter <span class="ui">Toeditype</span> <code>email-confirmation</code>.</li>
+</ol>
+
+<h3 id="acknowledgements--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Confirm rules</td><td>Switch sending and asking on; see <a href="#confirm-rules">Confirm rules</a>.</td><td>none</td><td>-</td></tr>
+<tr><td><code>[settings] x12_997_version_as_received</code> (bots.ini) <span class="badge green">new in 4.0</span></td><td>False: 997 always in version 004010 (as Bots 3). True: the version of the received GS08 if usersys has that 997 grammar, then the first 6 characters of GS08, then 004010.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td>Grammar <code>x12/997004010.py</code></td><td>Grammar of the 997 that Bots makes.</td><td>-</td><td>from the X12 grammars</td></tr>
+<tr><td>Grammar <code>edifact/CONTRL22UNEAN002.py</code></td><td>Grammar of the CONTRL that Bots makes.</td><td>-</td><td>from the EDIFACT grammars</td></tr>
+<tr><td>Translation x12 / <code>997</code> <span class="badge gray">advanced</span></td><td>Your own mapping to make the 997 (<code>main</code>) or to change it (<code>change</code>); frompartner is the receiver of the original file.</td><td>none</td><td>-</td></tr>
+<tr><td>Translation edifact / <code>CONTRL</code> <span class="badge gray">advanced</span></td><td>The same for the CONTRL.</td><td>none</td><td>-</td></tr>
+<tr><td>Syntax <code>ISA14</code></td><td>Acknowledgement requested in outgoing ISA. A confirm rule does not change it.</td><td><code>1</code></td><td><code>0</code>, <code>1</code></td></tr>
+<tr><td>Syntax <code>UNB.0031</code></td><td>Acknowledgement request in outgoing UNB.</td><td>empty</td><td><code>1</code></td></tr>
+<tr><td>Transaction fields <code>confirmasked</code>, <code>confirmed</code>, <code>confirmtype</code>, <code>confirmidta</code></td><td>Stored per file; shown in <span class="ui">Confirmations</span>. <code>confirmidta</code> is the number of the confirming file, <code>-1</code> for a manual confirmation, 0 while waiting.</td><td>false / false / empty / 0</td><td>-</td></tr>
+<tr><td>Values in a received file</td><td>997 AK901/AK501: <code>A</code> accepted, <code>R</code> rejected (Bots writes these two). CONTRL 0083: <code>7</code> acknowledged, <code>4</code> rejected.</td><td>-</td><td>-</td></tr>
+</table></div>
+
+<h3 id="acknowledgements--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>No 997 or CONTRL is made</td><td>No matching active confirm rule; the rule's partner differs from GS02/GS03 (X12) or the UNB IDs; the received file had a fatal error (not readable).</td><td>1. Test with one rule <span class="ui">Confirm all</span>. 2. Compare the partner IDs. 3. Fix the file error first.</td></tr>
+<tr><td><code>No import of module "…/usersys/grammars/x12/997004010": …</code></td><td>The 997 grammar is missing (same for <code>CONTRL22UNEAN002</code>).</td><td>Install the X12 (or EDIFACT) grammars that contain it; or set <code>x12_997_version_as_received</code> and have the grammar of that version.</td></tr>
+<tr><td>The 997 goes to the ERP folder, or is not sent at all</td><td>The outgoing filters of the route parts do not separate the 997 from the translated orders.</td><td>Set <span class="ui">Toeditype</span>/<span class="ui">Tomessagetype</span> on each route part (see the how-to above).</td></tr>
+<tr><td>The partner gets a 997 in another version than before</td><td><code>x12_997_version_as_received = True</code>.</td><td>Remove the setting for 004010, as Bots 3.</td></tr>
+<tr><td>Sent interchanges stay <span class="ui">Unconfirmed</span> although the partner sent the 997</td><td>Bots does not match received 997/CONTRL by itself, or the mapping compares another reference (leading zeros, ISA13 vs GS06).</td><td>1. Add the receiving translation and mapping. 2. Compare AK102 with the reference shown in <span class="ui">Confirmations</span>. 3. Use <span class="ui">confirm</span> for old ones.</td></tr>
+<tr><td><code>Manual confirm not possible: 1234</code></td><td>The file was not asked a confirmation for (send-…), or is already confirmed.</td><td>Only asked, unconfirmed files can be confirmed by hand.</td></tr>
+<tr><td><code>Received email-MDN with errors.</code></td><td>A <code>multipart/report</code> mail is not a valid disposition notification (wrong report type, or no <code>message/disposition-notification</code> part).</td><td>Ask the partner to check its mail system; delete the mail from the incoming mailbox if it is not a receipt.</td></tr>
+<tr><td>The partner does not send a 997 although the rule <code>ask-x12-997</code> is there</td><td>The rule does not change the file. <code>ISA14</code> may be <code>0</code> in your syntax.</td><td>Set <code>'ISA14': '1'</code> and agree with the partner.</td></tr>
+<tr><td>A 997 is sent with code <code>R</code></td><td>The received file had an error in translation (for example a missing translation or a mapping error).</td><td>Look at the error of the received file in <span class="ui">Incoming</span>, fix it, and rereceive.</td></tr>
+</table></div>
+</section>

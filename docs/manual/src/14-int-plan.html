@@ -1,0 +1,896 @@
+<!-- Group "Integration tutorials": planning an integration, and running integrations in production.
+     Checked with Bots 4.0.0 (bots-new-stable): models.py, router.py, communication.py, automaticmaintenance.py,
+     botslib.py, transform.py, pluglib.py, engine.py, install/bots.ini, and test runs in a scratch environment. -->
+
+<section id="int-overview" data-title="Planning an integration" data-group="Integration tutorials">
+<h2>Planning an integration</h2>
+<p class="lead">A new partner rarely sends a finished design. You get a request such as "we want to send you orders as
+X12 850 over SFTP, and we expect 997, 855, 856 and 810 back". This page shows how to turn such a request into a design
+for Bots: what to ask the partner, which routes, channels, grammars, mappings, translations, partners, confirm rules and
+counters you need, how to name them, and how to bring the partner live. The tutorials after this page build such
+designs step by step.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Before you click anything in Bots, write down
+what goes where: which documents, in which direction, over which connection, in which format, with which receipts.
+Then give every piece a clear name. With that list, setting up Bots is a matter of typing it in, and the partner's
+test is a check of the list, not a search for what you forgot.</p></div>
+
+<h3 id="int-overview--build">What you will build</h3>
+<p>The example on this page is a retailer, <b>PartnerA</b>, that buys from <b>MyCompany</b>. PartnerA's request:</p>
+<ul>
+<li>PartnerA sends purchase orders as <b>X12 850</b>, version 004010, by putting files on an SFTP server.</li>
+<li>For every order file PartnerA expects a <b>997</b> (functional acknowledgement: "file received and readable").</li>
+<li>For every order PartnerA expects an <b>855</b> (order response), an <b>856</b> (ship notice) when the goods
+leave, and an <b>810</b> (invoice).</li>
+<li>PartnerA sends a 997 back for each 855, 856 and 810.</li>
+</ul>
+<p>At MyCompany the ERP system reads orders from a folder as csv files and writes order responses, ship notices and
+invoices as csv files to other folders. The result of this page is a <b>design</b>: a filled-in worksheet, the list
+of every object Bots needs (with its name), and an onboarding plan. The whole flow looks like this:</p>
+<div class="diagram"><svg viewBox="0 0 760 260" width="760" role="img" aria-label="Orders come from the SFTP server of PartnerA through route orders_in to the ERP folder, with a 997 back; order responses, ship notices and invoices go from ERP folders through three routes to the SFTP server of PartnerA">
+<defs><marker id="arrow-intoverview-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="20" width="220" height="80" rx="10"/><text x="120" y="54" text-anchor="middle" font-weight="600">PartnerA SFTP (their out)</text><text class="small" x="120" y="76" text-anchor="middle">850 orders, 997s for our files</text>
+<path class="arrow" d="M234,60 L266,60" marker-end="url(#arrow-intoverview-1)"/>
+<rect class="box mid" x="270" y="20" width="220" height="80" rx="10"/><text x="380" y="54" text-anchor="middle" font-weight="600">Route orders_in</text><text class="small" x="380" y="76" text-anchor="middle">850 to csv, makes the 997</text>
+<path class="arrow" d="M494,60 L526,60" marker-end="url(#arrow-intoverview-1)"/>
+<rect class="box out" x="530" y="20" width="220" height="80" rx="10"/><text x="640" y="54" text-anchor="middle" font-weight="600">ERP order folder</text><text class="small" x="640" y="76" text-anchor="middle">one csv per order</text>
+<rect class="box in" x="10" y="160" width="220" height="80" rx="10"/><text x="120" y="194" text-anchor="middle" font-weight="600">ERP export folders</text><text class="small" x="120" y="216" text-anchor="middle">855, 856, 810 data as csv</text>
+<path class="arrow" d="M234,200 L266,200" marker-end="url(#arrow-intoverview-1)"/>
+<rect class="box mid" x="270" y="160" width="220" height="80" rx="10"/><text x="380" y="194" text-anchor="middle" font-weight="600">ordrsp_out, asn_out, invoices_out</text><text class="small" x="380" y="216" text-anchor="middle">csv to X12, a 997 is expected</text>
+<path class="arrow" d="M494,200 L526,200" marker-end="url(#arrow-intoverview-1)"/>
+<rect class="box out" x="530" y="160" width="220" height="80" rx="10"/><text x="640" y="194" text-anchor="middle" font-weight="600">PartnerA SFTP (their in)</text><text class="small" x="640" y="216" text-anchor="middle">855, 856, 810 and our 997s</text>
+<path class="arrow" d="M380,104 L380,130 L640,130 L640,156" marker-end="url(#arrow-intoverview-1)"/>
+<text class="small" x="510" y="124" text-anchor="middle">997 for each order file</text>
+</svg></div>
+
+<h3 id="int-overview--need">What you need</h3>
+<ul>
+<li>A working installation and an environment for tests: <a href="#install-windows">Install on Windows</a> or <a
+href="#install-linux">Install on Linux</a>, and <a href="#environments">Environments</a>.</li>
+<li>The basics of a route and a translation: <a href="#tutorial-first-route">Tutorial: your first route</a> and <a
+href="#tutorial-first-translation">Tutorial: your first translation</a>.</li>
+<li>For reference while you design: <a href="#routes">Routes</a>, <a href="#channels">Channels</a>, <a
+href="#partners">Partners and partner groups</a>, <a href="#translations">Translations</a>, <a
+href="#confirm-rules">Confirm rules</a>, <a href="#acknowledgements">Acknowledgements</a>, <a
+href="#counters">Counters</a>, <a href="#envelopes">Envelopes</a>.</li>
+</ul>
+<p>What you make on this page (documents for yourself, not files for Bots):</p>
+<div class="table-wrap"><table>
+<tr><th>Item</th><th>What it is</th><th>Made in</th></tr>
+<tr><td>Partner worksheet</td><td>Everything the partner told you: IDs, documents, connection, test and production details.</td><td><a href="#int-overview--part1">Part 1</a>, template in <a href="#int-overview--part9">Part 9</a></td></tr>
+<tr><td>Flow table</td><td>Each document with its direction, trigger, format and acknowledgement.</td><td><a href="#int-overview--part2">Part 2</a></td></tr>
+<tr><td>Object list</td><td>Every route, channel, grammar, mapping, translation, partner, group, confirm rule and counter setting, with its name.</td><td><a href="#int-overview--part3">Parts 3</a> to <a href="#int-overview--part7">7</a></td></tr>
+<tr><td>Onboarding checklist</td><td>The steps from first contact to go-live, with who does what.</td><td><a href="#int-overview--part10">Part 10</a></td></tr>
+</table></div>
+
+<h3 id="int-overview--part1">Part 1: Collect the partner's specification</h3>
+<p>Most partners have an <b>implementation guide</b>: a document that says which segments and elements of a
+standard message they send or want, with which codes. It is the most important input. Ask for it first, together with
+the rest of this list.</p>
+<ol class="steps">
+<li><b>Ask for the implementation guide</b> of every document (850, 855, 856, 810, 997). Note the standard
+(X12, EDIFACT, own XML or csv) and the version (for X12 the GS08, eg <code>004010</code>).</li>
+<li><b>Ask for sample files</b>: at least two real-looking files per document, one simple and one with many lines.
+Files beat documents: you test your grammar and mapping against them.</li>
+<li><b>Ask for the IDs.</b> For X12: the qualifier and ID in ISA05/ISA06 and ISA07/ISA08 (eg <code>ZZ</code> /
+<code>PARTNERA</code>), the IDs in GS02/GS03, and which IDs PartnerA expects from you. They can differ between test and
+production. For EDIFACT: the UNB sender and receiver with their qualifiers (eg a GLN with qualifier <code>14</code>).</li>
+<li><b>Ask for the connection details</b>: protocol (SFTP, FTP/FTPS, mail, http), host and port, user, how you log in
+(password or key; for a key, send them your public key), the folders for "to PartnerA" and "from PartnerA", the file
+names they use and want, whether you must delete files after reading, and the IP addresses they need to allow.</li>
+<li><b>Ask about acknowledgements and control numbers</b>: which 997s they send and expect, how fast, whether ISA14
+must be <code>1</code>, and whether interchange control numbers must run without gaps per partner.</li>
+<li><b>Ask about test and production</b>: is there a separate test system (other host, folder or IDs)? Must test
+files have ISA15 = <code>T</code>? Who approves the test, and how is go-live agreed?</li>
+<li><b>Ask about timing</b>: when orders come, cut-off times, how fast the 855 must follow, when invoices may be
+sent, and the contacts (technical and business) for problems.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>You have one file per document type from the partner, the
+IDs for test and production, and login details for the test connection. If one of these is missing, the build will
+stop at that point: ask again now.</p></div>
+
+<h3 id="int-overview--part2">Part 2: Draw the flow: documents and directions</h3>
+<p>List each document once, with where it comes from and where it goes. For the example:</p>
+<div class="table-wrap"><table>
+<tr><th>Document</th><th>Direction</th><th>From → to</th><th>Started by</th><th>Format in → out</th><th>Acknowledgement</th></tr>
+<tr><td>Order (850)</td><td>in</td><td>PartnerA SFTP → ERP folder</td><td>PartnerA puts a file</td><td>X12 850 004010 → csv <code>orders_erp</code></td><td>you send a 997</td></tr>
+<tr><td>997 for 855/856/810</td><td>in</td><td>PartnerA SFTP → Bots only</td><td>PartnerA puts a file</td><td>X12 997 → (marks the sent file confirmed)</td><td>none</td></tr>
+<tr><td>Order response (855)</td><td>out</td><td>ERP folder → PartnerA SFTP</td><td>ERP writes a csv</td><td>csv <code>ordrsp_erp</code> → X12 855</td><td>you expect a 997</td></tr>
+<tr><td>Ship notice (856)</td><td>out</td><td>ERP folder → PartnerA SFTP</td><td>ERP writes a csv</td><td>csv <code>asn_erp</code> → X12 856</td><td>you expect a 997</td></tr>
+<tr><td>Invoice (810)</td><td>out</td><td>ERP folder → PartnerA SFTP</td><td>ERP writes a csv</td><td>csv <code>invoices_erp</code> → X12 810</td><td>you expect a 997</td></tr>
+<tr><td>997 for 850</td><td>out</td><td>Bots → PartnerA SFTP</td><td>Bots, after reading an 850</td><td>made by Bots (<code>997004010</code>)</td><td>none</td></tr>
+</table></div>
+<p>Two questions decide much of the design:</p>
+<ul>
+<li><b>Do several documents share one connection or folder?</b> Here PartnerA puts 850s and 997s in the same folder.
+Then one incoming channel and one route receive both, and the translations decide what happens per document type.</li>
+<li><b>What starts each flow?</b> A partner's file (receive on a schedule), a file of your own system (schedule or
+<a href="#scheduling--howto-dirmonitor">directory monitor</a>), or a time (a route run at a fixed time).</li>
+</ul>
+
+<h3 id="int-overview--part3">Part 3: Choose the channels</h3>
+<p>A <a href="#channels">channel</a> is one way in or out. Often the partner chooses the protocol; you choose how
+Bots talks to your own systems. The channel types of Bots 4:</p>
+<div class="table-wrap"><table>
+<tr><th>Type</th><th>Use it for</th><th>Think about</th><th>Page</th></tr>
+<tr><td><code>file</code></td><td>Folders of your own systems (ERP import and export), shares, and folders that another tool fills.</td><td>The other program must not read a half-written file: use <span class="ui">Tmp-part file name</span>. Can start a route at once with the directory monitor.</td><td><a href="#channel-file">File channels</a></td></tr>
+<tr><td><code>sftp</code></td><td>The usual partner connection: encrypted, key or password.</td><td>Key file and passphrase, host key check, folder rights, whether you may delete after reading.</td><td><a href="#channel-sftp">SFTP channels</a></td></tr>
+<tr><td><code>ftp</code>, <code>ftps</code>, <code>ftpis</code></td><td>Partners or service providers that offer FTP; FTPS when it must be encrypted.</td><td>Passive or active mode, binary mode for EDI, certificates for FTPS.</td><td><a href="#channel-ftp">FTP and FTPS channels</a></td></tr>
+<tr><td><code>pop3</code>, <code>imap4</code> (and their TLS forms) in; <code>smtp</code>, <code>smtps</code>, <code>smtpstarttls</code> out</td><td>Small partners that mail their files; sending documents by mail.</td><td>Sender addresses must belong to a partner (or the check is switched off); attachment names; size limits of mail servers.</td><td><a href="#channel-mail">Mail channels</a></td></tr>
+<tr><td><code>db</code></td><td>Reading orders from, or writing them to, a database table of your own system.</td><td>Which rows are new, and how they are marked as read; a script that reads and writes the rows.</td><td><a href="#channel-database">Database channels</a></td></tr>
+<tr><td><code>http</code>, <code>https</code></td><td>Posting files to, or getting files from, a web address.</td><td>Authentication, certificates, what the other side answers.</td><td><a href="#channel-other--http">Other channel types</a></td></tr>
+<tr><td><code>communicationscript</code></td><td>Anything else: your own Python code fetches or delivers the files.</td><td>You maintain that code; test it in a test environment.</td><td><a href="#channel-other--communicationscript">Other channel types</a></td></tr>
+<tr><td><code>trash</code></td><td>Results that must not go anywhere (so they do not end as "stuck").</td><td>-</td><td><a href="#channel-other--trash">Other channel types</a></td></tr>
+</table></div>
+<p>For the example you need these channels:</p>
+<div class="table-wrap"><table>
+<tr><th>Channel</th><th>In/out</th><th>Type</th><th>Where</th></tr>
+<tr><td><code>partnera_sftp_in</code></td><td>in</td><td>sftp</td><td><code>sftp.example.net</code>, folder <code>out</code> (PartnerA's out is your in), file name <code>*.x12</code>, <span class="ui">Remove</span> ticked</td></tr>
+<tr><td><code>partnera_sftp_out</code></td><td>out</td><td>sftp</td><td><code>sftp.example.net</code>, folder <code>in</code>, file name as PartnerA wants it, eg <code>{messagetype}_{datetime:%Y%m%d%H%M%S}_*.x12</code></td></tr>
+<tr><td><code>erp_orders_out</code></td><td>out</td><td>file</td><td>the ERP import folder, eg <code>/srv/edi/erp/orders_in</code>, <span class="ui">Tmp-part file name</span> <code>.tmp</code></td></tr>
+<tr><td><code>erp_ordrsp_in</code>, <code>erp_asn_in</code>, <code>erp_invoices_in</code></td><td>in</td><td>file</td><td>the three ERP export folders, <span class="ui">Remove</span> ticked</td></tr>
+</table></div>
+<div class="note tip"><span class="label">Tip</span><p>Give every channel to a partner an <span class="ui">Archive
+path</span> from the start. When a partner asks "what exactly did you send us on the 3rd?", the archive answers it,
+also after the history of the web interface is cleaned up. See <a href="#channels--archive">Archive</a>.</p></div>
+
+<h3 id="int-overview--part4">Part 4: Split the work into routes</h3>
+<p>A <a href="#routes">route</a> takes files from one or more incoming channels, translates them and gives the
+results to outgoing channels. Rules of thumb that keep routes easy to run and to fix:</p>
+<ol>
+<li><b>One route per incoming connection, not per document.</b> An incoming channel with <span class="ui">Remove</span>
+ticked gives its files to the first route that runs it; a second route on the same channel finds nothing. When
+PartnerA puts 850s and 997s in one folder, one route receives both and the translations handle each type.</li>
+<li><b>One route per export of your own system.</b> Each ERP export folder gets its own route
+(<code>ordrsp_out</code>, <code>asn_out</code>, <code>invoices_out</code>). You can then run, stop or re-run one flow
+without touching the others.</li>
+<li><b>Route parts for the results.</b> Inside a route, extra parts with filters send each result to its channel: the
+ERP csv to the ERP folder, the 997 back to the partner. See <a href="#acknowledgements--howto-997">How to send 997s
+for received orders</a>.</li>
+<li><b>Per-partner parts for sending.</b> When the same document goes to several partners over different channels,
+add a sending part per partner with <span class="ui">Topartner tochannel</span>, or per group. See <a
+href="#routes--howto-partners">How to send to a different channel per partner</a>.</li>
+<li><b>Order by name.</b> Routes run in name order. Name them so that dependent flows run in the right order, or name
+them on the command line.</li>
+</ol>
+<p>The routes of the example:</p>
+<div class="table-wrap"><table>
+<tr><th>Route, part</th><th>Incoming channel</th><th>From editype / messagetype</th><th>Translate</th><th>Outgoing channel and filter</th></tr>
+<tr><td><code>orders_in</code> 1</td><td><code>partnera_sftp_in</code></td><td><code>x12</code> / <code>x12</code></td><td>Translate</td><td><code>erp_orders_out</code>, Toeditype <code>csv</code></td></tr>
+<tr><td><code>orders_in</code> 2</td><td>-</td><td>-</td><td>Nothing</td><td><code>partnera_sftp_out</code>, Toeditype <code>x12</code>, Tomessagetype <code>997004010</code></td></tr>
+<tr><td><code>ordrsp_out</code> 1</td><td><code>erp_ordrsp_in</code></td><td><code>csv</code> / <code>ordrsp_erp</code></td><td>Translate</td><td><code>partnera_sftp_out</code></td></tr>
+<tr><td><code>asn_out</code> 1</td><td><code>erp_asn_in</code></td><td><code>csv</code> / <code>asn_erp</code></td><td>Translate</td><td><code>partnera_sftp_out</code></td></tr>
+<tr><td><code>invoices_out</code> 1</td><td><code>erp_invoices_in</code></td><td><code>csv</code> / <code>invoices_erp</code></td><td>Translate</td><td><code>partnera_sftp_out</code></td></tr>
+</table></div>
+<div class="note warn"><span class="label">Watch out</span><p>A 997 that PartnerA sends comes in through
+<code>orders_in</code> as well. Without a translation for <code>x12</code> / <code>997004010</code> it fails with
+<em>Translation not found for editype "x12", messagetype "997004010", …</em>. Plan the translation for incoming 997s
+(Part 5), or ask PartnerA to use another folder and give it its own route <code>acks_in</code>.</p></div>
+
+<h3 id="int-overview--part5">Part 5: Grammars, mappings and translations</h3>
+<p>A <a href="#grammars">grammar</a> describes one file format, a <a href="#mappings">mapping</a> moves data from one
+format to another, and a <a href="#translations">translation</a> rule tells Bots which mapping to use for which
+incoming message. List them per document:</p>
+<div class="table-wrap"><table>
+<tr><th>From (editype / messagetype)</th><th>Mapping</th><th>To (editype / messagetype)</th><th>Grammar files you need</th></tr>
+<tr><td><code>x12</code> / <code>850004010</code></td><td><code>orders_x12_to_csv</code></td><td><code>csv</code> / <code>orders_erp</code></td><td><code>grammars/x12/850004010.py</code>, <code>grammars/csv/orders_erp.py</code></td></tr>
+<tr><td><code>x12</code> / <code>997004010</code></td><td><code>acks_997_in</code></td><td>any (the mapping discards the output)</td><td><code>grammars/x12/997004010.py</code></td></tr>
+<tr><td><code>csv</code> / <code>ordrsp_erp</code></td><td><code>ordrsp_csv_to_x12</code></td><td><code>x12</code> / <code>855004010</code></td><td><code>grammars/csv/ordrsp_erp.py</code>, <code>grammars/x12/855004010.py</code></td></tr>
+<tr><td><code>csv</code> / <code>asn_erp</code></td><td><code>asn_csv_to_x12</code></td><td><code>x12</code> / <code>856004010</code></td><td><code>grammars/csv/asn_erp.py</code>, <code>grammars/x12/856004010.py</code></td></tr>
+<tr><td><code>csv</code> / <code>invoices_erp</code></td><td><code>invoices_csv_to_x12</code></td><td><code>x12</code> / <code>810004010</code></td><td><code>grammars/csv/invoices_erp.py</code>, <code>grammars/x12/810004010.py</code></td></tr>
+</table></div>
+<ul>
+<li><b>Standard grammars</b> (X12, EDIFACT) you do not write: install the grammar files of the version you need. The
+envelope grammar <code>grammars/x12/x12.py</code> sets your defaults for ISA and GS. See <a
+href="#editype-x12">X12</a>.</li>
+<li><b>Own formats</b> (your ERP csv, fixed, XML or JSON): you write the grammar from the specification of your
+system. See <a href="#editype-csv-fixed">CSV and fixed files</a> and <a href="#editype-xml-json">XML and
+JSON</a>.</li>
+<li><b>The implementation guide decides the mapping.</b> Go through it segment by segment and write next to each
+element where the value comes from (a field of your file, a fixed value, a <a href="#code-lists">code list</a>, a
+<a href="#counters">counter</a>). That list is the specification of your mapping.</li>
+<li><b>The 997 for received orders</b> needs no mapping of your own: Bots makes it (see <a
+href="#acknowledgements">Acknowledgements</a>).</li>
+</ul>
+
+<h3 id="int-overview--part6">Part 6: Partners, groups, confirm rules and counters</h3>
+<div class="table-wrap"><table>
+<tr><th>Object</th><th>For the example</th><th>Why</th></tr>
+<tr><td>Partner <code>MYCOMPANY</code></td><td>Your own ID as it is in the files.</td><td>Translations, route filters and mail can depend on it.</td></tr>
+<tr><td>Partner <code>PARTNERA</code></td><td>Exactly the ID in ISA06 of PartnerA's files (Bots takes the partners of an X12 file from ISA06/ISA08).</td><td>Partner-specific translations, route filters, confirm rules. Bots compares the text as it is.</td></tr>
+<tr><td>Partner group <code>Retailers</code></td><td>PartnerA is a member.</td><td>A translation or route filter for the group serves the next retailer too.</td></tr>
+<tr><td>Partner syntax <code>usersys/partners/x12/PARTNERA.py</code></td><td>ISA05/ISA07 qualifiers, ISA15 <code>T</code> during the test.</td><td>Envelope values for this partner only; see <a href="#partners--howto-syntax">How to give one partner other envelope settings</a>.</td></tr>
+<tr><td>Confirm rule <code>send-x12-997</code></td><td>Rule type <span class="ui">Route</span>, route <code>orders_in</code>.</td><td>Bots makes a 997 for every order file of this route.</td></tr>
+<tr><td>Confirm rules <code>ask-x12-997</code></td><td>Rule type <span class="ui">Route</span> for <code>ordrsp_out</code>, <code>asn_out</code> and <code>invoices_out</code> (three rules).</td><td>The sent interchanges are listed as waiting for a 997 until the 997 comes.</td></tr>
+<tr><td>Counters</td><td>Decide before the first production file: one interchange counter per sender (default) or per sender and receiver (<code>interchangecontrolperpartner = True</code>).</td><td>Partners that check for gaps in ISA13 want their own sequence. See <a href="#counters">Counters</a>.</td></tr>
+</table></div>
+<div class="note warn"><span class="label">Watch out</span><p>The rules for sending a 997 compare partners with GS02 and
+GS03 of the received group, not with ISA06/ISA08. When PartnerA uses other IDs in GS than in ISA, a rule of type
+<span class="ui">Frompartner</span> does not match. Use rule type <span class="ui">Route</span> or <span
+class="ui">Channel</span>, as in the table.</p></div>
+
+<h3 id="int-overview--part7">Part 7: Name everything</h3>
+<p>Names in Bots are the keys you search on in the reports, in the logs and in the files of <code>usersys</code>. A
+fixed scheme saves time every day. Idroute, idchannel and partner IDs can be at most 35 characters long.</p>
+<div class="table-wrap"><table>
+<tr><th>Thing</th><th>Scheme</th><th>Examples</th><th>Why</th></tr>
+<tr><td>Partner ID</td><td>The ID as it is in the envelope of the partner's files.</td><td><code>PARTNERA</code>, <code>5412345000013</code></td><td>Bots matches it as text with the files.</td></tr>
+<tr><td>Partner group</td><td>What the members have in common.</td><td><code>Retailers</code></td><td>Readable in translations and filters.</td></tr>
+<tr><td>Channel</td><td><code>&lt;who&gt;_&lt;how&gt;_&lt;in|out&gt;</code>; for your own systems <code>&lt;system&gt;_&lt;document&gt;_&lt;in|out&gt;</code>.</td><td><code>partnera_sftp_in</code>, <code>erp_invoices_in</code></td><td>The name is also the name of its communication script and of its file name counter.</td></tr>
+<tr><td>Route</td><td><code>&lt;document&gt;_&lt;in|out&gt;</code>; with many partners on separate connections <code>&lt;partner&gt;_&lt;document&gt;_&lt;in|out&gt;</code>.</td><td><code>orders_in</code>, <code>invoices_out</code></td><td>The name is also the name of its route script, and routes run in name order.</td></tr>
+<tr><td>Own grammar</td><td><code>&lt;document&gt;_&lt;system&gt;</code></td><td><code>orders_erp</code>, <code>invoices_erp</code></td><td>Says what and whose.</td></tr>
+<tr><td>Standard grammar</td><td>As Bots finds it: message + version.</td><td><code>850004010</code>, <code>ORDERSD96AUNEAN008</code></td><td>Bots looks for exactly this name.</td></tr>
+<tr><td>Mapping</td><td><code>&lt;document&gt;_&lt;from&gt;_to_&lt;to&gt;</code>; for one partner add the partner, or use a sub-folder.</td><td><code>orders_x12_to_csv</code>, <code>orders_x12_to_csv_partnera</code></td><td>The reports show the mapping name per file.</td></tr>
+<tr><td>Outgoing file names</td><td>Contain the type and a unique part.</td><td><code>{messagetype}_{datetime:%Y%m%d%H%M%S}_*.x12</code></td><td>No two files get the same name, and the partner sees what each file is.</td></tr>
+</table></div>
+<div class="note tip"><span class="label">Tip</span><p>Use lower case and <code>_</code> only for routes, channels,
+mappings and own grammars: they become Python file names (route scripts, communication scripts, mappings).</p></div>
+
+<h3 id="int-overview--part8">Part 8: One partner or many</h3>
+<p>The second partner with the same documents is where a design shows its quality. Plan for it from the first
+partner:</p>
+<ul>
+<li><b>Translations:</b> make the general rule without partners, for the standard way. Add a rule for a partner (or a
+group) only where a partner really differs, eg <code>orders_x12_to_csv_partnerb</code> for PartnerB. See <a
+href="#translations--howto-partner">How to use another mapping for one partner or a group</a>.</li>
+<li><b>Mappings:</b> put the differences in data, not in code, where you can: a <a href="#code-lists">code list</a>
+per partner, or the free fields <code>attr1</code>…<code>attr5</code> of the partner read with
+<code>transform.partnerlookup()</code>.</li>
+<li><b>Incoming:</b> every partner with its own server or folder gets its own incoming channel. Either one route per
+partner (<code>partnera_orders_in</code>, <code>partnerb_orders_in</code>), which you can stop one by one, or one
+route with a receiving part per channel (see <a href="#routes--howto-multi">How to receive from several places in one
+route</a>).</li>
+<li><b>Outgoing:</b> one route per document, with a sending part per partner channel and the filter <span
+class="ui">Topartner tochannel</span>, or one part per group when all members use the same channel.</li>
+<li><b>Envelopes:</b> one partner syntax file per partner that needs other qualifiers or a test indicator.</li>
+<li><b>Counters:</b> with many partners that check control numbers, switch on <code>interchangecontrolperpartner</code>
+before the second partner goes live.</li>
+</ul>
+
+<h3 id="int-overview--part9">Part 9: The design worksheet</h3>
+<p>Copy this worksheet for every partner and fill it in during the first talks. The second column shows the example.</p>
+<div class="table-wrap"><table>
+<tr><th>Topic</th><th>Example (PartnerA)</th><th>Your partner</th></tr>
+<tr><td>Partner name, role</td><td>PartnerA, retailer (customer)</td><td></td></tr>
+<tr><td>Contacts: business, technical, out of hours</td><td>names, mail, phone</td><td></td></tr>
+<tr><td>Standard and version</td><td>X12 004010</td><td></td></tr>
+<tr><td>Partner IDs, test / production</td><td>ISA <code>ZZ</code> / <code>PARTNERA</code>, GS <code>PARTNERA</code>; same in production</td><td></td></tr>
+<tr><td>Our IDs, test / production</td><td>ISA <code>ZZ</code> / <code>MYCOMPANY</code>, GS <code>MYCOMPANY</code></td><td></td></tr>
+<tr><td>Documents in</td><td>850, 997</td><td></td></tr>
+<tr><td>Documents out</td><td>855, 856, 810, 997</td><td></td></tr>
+<tr><td>Implementation guides and samples received</td><td>yes, per document</td><td></td></tr>
+<tr><td>Connection, test</td><td>SFTP <code>sftp.example.net</code> port 22, user <code>mycompany</code>, key; folders <code>test/out</code>, <code>test/in</code></td><td></td></tr>
+<tr><td>Connection, production</td><td>same host; folders <code>out</code>, <code>in</code></td><td></td></tr>
+<tr><td>File names in / out</td><td>any <code>*.x12</code> / <code>&lt;type&gt;_&lt;timestamp&gt;_&lt;n&gt;.x12</code></td><td></td></tr>
+<tr><td>Delete after reading</td><td>yes</td><td></td></tr>
+<tr><td>Acknowledgements</td><td>997 both ways, within 1 hour; ISA14 <code>0</code></td><td></td></tr>
+<tr><td>Control numbers</td><td>per partner, no gaps</td><td></td></tr>
+<tr><td>Test indicator</td><td>ISA15 <code>T</code> in test, <code>P</code> in production</td><td></td></tr>
+<tr><td>Timing</td><td>orders all day; 855 within 24 hours; invoices after shipping</td><td></td></tr>
+<tr><td>Bots routes</td><td><code>orders_in</code>, <code>ordrsp_out</code>, <code>asn_out</code>, <code>invoices_out</code></td><td></td></tr>
+<tr><td>Bots channels</td><td><code>partnera_sftp_in</code>, <code>partnera_sftp_out</code>, <code>erp_orders_out</code>, <code>erp_ordrsp_in</code>, <code>erp_asn_in</code>, <code>erp_invoices_in</code></td><td></td></tr>
+<tr><td>Translations</td><td>5 (see Part 5)</td><td></td></tr>
+<tr><td>Partner records, group</td><td><code>MYCOMPANY</code>, <code>PARTNERA</code>; group <code>Retailers</code></td><td></td></tr>
+<tr><td>Confirm rules</td><td>send 997 for <code>orders_in</code>; ask 997 for the three outgoing routes</td><td></td></tr>
+<tr><td>Schedule</td><td>receive every 5 minutes; ERP exports by directory monitor</td><td></td></tr>
+<tr><td>Test plan, go-live date</td><td>test exchange week 1, acceptance week 2, go-live after sign-off</td><td></td></tr>
+</table></div>
+<p>The same as plain text, to paste into a ticket or a mail:</p>
+<pre><code class="language-text">PARTNER WORKSHEET
+Partner name / role .......:
+Contacts (business/tech) ..:
+Standard and version ......:
+Partner IDs (test / prod) .:  ISA qual/ID:            GS:
+Our IDs (test / prod) .....:  ISA qual/ID:            GS:
+Documents in ..............:
+Documents out .............:
+Guides + samples received .:
+Connection test ...........:  protocol, host, port, user, key/password, folders
+Connection production .....:
+File names in / out .......:
+Delete after reading ......:
+Acknowledgements ..........:  which, both ways?, how fast, ISA14
+Control numbers ...........:  per partner? gaps allowed?
+Test indicator ............:
+Timing / cut-off ..........:
+Bots routes ...............:
+Bots channels .............:
+Translations ..............:
+Partners / groups .........:
+Confirm rules .............:
+Schedule ..................:
+Test plan / go-live date ..:
+</code></pre>
+
+<h3 id="int-overview--part10">Part 10: The partner onboarding checklist</h3>
+<ol class="steps">
+<li><b>Kick-off.</b> Agree the documents, the dates and the contacts. Send the worksheet back to the partner to
+confirm the IDs and the connection.</li>
+<li><b>Build in the test environment.</b> Grammars, mappings, translations, partners, channels to the partner's test
+system, routes, confirm rules (see <a href="#acceptance-testing--howto-setup">How to set up a test environment</a>).
+Set ISA15 to <code>T</code> for this partner.</li>
+<li><b>Test the connection.</b> Run only the incoming route by name (<code>bots-engine orders_in</code>) with an empty
+folder: no process error means the login works. Put one test file on the partner's side and receive it.</li>
+<li><b>Test every inbound document</b> with the partner's samples: all translate, the ERP accepts the csv, the 997
+leaves. Look at the output with the partner's guide next to it.</li>
+<li><b>Test every outbound document</b> from real ERP exports. Send them to the partner's test system and ask them to
+check them; collect their findings and their 997s (they must show as confirmed in <span class="ui">All runs</span> →
+<span class="ui">Confirmations</span>).</li>
+<li><b>Test the unhappy cases</b>: a file with an error (a 997 with <code>R</code>, an error mail to you), a file
+twice, a large file, an order with many lines.</li>
+<li><b>Freeze the test set.</b> Keep the inputs and the accepted outputs for <a href="#acceptance-testing">acceptance
+tests</a>, so every later change can be checked against them.</li>
+<li><b>Get the sign-off</b> from the partner in writing, with the go-live date and the first production
+document.</li>
+<li><b>Prepare production.</b> Move the configuration (see <a href="#int-going-live--part10">Changes without
+downtime</a>), set the production connection and IDs, ISA15 <code>P</code>, check the interchange counters, set the
+schedule and the monitoring.</li>
+<li><b>Go live and watch.</b> Check the first files of each document in production by hand, with the partner, and
+look at the reports several times a day for the first week.</li>
+</ol>
+
+<h3 id="int-overview--run">Run it end to end</h3>
+<p>The order in which a design becomes a working integration, with the page that shows each step in full:</p>
+<ol>
+<li>Fill the worksheet (Part 9) and the flow table (Part 2).</li>
+<li>Write and check the grammars: <a href="#grammars">Grammars</a>, <code>bots-grammarcheck</code>.</li>
+<li>Write the mappings with the guide next to you: <a href="#mappings">Mappings</a>, <a href="#mapping-recipes">Mapping
+recipes</a>.</li>
+<li>Enter partners, group, channels, translations, routes and confirm rules in the test environment.</li>
+<li>Run each sample file through and compare the output with the guide.</li>
+<li>Work through the onboarding checklist (Part 10) with the partner.</li>
+<li>Make it production-ready: <a href="#int-going-live">Running integrations in production</a>.</li>
+</ol>
+<p>Worked examples in this manual, each a complete integration built on such a design:</p>
+<ul>
+<li><a href="#int-orders-in">int-orders-in</a>: receiving orders from a partner into your own system.</li>
+<li><a href="#int-orders-out">int-orders-out</a>: sending documents from your own system to a partner.</li>
+<li><a href="#int-logistics">int-logistics</a>: the exchange with a logistics partner.</li>
+<li><a href="#int-xml-hub">int-xml-hub</a>: several partners and formats through one XML format.</li>
+</ul>
+<p>This page was checked against Bots 4.0.0.</p>
+
+<h3 id="int-overview--variations">Variations</h3>
+<ul>
+<li><b>EDIFACT instead of X12.</b> The same design with ORDERS, ORDRSP, DESADV and INVOIC, CONTRL instead of 997
+(<code>send-edifact-CONTRL</code>, <code>ask-edifact-CONTRL</code>), and the UNB IDs in the partner records.</li>
+<li><b>A service provider (VAN) in between.</b> One connection carries the files of many partners. Use one incoming
+route for the provider's connection; the partners come from the envelopes, and per-partner differences go into
+translations and partner syntax files.</li>
+<li><b>Your system reads and writes a database.</b> Replace the ERP file channels with <code>db</code> channels (see <a
+href="#channel-database">Database channels</a>); the rest of the design stays.</li>
+<li><b>Orders by mail from small customers.</b> A <code>pop3</code> or <code>imap4</code> channel with one route; each
+customer is a partner with its mail address, so Bots knows who sent the file.</li>
+<li><b>Two outputs from one order</b> (the ERP file and a mail to sales): a chained translation, see <a
+href="#translations--howto-chain">How to make two outputs from one message</a>.</li>
+</ul>
+
+<h3 id="int-overview--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><em>Translation not found for editype "x12", messagetype "997004010", frompartner "PARTNERA", topartner "MYCOMPANY", alt "".</em></td><td>The partner's 997s come in through the same channel as the orders, and the design has no translation for them.</td><td>Add the translation for incoming 997s (Part 5), or ask the partner for a separate folder and give it its own route.</td></tr>
+<tr><td><em>Translation not found …</em> with a frompartner that looks right</td><td>The partner ID in Bots differs from the ID in the file (spaces, upper/lower case, the GS ID instead of the ISA ID).</td><td>Open the file in <span class="ui">Incoming</span>, read the frompartner Bots found, and use exactly that as partner ID.</td></tr>
+<tr><td>A second route on the same incoming channel never receives anything</td><td>The first route (in name order) takes all files and removes them.</td><td>One route per incoming connection (Part 4); separate documents with translations or with file name masks.</td></tr>
+<tr><td>No 997 is made for PartnerA's orders</td><td>The confirm rule uses <span class="ui">Frompartner</span> with the ISA ID, but the rule is compared with GS02/GS03.</td><td>Use rule type <span class="ui">Route</span> or <span class="ui">Channel</span>, or the GS ID (Part 6).</td></tr>
+<tr><td>Results have status <span class="ui">Stuck</span>; the report says "files got stuck"</td><td>A result (eg the 997, or a document for a new partner) matches no outgoing part of the route.</td><td>Check the filters of each part against the flow table; add a sending part. See <a href="#routes">Routes</a>.</td></tr>
+<tr><td><em>Ensure this value has at most 35 characters</em> when you save a route, channel or partner</td><td>The name is too long.</td><td>Use the short naming scheme of Part 7.</td></tr>
+<tr><td>The partner rejects test files: wrong qualifier or ID in ISA</td><td>The defaults of <code>x12.py</code> are used for this partner.</td><td>Make <code>usersys/partners/x12/PARTNERA.py</code> with the qualifiers the partner wants (Part 6).</td></tr>
+<tr><td>The partner's production system received test files</td><td>The test environment had a channel to the production folder, or ISA15 was <code>P</code> during the test.</td><td>Use separate test channels or test paths; set ISA15 <code>T</code> for the test (Part 10). Tell the partner which files to ignore.</td></tr>
+<tr><td>The partner reports gaps in the interchange control numbers</td><td>One counter per sender is shared by all partners.</td><td>Decide on <code>interchangecontrolperpartner</code> before go-live (Part 6, <a href="#counters">Counters</a>).</td></tr>
+<tr><td>The second partner needs a copy of every route</td><td>The routes were built per partner without need.</td><td>Use one route per document with per-partner sending parts and group translations (Part 8).</td></tr>
+</table></div>
+</section>
+
+
+<section id="int-going-live" data-title="Running integrations in production" data-group="Integration tutorials">
+<h2>Running integrations in production</h2>
+<p class="lead">An integration that works in a test is not yet ready for production. It is ready when errors reach a
+person, failed sending is retried, a dead partner connection is noticed before the partner's server locks your
+account, changes can be tested before they go live, and the daily checks take five minutes. This page shows how to get
+there with the tools of Bots 4, with the results of real test runs.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>In production something always goes wrong
+sooner or later: a partner sends a bad file, a server is down, a password expires. A good set-up tells you at once,
+repairs what it can by itself (sending again later), and lets you repair the rest without losing or doubling
+documents. This page is the list of things to set up for that, and what to look at every day.</p></div>
+
+<h3 id="int-going-live--build">What you will build</h3>
+<p>A production environment that is watched and that can be changed safely:</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Changes are tested in a test environment, moved to production, and production is watched by error mails, a health check and daily checks">
+<defs><marker id="arrow-intgolive-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">1. Test environment</text><text class="small" x="120" y="86" text-anchor="middle">every change tested first</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-intgolive-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">2. Production</text><text class="small" x="380" y="86" text-anchor="middle">scheduled, retries, cleanup</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-intgolive-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">3. Watch</text><text class="small" x="640" y="86" text-anchor="middle">error mails, health check, checklist</text>
+</svg></div>
+<p>You also practise the common failures once, in the test environment, so you know what they look like before they
+happen in production (<a href="#int-going-live--run">Run it end to end</a>).</p>
+
+<h3 id="int-going-live--need">What you need</h3>
+<ul>
+<li>A working integration in a test environment, designed as in <a href="#int-overview">Planning an
+integration</a>.</li>
+<li>For the practice runs: the grammars and the mapping of <a href="#tutorial-first-translation">Tutorial: your first
+translation</a> (csv orders to X12 850, partner <code>PARTNERB</code>).</li>
+<li>Background: <a href="#scheduling">Scheduling runs</a>, <a href="#acceptance-testing">Acceptance testing</a>, <a
+href="#maintenance">Maintenance</a>, <a href="#web-reports">Reports and documents</a>, <a href="#settings-py">settings.py</a>.</li>
+</ul>
+<div class="table-wrap"><table>
+<tr><th>File</th><th>What you change or make</th><th>Part</th></tr>
+<tr><td><code>config/bots.ini</code> (production)</td><td><code>sendreportiferror</code>, <code>maxconnectiontries</code>, <code>maxdays</code>, <code>[jobqueue]</code></td><td>2, 4, 7, 8</td></tr>
+<tr><td><code>config/settings.py</code> (production)</td><td>receivers and mail server of the error mails</td><td>2</td></tr>
+<tr><td><code>config/bots.ini</code> (test)</td><td>own ports, <code>environment_text = TEST</code>, <code>channels_use_testpath</code></td><td>5</td></tr>
+<tr><td>crontab or Task Scheduler</td><td>runs for new files, retries, health check</td><td>7, 9</td></tr>
+<tr><td><code>bots_healthcheck.py</code> (outside usersys, eg <code>/srv/bots/scripts/</code>)</td><td>a check for a scheduler or monitoring tool</td><td>9</td></tr>
+<tr><td>Practice configuration (test environment only)</td><td>channels <code>erp_orders_in</code>, <code>partnerb_ftp_out</code>, <code>partnerb_ftp_in</code>, <code>local_acks_out</code>; routes <code>orders_out</code>, <code>acks_in</code></td><td>Run it end to end</td></tr>
+</table></div>
+
+<h3 id="int-going-live--part1">Part 1: What happens to a bad file</h3>
+<p>Bots does not drop a file without a trace. Every received file gets a line in <span class="ui">Incoming</span> with its
+status; what happens next depends on where it fails:</p>
+<div class="table-wrap"><table>
+<tr><th>Where it fails</th><th>What Bots does</th><th>Your action</th></tr>
+<tr><td>The file can not be read with the grammar (wrong format, a mandatory field missing)</td><td>The whole file is in error; nothing of it is translated. For X12 a 997 with <code>R</code> (rejected) is made when a confirm rule asks for one and Bots could read the envelope.</td><td>Read the error, ask the partner for a corrected file, or fix your grammar and rereceive.</td></tr>
+<tr><td>One message fails in the mapping or when it is written</td><td>That message is in error; the <b>other messages of the same file are translated and sent</b>. The file shows status error.</td><td>Fix the cause. Then send only the failed message again (see the warning below).</td></tr>
+<tr><td>The mapping raises <code>transform.KillWholeFileException</code>, or the incoming grammar has <code>'KillWholeFile': True</code></td><td>One bad message makes the whole file fail; nothing of it is sent.</td><td>Use this where a partial delivery is worse than none.</td></tr>
+<tr><td>Sending fails (server down, login refused)</td><td>The outgoing file gets status error in <span class="ui">Outgoing</span>, and a process error is written.</td><td>See Part 3.</td></tr>
+<tr><td>The file is larger than <code>maxfilesizeincoming</code> (5 MB by default)</td><td>Error <em>File size of … is too big; option "maxfilesizeincoming" in bots.ini is 5000000.</em></td><td>Raise the setting in <code>bots.ini</code> if such files are normal.</td></tr>
+</table></div>
+<div class="note stop"><span class="label">Stop</span><p>A <b>rereceive</b> processes the whole file again. When some
+messages of the file were already sent, they are sent a second time. In the test run below, a file with orders
+<code>PO3001</code> (good) and <code>XPO3002</code> (bad) was rereceived: <code>PO3001</code> went out twice, in
+interchange 4 and in interchange 5. For such files, ask the sender for a file with only the failed message, or put
+only that message in a new file, instead of a rereceive. Or use <code>KillWholeFile</code> for that format, so a file
+is either sent completely or not at all.</p></div>
+<div class="note info"><span class="label">Check</span><p>The run with the mixed file ends with exit code 2 and this
+report in the engine log:</p>
+<pre><code class="language-text">Bots Report; type: new, time: 2026-10-15 21:07:06, duration: 0:00:00.613564
+    1 files received/processed in run.
+    1 files with errors,
+    1 files send in run.</code></pre>
+<p>The error of the file in <span class="ui">Incoming</span> ends with <em>"ValueError: test: bad order
+XPO3002"</em>, and the sent interchange holds only <code>BEG*00*SA*PO3001**20261018</code>.</p></div>
+
+<h3 id="int-going-live--part2">Part 2: Error report mails</h3>
+<p>After each run with a problem, Bots can mail a report to the managers in <code>settings.py</code>. It sends one
+when the run had files with errors, stuck files, system errors, or process errors (the last only when
+<code>sendreportifprocesserror</code> is <code>True</code>, the default). No mail is sent in acceptance tests.</p>
+<ol class="steps">
+<li><b>Switch the reports on</b> in <code>bots.ini</code>:
+<pre><code class="language-ini">[settings]
+sendreportiferror = True
+sendreportifprocesserror = True</code></pre></li>
+<li><b>Set the receivers and the mail server</b> in <code>settings.py</code>, as in <a
+href="#settings-py--howto-mail">How to get error reports by mail</a>. Send the reports to a shared mailbox of the
+team, not to one person; put the environment in the subject:
+<pre><code class="language-python">MANAGERS = (
+    ('EDI team', 'edi@mycompany.example'),
+)
+SERVER_EMAIL = 'edi@mycompany.example'
+EMAIL_SUBJECT_PREFIX = '[Bots production] '</code></pre></li>
+<li><b>Restart the web server</b> and test: <span class="ui">SysTasks</span> → <span class="ui">Send test
+report</span>.</li>
+</ol>
+<div class="note info"><span class="label">Check</span><p>The mail of the first practice run below:</p>
+<pre><code class="language-text">Subject: [Bots production] [Bots Error Report] 2026-10-15 21:03; 1 file errors; 1 process errors
+From: bots@mycompany.example
+To: edi@mycompany.example
+
+Bots Report; type: new, time: 2026-10-15 21:03:28, duration: 0:00:09.313757
+    1 files received/processed in run.
+    1 files with errors,
+    1 errors in processes.
+    0 files send in run.
+
+Process error:
+idroute: orders_out
+fromchannel:
+tochannel: partnerb_ftp_out
+errortext: ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it
+
+File error:
+idroute: orders_out
+frompartner: MYCOMPANY
+fromchannel: erp_orders_in
+topartner: PARTNERB
+tochannel: partnerb_ftp_out
+errortext:
+infilename: /srv/bots/env/test/botssys/infile/erp_orders/orders_good.csv</code></pre></div>
+<div class="note warn"><span class="label">Watch out</span><p>An error mail only comes from a run. When the scheduler
+stopped, the job queue server is down, or the machine is off, there are no runs and no mails: silence looks like
+"all well". Add the health check of Part 9.</p></div>
+<div class="note warn"><span class="label">Watch out</span><p>Checked with Django 6.1: when <code>settings.py</code>
+has <code>MAILERS</code>, Django refuses to start if the old names (<code>EMAIL_HOST</code>,
+<code>EMAIL_BACKEND</code> and the other <code>EMAIL_…</code> mail server settings) are set as well:
+<em>Deprecated email settings are not allowed when MAILERS is defined: EMAIL_HOST.</em> Then no program of Bots
+starts. Use one of the two forms, and check with <code>bots-engine</code> after a change of
+<code>settings.py</code>. <code>EMAIL_SUBJECT_PREFIX</code>, <code>SERVER_EMAIL</code> and <code>MANAGERS</code> are
+allowed with <code>MAILERS</code>.</p></div>
+
+<h3 id="int-going-live--part3">Part 3: When a connection fails: retries, resend and rereceive</h3>
+<p>Servers of partners are down now and then. Bots handles it in layers:</p>
+<ol>
+<li><b>Tries within a run.</b> An incoming channel tries to connect up to <code>maxconnectiontries</code> times (3 when
+the setting is missing). An outgoing channel tries as often as its <span class="ui">Max failures</span> field says, or
+else <code>maxconnectiontries</code>; with neither set it tries once.</li>
+<li><b>Failures of incoming channels over several runs.</b> With <span class="ui">Max failures</span> on an incoming
+channel (eg <code>3</code>), a failed connection is only logged (<em>Communication failure 1/3 …</em>) until it failed
+in that many runs in a row; then it becomes a process error and the count starts again. Without it, every failed run
+is a process error. The incoming files simply wait on the server for the next run.</li>
+<li><b>Outgoing files that could not be sent</b> get status <span class="ui">Error</span> in <span
+class="ui">Outgoing</span>. They are not lost: Bots keeps them and can send them again.</li>
+<li><b>Automatic retry.</b> A run with <code>--automaticretrycommunication</code> (or <span class="ui">Run</span> →
+<span class="ui">Retry failed out-communications</span>) sends again every outgoing file whose sending failed since
+the previous retry run. Schedule it, eg every hour.</li>
+<li><b>By hand.</b> <span class="ui">Resend</span> in <span class="ui">Outgoing</span> for one file, then <span
+class="ui">Run</span> → <span class="ui">Run user-indicated resends</span>; <span class="ui">Rereceive</span> in
+<span class="ui">Incoming</span> to process a received file again. See <a href="#web-interface--resend">How to send
+an outgoing file again</a> and <a href="#web-interface--rereceive">How to process an incoming file again</a>.</li>
+<li><b>Never again.</b> <span class="ui">No automatic retry</span> on an outgoing line in error: the retry leaves it
+alone (for a file the partner does not want any more).</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>The automatic retry first sets a starting point and sends
+nothing. In the test with Bots 4.0.0 the <b>first two</b> retry runs of a new environment only set that point; the
+third one sent. Files that failed before the starting point are never retried automatically: resend them by hand.
+Schedule the retry from the first day, and after go-live check once that a failed file is really sent again.</p></div>
+<div class="note info"><span class="label">Check</span><p>In the practice runs, the two outgoing files that failed after
+the starting point were sent by the next retry run once the server was back; the file that failed before it was
+not:</p>
+<pre><code class="language-text">Run all active routes from database: "['orders_out']".
+Bots Report; type: automaticretrycommunication, time: 2026-10-15 21:18:46, duration: 0:00:00.955909
+    2 files received/processed in run.
+    2 files without errors,
+    2 files send in run.</code></pre>
+<p>In <span class="ui">Outgoing</span> the failed line gets status <span class="ui">Resend</span>, and a new green line
+shows the file that was sent.</p></div>
+
+<h3 id="int-going-live--part4">Part 4: Partner logins that stop working</h3>
+<p>Passwords expire, keys are replaced, accounts are moved. Then every scheduled run tries to log in with the old
+details, and does so again and again:</p>
+<ul>
+<li>An incoming channel tries <code>maxconnectiontries</code> times per run: 3 by default. With a run every 5 minutes
+that is <b>36 failed logins per hour</b> from one channel. The practice run below shows the three tries of one
+run.</li>
+<li>Many servers lock an account after a few failed logins. When the partner then fixes the password, the account is
+locked and has to be unlocked as well; some servers also block the IP address.</li>
+<li><span class="ui">Max failures</span> does not reduce the tries: it only delays the process error. With
+<code>3</code> and a run every 5 minutes, a dead login shows as a process error once every 15 minutes.</li>
+</ul>
+<p>What to do:</p>
+<ol class="steps">
+<li><b>Lower the tries</b> in <code>bots.ini</code> of production, so one run makes one login attempt:
+<pre><code class="language-ini">[settings]
+maxconnectiontries = 1</code></pre>
+This applies to all incoming channels, and to outgoing channels without their own <span class="ui">Max
+failures</span>. A short outage is then handled by the next run, not by tries within the run.</li>
+<li><b>Read the process errors every day</b> (<span class="ui">All runs</span> → <span class="ui">Process
+Errors</span>). A login or authentication error that comes back in every run is a dead login, not an outage.</li>
+<li><b>Stop the route</b> that fails in every run: <span class="ui">Configuration</span> → <span
+class="ui">Routes</span>, open the route and tick <span class="ui">Not in default run</span> (Bots sets it on all
+parts of the route). Scheduled runs leave it out, but you can still run it by name to test. To stop it completely, tick
+its parts and use the action <span class="ui">activate/de-activate</span>.</li>
+<li><b>Stop the retries</b> of outgoing files to that server: they log in too. Set the waiting files to <span
+class="ui">No automatic retry</span>, and resend them by hand later.</li>
+<li><b>Contact the partner</b> with the error text and the time of the first failure; ask them to check whether the
+account is locked.</li>
+<li><b>Test once</b> when the partner reports the fix: <code>bots-engine -c/srv/bots/env/production/config
+orders_in</code>, then look at <span class="ui">Process Errors</span>. When it is clean, untick <span class="ui">Not in
+default run</span> and resend the files of step 4.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>A channel is used by every route that names it. Before you change a
+channel, look at its <span class="ui">Routes</span> column in <span class="ui">Configuration</span> → <span
+class="ui">Channels</span>.</p></div>
+
+<h3 id="int-going-live--part5">Part 5: A test environment next to production</h3>
+<p>Every change is tested before it reaches production. That needs a second environment on the same or another
+machine (see <a href="#environments">Environments</a>):</p>
+<ol class="steps">
+<li><b>Make the test environment</b> with its own folders and its own ports in <code>bots.ini</code>: <code>[settings]
+port</code>, <code>[webserver] port</code>, <code>[jobqueue] port</code>. Two environments with the same
+<code>[settings] port</code> block each other's runs.</li>
+<li><b>Make it look different</b>: <code>[webserver] environment_text = TEST</code> and
+<code>environment_text_color = #c00000</code> (see <a href="#web-interface--branding">How to brand an
+environment</a>), and <code>EMAIL_SUBJECT_PREFIX = '[Bots test] '</code> in its <code>settings.py</code>.</li>
+<li><b>Keep it away from partners.</b> Either connect its channels to the partners' test systems (other folders or
+hosts, ISA15 <code>T</code>), or set <code>[settings] channels_use_testpath = True</code> and give every channel an
+<span class="ui">Acceptance test path</span>: then it reads and writes local folders only, and a remote channel without
+a test path is not run.</li>
+<li><b>Keep a regression set</b>: the accepted inputs and outputs of each integration. Run them as an <a
+href="#acceptance-testing">acceptance test</a> (<code>runacceptancetest = True</code>: frozen clock and counters, so
+the output can be compared byte for byte) after every change of a grammar or mapping.</li>
+</ol>
+<div class="note stop"><span class="label">Stop</span><p>A test environment that sends to a partner's production system
+with your production IDs uses its own counters. The partner then gets control numbers that production will use again
+later. Never let a test environment reach production systems of partners.</p></div>
+
+<h3 id="int-going-live--part6">Part 6: Counters and control numbers when you move or restore</h3>
+<p>Partners check interchange control numbers (ISA13, UNB 0020) for gaps and duplicates. The numbers come from
+counters in the database (see <a href="#counters">Counters</a>), so anything that replaces the database touches
+them:</p>
+<ul>
+<li><b>Restore of a backup.</b> The counters go back to the time of the backup. The next files get numbers that were
+already sent. After a restore, before the first run: <span class="ui">SysTasks</span> → <span class="ui">View/edit
+counters</span>, find <code>isacounter_…</code> / <code>unbcounter_…</code> and set each above the last number sent
+(look it up in <span class="ui">Outgoing</span> → column <span class="ui">Reference</span> of the newest files, in the
+archive, or ask the partner).</li>
+<li><b>Moving to another machine or database.</b> Copy the table <code>uniek</code> with the rest; check the first
+interchange per partner in <span class="ui">Outgoing</span> after the move.</li>
+<li><b>Switching from another system</b> (or back): set the counters of the system that takes over to the last
+numbers of the other one before its first run; see Part 11.</li>
+<li><b>Changing <code>interchangecontrolperpartner</code></b> or your sender ID makes new counter names; set them to
+what the partners expect.</li>
+</ul>
+<div class="note warn"><span class="label">Watch out</span><p>Change counters only while no engine runs, and never lower
+an interchange counter that is in use.</p></div>
+
+<h3 id="int-going-live--part7">Part 7: Scheduling in production</h3>
+<p>See <a href="#scheduling">Scheduling runs</a> for all details. A production schedule usually has:</p>
+<div class="table-wrap"><table>
+<tr><th>What</th><th>How often</th><th>Command</th></tr>
+<tr><td>New files of all routes</td><td>every 5 to 15 minutes</td><td><code>bots-job2queue -p1 bots-engine --new -c…</code></td></tr>
+<tr><td>Retry of failed sending</td><td>every hour</td><td><code>bots-job2queue -p7 bots-engine --automaticretrycommunication -c…</code></td></tr>
+<tr><td>Routes with fixed times (eg invoices once a day)</td><td>at that time; route marked <span class="ui">Not in default run</span></td><td><code>bots-job2queue -p5 bots-engine invoices_out -c…</code></td></tr>
+<tr><td>Files of your own system as soon as they arrive</td><td>at once</td><td><code>bots-dirmonitor -c…</code> as a service, plus the regular run as a fall-back</td></tr>
+<tr><td>Health check (Part 9)</td><td>every 30 minutes</td><td><code>python bots_healthcheck.py …</code></td></tr>
+</table></div>
+<p>With the job queue (<code>[jobqueue] enabled = True</code>, <code>bots-jobqueueserver</code> as a service) runs wait
+for each other instead of being skipped. On Linux, the crontab of the user that runs Bots:</p>
+<pre><code class="language-bash">*/5 * * * * /opt/bots4/bin/bots-job2queue -p1 bots-engine --new -c/srv/bots/env/production/config
+30 * * * *  /opt/bots4/bin/bots-job2queue -p7 bots-engine --automaticretrycommunication -c/srv/bots/env/production/config
+0 18 * * 1-5 /opt/bots4/bin/bots-job2queue -p5 bots-engine invoices_out -c/srv/bots/env/production/config
+*/30 * * * * /opt/bots4/bin/python /srv/bots/scripts/bots_healthcheck.py /srv/bots/env/production/config 30 || echo "Bots needs attention"
+</code></pre>
+<p>On Windows make the same entries in the Task Scheduler, with program <code>C:\bots4\Scripts\bots-job2queue.exe</code>
+and arguments <code>-p1 bots-engine --new -cC:\bots\env\production\config</code> (see <a
+href="#scheduling--howto-windows">How to schedule with the Windows Task Scheduler</a>).</p>
+<div class="note tip"><span class="label">Tip</span><p>Without the job queue, <code>bots-engine</code> returns an exit
+code you can use: <code>0</code> no errors, <code>2</code> the run had errors or process errors, <code>3</code> another
+run was still going (this run was skipped), <code>1</code> a system error.</p></div>
+
+<h3 id="int-going-live--part8">Part 8: Cleanup, archives and backups</h3>
+<ul>
+<li><b>History.</b> Reports, file lines and data files are removed after <code>maxdays</code> (30). Within that time
+you can view, resend and rereceive. Set it to the longest time in which you still want to resend from the web
+interface.</li>
+<li><b>Archive.</b> For longer periods (audits, disputes) use the <span class="ui">Archive path</span> of the partner
+channels, with <span class="ui">Max days archive</span> per channel or <code>maxdaysarchive</code> (180). Give each
+channel its own archive folder: the cleanup deletes everything in it that is older than the limit.</li>
+<li><b>Backups.</b> Back up <code>config</code>, <code>usersys</code>, the database, <code>botssys/data</code>, the
+archives, keys and the scheduler definitions, and make a backup plugin before every large change. See <a
+href="#maintenance--howto-backup">How to back up</a>. Test a restore once, in the test environment, including the
+counters (Part 6).</li>
+</ul>
+
+<h3 id="int-going-live--part9">Part 9: Monitoring: what to check every day</h3>
+<p>Error mails tell you about problems in runs. Two things they can not tell: that runs stopped, and that an
+acknowledgement never came. A small script that reads the Bots database closes that gap. Save it outside
+<code>usersys</code>, eg as <code>/srv/bots/scripts/bots_healthcheck.py</code>:</p>
+<pre><code class="language-python">"""Health check of one Bots environment, for a scheduler or a monitoring tool.
+
+Usage: python bots_healthcheck.py &lt;config folder&gt; [minutes]
+Prints what needs attention; exit code 0 = all well, 1 = look at Bots.
+"""
+import datetime
+import sys
+
+from bots import botsinit
+
+botsinit.generalinit(sys.argv[1])
+from bots import models                                # noqa: E402  (after generalinit)
+from bots.botsconfig import DONE, ERROR, EXTERNOUT, PROCESS   # noqa: E402
+
+max_minutes = int(sys.argv[2]) if len(sys.argv) &gt; 2 else 30
+now = datetime.datetime.now()
+day_ago = now - datetime.timedelta(days=1)
+problems = []
+
+# 1. Did the engine run lately? (no run = no error mail either)
+last = models.report.objects.order_by('-idta').first()
+if last is None or last.ts &lt; now - datetime.timedelta(minutes=max_minutes):
+    problems.append(f'no run in the last {max_minutes} minutes (last: {last.ts if last else "never"})')
+
+# 2. Runs with errors in the last 24 hours
+bad_runs = models.report.objects.filter(ts__gte=day_ago, status=True).count()
+if bad_runs:
+    problems.append(f'{bad_runs} run(s) with errors in the last 24 hours')
+
+# 3. Outgoing files that are still in error (not resent, not set to "No retry")
+out_errors = models.ta.objects.filter(ts__gte=day_ago, status=EXTERNOUT, statust=ERROR).count()
+if out_errors:
+    problems.append(f'{out_errors} outgoing file(s) not sent')
+
+# 4. Process errors (connections, scripts) in the last 24 hours
+proc_errors = models.ta.objects.filter(ts__gte=day_ago, status=PROCESS, statust=ERROR).count()
+if proc_errors:
+    problems.append(f'{proc_errors} process error(s)')
+
+# 5. Acknowledgements asked more than a day ago and not received
+pending = models.ta.objects.filter(ts__lt=day_ago, confirmasked=True, confirmed=False,
+                                   confirmtype__startswith='ask', statust=DONE).count()
+if pending:
+    problems.append(f'{pending} file(s) wait more than a day for an acknowledgement')
+
+for problem in problems:
+    print('ATTENTION:', problem)
+if not problems:
+    print('OK')
+sys.exit(1 if problems else 0)
+</code></pre>
+<p>Run it with the Python of Bots: <code>/opt/bots4/bin/python /srv/bots/scripts/bots_healthcheck.py
+/srv/bots/env/production/config 30</code> (Windows: <code>C:\bots4\Scripts\python.exe C:\bots\scripts\bots_healthcheck.py
+C:\bots\env\production\config 30</code>). Most monitoring tools can run a command and alert on exit code 1. It reads
+the database through Bots, so it works with SQLite and with a database server. The check for a recent run needs runs
+that are kept: empty "new" runs are kept for <code>hoursrunwithoutresultiskept</code> hours (24 in the installed
+<code>bots.ini</code>), which is enough.</p>
+<div class="note info"><span class="label">Check</span><p>On the practice environment after the runs below:</p>
+<pre><code class="language-text">ATTENTION: 4 run(s) with errors in the last 24 hours
+ATTENTION: 1 outgoing file(s) not sent
+ATTENTION: 4 process error(s)</code></pre>
+<p>Exit code 1. The outgoing file not sent is the one of run 1, which the retry did not take. With <code>0</code> as
+minutes it also prints <em>ATTENTION: no run in the last 0 minutes (last: 2026-10-15 21:18:46)</em>.</p></div>
+
+<h3 id="int-going-live--part10">Part 10: Changes without downtime</h3>
+<p>Bots starts a new engine for every run, so a changed mapping, grammar or route is used from the next run on; you
+do not stop anything. That is also the risk: a mistake is live at the next run. Work like this:</p>
+<ol class="steps">
+<li><b>Change and test in the test environment</b>, including the acceptance test of Part 5.</li>
+<li><b>Make a backup plugin</b> of production: <span class="ui">SysTasks</span> → <span class="ui">Plugins</span> →
+<span class="ui">Make backup plugin</span>.</li>
+<li><b>Move only what changed.</b> For a mapping or grammar, copy the file into <code>usersys</code> of production, or
+make a plugin in the test environment with <span class="ui">Make translate plugin (mapping(s) without
+grammars)</span> or <span class="ui">Make grammar plugin (grammars only)</span> in <span class="ui">Translations</span>.
+For new routes, a plugin with the selected routes (see <a href="#plugins--selected">How to make a plugin of a few
+routes</a>).</li>
+<li><b>Choose a quiet moment</b>, between two runs, outside the partner's busy hours. With the job queue, nothing
+overlaps a run that is going.</li>
+<li><b>After reading a plugin</b>, check the channels it brought (they have the values of the test environment) and
+activate the routes: every route in a plugin is set inactive when it is read, also a route that was active in
+production.</li>
+<li><b>Watch the next runs</b> of the changed flow in <span class="ui">Incoming</span> and <span
+class="ui">Outgoing</span>.</li>
+</ol>
+<div class="note stop"><span class="label">Stop</span><p>Reading a plugin overwrites channels with the same name. A plugin
+made in the test environment brings test hosts, folders and passwords into production. Use plugins with only
+translations and grammars for changes of existing flows, or correct the channels right after reading.</p></div>
+<div class="note tip"><span class="label">Tip</span><p>Keep <code>usersys</code> of production in version control, with
+the configuration index (<code>bots-plugoutindex</code>, see <a href="#plugins--index">How to keep the configuration
+in version control</a>). Every change of a route or channel is then visible, and you can see what changed when a flow
+breaks.</p></div>
+
+<h3 id="int-going-live--part11">Part 11: Moving an integration from an old system</h3>
+<p>When an integration moves from another EDI system (or from Bots 3, see <a href="#upgrade-from-bots3">Upgrade from
+Bots 3</a>), run both side by side before you switch:</p>
+<ol class="steps">
+<li><b>Collect real files</b> of the old system: inputs and the outputs it made, for each document and partner.</li>
+<li><b>Parallel run.</b> Give Bots a copy of the live input (a copy of the incoming folder, or the old system's
+archive) and let it write to local folders only (<code>channels_use_testpath = True</code>). The old system stays the
+one that sends.</li>
+<li><b>Compare the outputs</b> file by file. Expect differences in dates, times, control numbers and file names; every
+other difference is a finding. An <a href="#acceptance-testing">acceptance test</a> with frozen clock and counters
+makes the comparison easier.</li>
+<li><b>Switch per partner</b>, not all at once: stop the partner's flow in the old system, set the counters in Bots to
+the old system's last numbers (Part 6), activate the routes in Bots, and check the first files with the partner.</li>
+<li><b>Keep a way back</b> for some days: do not delete the old configuration. When you go back, copy the counters of
+Bots to the old system first.</li>
+</ol>
+
+<h3 id="int-going-live--run">Run it end to end</h3>
+<p>Practise the failures of Parts 1 to 4 once, in a <b>test environment</b> (never in production). It uses the grammars
+and the mapping of <a href="#tutorial-first-translation">Tutorial: your first translation</a> and an FTP address where
+nothing answers (<code>127.0.0.1</code>, port <code>1</code>) as a partner server that is down.</p>
+<ol class="steps">
+<li><b>Set up the test environment for mails</b>: <code>sendreportiferror = True</code> and the settings of Part 2.</li>
+<li><b>Add the partners</b> <code>MYCOMPANY</code> and <code>PARTNERB</code>, and the translation <code>csv</code> /
+<code>orders_erp</code> → <code>orders_erp_to_x12</code> → <code>x12</code> / <code>850004010</code>, as in the
+tutorial.</li>
+<li><b>Add the channels</b> (<span class="ui">Configuration</span> → <span class="ui">Channels</span>):
+<div class="table-wrap"><table>
+<tr><th>Idchannel</th><th>In/out</th><th>Type</th><th>Fields</th></tr>
+<tr><td><code>erp_orders_in</code></td><td>in</td><td>file</td><td>Path <code>botssys/infile/erp_orders</code>, Filename <code>*.csv</code>, Remove ticked</td></tr>
+<tr><td><code>partnerb_ftp_out</code></td><td>out</td><td>ftp</td><td>Host <code>127.0.0.1</code>, Port <code>1</code>, Username <code>mycompany</code>, Password <code>secret-example</code>, Path <code>in</code>, Filename <code>850_*.x12</code>, Ftp binary ticked</td></tr>
+<tr><td><code>partnerb_ftp_in</code></td><td>in</td><td>ftp</td><td>Host <code>127.0.0.1</code>, Port <code>1</code>, the same user, Path <code>out</code>, Filename <code>*.x12</code>, Remove ticked, Max failures <code>3</code></td></tr>
+<tr><td><code>local_acks_out</code></td><td>out</td><td>file</td><td>Path <code>botssys/outfile/acks</code>, Filename <code>{infile}</code></td></tr>
+</table></div></li>
+<li><b>Add the routes</b>: <code>orders_out</code> 1 (Active; incoming <code>erp_orders_in</code>; <code>csv</code> /
+<code>orders_erp</code>; Translate; outgoing <code>partnerb_ftp_out</code>) and <code>acks_in</code> 1 (Active;
+incoming <code>partnerb_ftp_in</code>; Pass-through; outgoing <code>local_acks_out</code>).</li>
+<li><b>Run 1</b>: put this file as <code>botssys/infile/erp_orders/orders_good.csv</code> and run <code>bots-engine
+--new -c…</code>:
+<pre><code class="language-text">HDR,PARTNERB,PO2001,20261015,20261022
+LIN,1,ITEM-100,10,EA,4.50
+LIN,2,ITEM-200,5,EA,12.00</code></pre>
+The log shows three tries of the incoming channel and one of the outgoing channel; the exit code is 2 and the error
+mail of Part 2 arrives:
+<pre><code class="language-text">ERROR     [bots.engine] Communication try 1 error on channel partnerb_ftp_in: [WinError 10061] No connection could be made because the target machine actively refused it
+ERROR     [bots.engine] Communication try 2 error on channel partnerb_ftp_in: [WinError 10061] …
+ERROR     [bots.engine] Communication try 3 error on channel partnerb_ftp_in: [WinError 10061] …
+ERROR     [bots.engine] Communication failure 1/3 on channel partnerb_ftp_in: [WinError 10061] …
+START     [bots.engine] Start communication channel out: partnerb_ftp_out (ftp)
+ERROR     [bots.engine] Outgoing connection failure 1 on channel partnerb_ftp_out: [WinError 10061] …
+ERROR     [bots.engine] Error in process: ConnectionRefusedError: [WinError 10061] …
+INFO      [bots.engine] Bots Report; type: new, time: 2026-10-15 21:03:28, duration: 0:00:09.313757
+    1 files received/processed in run.
+    1 files with errors,
+    1 errors in processes.
+    0 files send in run.</code></pre>
+On Linux the text is <em>[Errno 111] Connection refused</em>.</li>
+<li><b>Start the retry</b>: <code>bots-engine --automaticretrycommunication -c…</code> twice. Each says <em>Nothing to
+do in run.</em> (the starting point of Part 3). The file of run 1 is before that point: it is not retried later.</li>
+<li><b>Run 2</b> with a good file and a bad one (no order date), then <b>run 3</b> without new files. The bad file:
+<pre><code class="language-text">HDR,PARTNERB,PO2003
+LIN,1,ITEM-100,1,EA,4.50</code></pre>
+The bad file gets <em>MessageError: [F02] line 1 pos 1: Record "HDR" field "PO_DATE" is mandatory.</em> The incoming
+channel counts <em>Communication failure 2/3</em>, and in run 3 <em>Communication failure 3/3</em> followed by
+<em>Error in process: …</em>: now it is a process error and in the error mail.</li>
+<li><b>Stop the dead route</b>: deactivate <code>acks_in</code> (Part 4). The next run logs <em>Run active routes from
+database that are in default run: "['orders_out']".</em> and makes no more login attempts to that server.</li>
+<li><b>Bring the server back</b>: put one more order file in <code>botssys/infile/erp_orders/</code> and run
+<code>--new</code> while the server is still down (its sending fails). Then change <code>partnerb_ftp_out</code> to
+type <code>file</code> with Path <code>botssys/outfile/partnerb</code> (this stands for "the partner fixed the server")
+and run <code>--automaticretrycommunication</code>: the files of run 2 and of this run are sent (see the check in
+Part 3), as <code>botssys/outfile/partnerb/850_1.x12</code> (order <code>PO2002</code>) and <code>850_2.x12</code>
+(order <code>PO2004</code>). The file of run 1 failed before the starting point and stays in error: resend it by
+hand.</li>
+<li><b>Try the duplicate trap</b> of Part 1: add to the mapping, after the line that reads <code>po_number</code>,
+<pre><code class="language-python">    if po_number.startswith('X'):
+        raise ValueError('test: bad order ' + po_number)</code></pre>
+run a file with orders <code>PO3001</code> and <code>XPO3002</code>, mark it for <span class="ui">Rereceive</span>
+and run <span class="ui">Run user-indicated rereceives</span>: <code>PO3001</code> is sent a second time. Remove the
+two lines afterwards.</li>
+<li><b>Run the health check</b> of Part 9 against the test environment and read its output.</li>
+</ol>
+<p>Checked with Bots 4.0.0 on Windows, Python 3.13, Django 6.1.</p>
+
+<h3 id="int-going-live--checklist">Daily, weekly and monthly checklist</h3>
+<div class="table-wrap"><table>
+<tr><th>When</th><th>Check</th><th>Where</th></tr>
+<tr><td>Every morning</td><td>Runs happened all night, at the expected interval; none with a red background.</td><td><span class="ui">All runs</span> → <span class="ui">Report (per run)</span></td></tr>
+<tr><td>Every morning</td><td>Received files in error: read the error, fix or ask the partner.</td><td><span class="ui">Incoming</span> → <span class="ui">Incoming errors</span></td></tr>
+<tr><td>Every morning</td><td>Sent files in error: was the retry successful? Resend or set <span class="ui">No automatic retry</span>.</td><td><span class="ui">Outgoing</span> → <span class="ui">Outgoing errors</span></td></tr>
+<tr><td>Every morning</td><td>Process errors: the same channel failing in every run means a dead login (Part 4).</td><td><span class="ui">All runs</span> → <span class="ui">Process Errors</span></td></tr>
+<tr><td>Every morning</td><td>Error mails of the night are all explained.</td><td>the team mailbox</td></tr>
+<tr><td>Every day</td><td>Acknowledgements that did not come (older than the agreed time).</td><td><span class="ui">All runs</span> → <span class="ui">Confirmations</span> → <span class="ui">Unconfirmed</span></td></tr>
+<tr><td>Every day</td><td>Files stuck in your own system's folders (the ERP did not pick them up), and partner folders that fill up.</td><td>the folders of the file channels</td></tr>
+<tr><td>Weekly</td><td>Disk space of <code>botssys</code> and the archives; size of the database.</td><td>the server</td></tr>
+<tr><td>Weekly</td><td>Job queue and directory monitor run, and have no errors.</td><td><span class="ui">SysTasks</span> → <span class="ui">Logs</span></td></tr>
+<tr><td>Weekly</td><td>The backups ran; a backup plugin of the last change exists.</td><td>backup storage, <code>botssys/backup</code></td></tr>
+<tr><td>Monthly</td><td>Passwords and certificates that expire soon (partner logins, TLS certificates, keys).</td><td>your list of partner connections</td></tr>
+<tr><td>Monthly</td><td>Routes and channels of partners that left: deactivate them.</td><td><span class="ui">Configuration</span> → <span class="ui">Routes</span></td></tr>
+<tr><td>Monthly</td><td>Run the acceptance test set in the test environment, so you know it still passes before you need it.</td><td>test environment</td></tr>
+</table></div>
+
+<h3 id="int-going-live--variations">Variations</h3>
+<ul>
+<li><b>Error mails per partner.</b> A mapping can mail a partner contact about a business problem in its document
+with <code>transform.sendbotsemail()</code> (the partner's <span class="ui">Mail</span>); see <a
+href="#mapping-functions">Mapping functions</a>.</li>
+<li><b>Fewer mails for short outages.</b> <span class="ui">Max failures</span> on incoming channels of servers that
+are often down for a few minutes; keep the daily check of process errors.</li>
+<li><b>Several production environments</b> (eg per business unit): one job queue and directory monitor per
+environment, each with its own ports, and the health check per environment.</li>
+<li><b>Bots behind a monitoring system.</b> Use the exit codes of <code>bots-engine</code> (Part 7) and of the health
+check, and the log files in <code>botssys/logging</code> (see <a href="#logging">Logging</a>).</li>
+<li><b>Busy flows first.</b> With the job queue, give the frequent receive run priority 1 and slow routes a higher
+number.</li>
+</ul>
+
+<h3 id="int-going-live--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>No error mails, but problems in the reports</td><td><code>sendreportiferror</code> is <code>False</code>, the mail server settings are wrong, or only process errors and <code>sendreportifprocesserror = False</code>.</td><td>Set the options (Part 2); test with <span class="ui">Send test report</span>; look for <em>Error in sending error report</em> in the engine log.</td></tr>
+<tr><td><em>django.core.exceptions.ImproperlyConfigured: Deprecated email settings are not allowed when MAILERS is defined: EMAIL_HOST.</em> and no program of Bots starts</td><td><code>settings.py</code> has <code>MAILERS</code> and the old <code>EMAIL_…</code> mail server names (Django 6.1).</td><td>Remove one of the two forms (Part 2).</td></tr>
+<tr><td>No error mails and no new runs for hours</td><td>The scheduler, the job queue server or the machine stopped.</td><td>Start them; add the health check (Part 9).</td></tr>
+<tr><td><em>Communication try 1 error on channel partnera_sftp_in: …</em> three times in every run</td><td>The server is down or the login is refused; each run tries <code>maxconnectiontries</code> times.</td><td>If it is a login error: Part 4, now, before the account is locked. Set <code>maxconnectiontries = 1</code>.</td></tr>
+<tr><td><em>Communication failure 2/3 on channel partnerb_ftp_in: …</em> but no process error</td><td><span class="ui">Max failures</span> 3: the error is reported only at 3/3.</td><td>Normal; a process error follows if it keeps failing.</td></tr>
+<tr><td><em>Outgoing connection failure 1 on channel partnerb_ftp_out: …</em>; files with status <span class="ui">Error</span> in <span class="ui">Outgoing</span></td><td>The partner's server was not reachable when sending.</td><td>The scheduled retry sends them; otherwise <span class="ui">Resend</span> by hand.</td></tr>
+<tr><td>The retry run says <em>Nothing to do in run.</em> although files failed</td><td>The first retry runs of an environment only set the starting point; files that failed before it are not retried.</td><td>Resend those files by hand; later failures are retried (Part 3).</td></tr>
+<tr><td>A failed file is never retried</td><td>It was set to <span class="ui">No automatic retry</span>, or it failed before the starting point.</td><td>Resend it by hand.</td></tr>
+<tr><td>The partner received some orders twice</td><td>A file with one bad message was rereceived after the fix; the good messages were sent again.</td><td>Tell the partner which interchange to ignore; next time send only the failed message, or use <code>KillWholeFile</code> (Part 1).</td></tr>
+<tr><td>The partner reports a duplicate interchange control number after a restore</td><td>The restored database had older counters.</td><td>Set the counters above the last number sent (Part 6).</td></tr>
+<tr><td>After reading a plugin a production flow stopped</td><td>Routes from a plugin are set inactive, also routes that existed.</td><td>Activate the routes; check the channels the plugin overwrote (Part 10).</td></tr>
+<tr><td>After reading a plugin, files go to a test folder or test host</td><td>The plugin came from the test environment and overwrote the production channels.</td><td>Correct the channels; restore them from the backup plugin in <code>botssys/backup</code>.</td></tr>
+<tr><td>Runs are skipped in busy hours (scheduler result 3)</td><td>A run was still going; without the job queue the next one stops at once.</td><td>Switch on the job queue (Part 7).</td></tr>
+<tr><td>The test environment blocks runs of production</td><td>Both use the same <code>[settings] port</code>.</td><td>Give each environment its own ports (Part 5).</td></tr>
+</table></div>
+</section>

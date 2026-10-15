@@ -1,0 +1,95 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "64.xml",
+   3
+  ],
+  [
+   "65.xml",
+   3
+  ],
+  [
+   "66.xml",
+   3
+  ],
+  [
+   "67.xml",
+   3
+  ],
+  [
+   "68.xml",
+   3
+  ],
+  [
+   "69.xml",
+   3
+  ],
+  [
+   "orders01org.tra",
+   3
+  ],
+  [
+   "orders03org.tra",
+   3
+  ],
+  [
+   "orders2.tra",
+   3
+  ],
+  [
+   "orders4.tra",
+   3
+  ],
+  [
+   "orders5.tra",
+   3
+  ],
+  [
+   "orders6.tra",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "tradacomsdemo/tra-orders/1.tra": "b94dae672ef7aa8ee28b2419b9145e95e269bdbcd80aa1d7c2a4709569e0b298",
+  "tradacomsdemo/tra-orders/2.tra": "401ab58168596dc32039099137c6ccadd3000165e535079058acfde11c21ef13",
+  "tradacomsdemo/tra-orders/3.tra": "2d88a056784948a214e489de822e8b0ff213549262c2fdebd733aab40fd1c9a2",
+  "tradacomsdemo/tra-orders/4.tra": "d0d31c3f9944fdfac556006e5dffb3d7d6324796b3462d5dfff31d458601c575",
+  "tradacomsdemo/tra-orders/5.tra": "8de95d71a61702c25e06ee434123075f90e42468a4249d318207367ff222479d",
+  "tradacomsdemo/tra-orders/6.tra": "2b022607e386071387f984afdbb8c572a84d9c8c31b73660a0f4fc7c97a170e6",
+  "tradacomsdemo/xmlorders/1.xml": "dfd3fcfa23093bdeda5c2b5fc8307c760f58a410cb78c1be31a074c7d42637c7",
+  "tradacomsdemo/xmlorders/2.xml": "95ac3af43bab70d80d86581ff03a0f7050c21e2939647eb1ea41b3474cb8dea3",
+  "tradacomsdemo/xmlorders/3.xml": "5b2971e2b2bf0223a6e236f3ac7f3d12be6a3f5b550ffea2a9b2af35afcf6f0e",
+  "tradacomsdemo/xmlorders/4.xml": "7dce81df690fd3da1a26f3628989f569c60d6fd020e1709aac0dce096053d163",
+  "tradacomsdemo/xmlorders/5.xml": "59248cfc777a391e839acb94fc641949042810854d8e51459b50e713fb4e5ab9",
+  "tradacomsdemo/xmlorders/6.xml": "bb54d9b4833dd1b9a7ec95c9038f6b327454d94ee7b25be6a18d1f67481cb1ee"
+ },
+ "plugin": "tradacoms2xml_orders_20130711",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 29665,
+  "lastdone": 12,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 12,
+  "processerrors": 0,
+  "send": 12,
+  "status": false
+ },
+ "routes": [
+  [
+   "tradacomsorders2xml",
+   9999,
+   true,
+   false
+  ],
+  [
+   "xmlorders2tradacoms",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

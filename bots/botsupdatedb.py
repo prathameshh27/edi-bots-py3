@@ -1,373 +1,243 @@
 """
-Bots updated
+bots-updatedb: bring the bots database to this version of bots.
 
-DEPRECATED: this is for migrating an old bots 2 to bots 3.
+- empty database: all tables are created;
+- database of bots 3 (3.0 - 3.2): upgraded in place (make a backup first!);
+- database of an earlier bots 4: pending changes are applied;
+- anything else (bots 2 or older, not a bots database): refused.
 """
-# pylint: disable=missing-function-docstring, line-too-long, broad-exception-raised, broad-exception-caught, consider-using-f-string, too-many-statements
-# flake8: noqa:E501
-
-import atexit
-import logging
 import os
-import socket
 import sys
 
 # bots-modules
 from . import botsglobal
 from . import botsinit
 from . import botslib
-from .botslib import gettext as _
-from .exceptions import txtexc
+from . import dbschema
 
+EMPTY, BOTS3, BOTS4, UNKNOWN = 'empty', 'bots3', 'bots4', 'unknown'
+STATETEXT = {
+    EMPTY: 'empty (no bots tables)',
+    BOTS3: 'made by bots 3',
+    BOTS4: 'made by bots 4',
+    UNKNOWN: 'not recognised',
+}
+# tables django manages for bots / columns that are in a bots 3 database but not in a bots 2 database
+MANAGED_TABLES = ('routes', 'channel', 'partner', 'translate', 'chanpar', 'ccode', 'ccodetrigger',
+                  'confirmrule', 'filereport', 'report')
+BOTS3_COLUMNS = {'routes': ('zip_incoming', 'zip_outgoing'), 'channel': ('testpath', 'keyfile'),
+                 'report': ('acceptance', 'filesize')}
+# screens every user that was logged in could see in bots 3; in bots 4 these need a permission
+VIEW_FOR_ALL = ('view_report', 'view_filereport', 'view_ta')
+FILE_CHANNELS = ('file', 'mimefile', 'trash')
 
-def sqlite_database_is_version3():
-    for row in botslib.query("""PRAGMA table_info(routes)"""):
-        if row["name"] == "translateind":
-            if row["type"] == "bool":
-                return False
-            return True
-    raise Exception('Could not determine version of database')
+USAGE = """
+    This is "%(name)s" version %(version)s, part of Bots open source edi translator (https://bots-edi.org).
+    Brings the bots database to version %(version)s: a new (empty) database, or the database of bots 3.
 
+    Usage:
+        %(name)s [options]
+    Options:
+        -c<directory>           directory for configuration files (default: config).
+        --check                 only report: what is the database, what would be done. Changes nothing.
+        --yes-i-have-a-backup   needed to upgrade the database of bots 3: that can not be undone.
+        --createsuperuser       after the update: create a user that can log in (asks name and password).
 
-QUERYSTRING = """
-PRAGMA writable_schema = 1;
-UPDATE SQLITE_MASTER SET SQL =
- 'CREATE TABLE "routes" (
-    "id" integer NOT NULL PRIMARY KEY,
-    "idroute" varchar(35) NOT NULL,
-    "seq" integer unsigned NOT NULL,
-    "active" bool NOT NULL,
-    "fromchannel_id" varchar(35) REFERENCES "channel" ("idchannel"),
-    "fromeditype" varchar(35) NOT NULL,
-    "frommessagetype" varchar(35) NOT NULL,
-    "tochannel_id" varchar(35) REFERENCES "channel" ("idchannel"),
-    "toeditype" varchar(35) NOT NULL,
-    "tomessagetype" varchar(35) NOT NULL,
-    "alt" varchar(35) NOT NULL,
-    "frompartner_id" varchar(35) REFERENCES "partner" ("idpartner"),
-    "topartner_id" varchar(35) REFERENCES "partner" ("idpartner"),
-    "frompartner_tochannel_id" varchar(35) REFERENCES "partner" ("idpartner"),
-    "topartner_tochannel_id" varchar(35) REFERENCES "partner" ("idpartner"),
-    "testindicator" varchar(1) NOT NULL,
-    "translateind" integer NOT NULL,
-    "notindefaultrun" bool NOT NULL,
-    "desc" text,
-    "rsrv1" varchar(35),
-    "rsrv2" integer,
-    "defer" bool NOT NULL,
-    "zip_incoming" integer,
-    "zip_outgoing" integer,
-    UNIQUE ("idroute", "seq"))'
-WHERE NAME = 'routes';
-PRAGMA writable_schema = 0;
+    Exit code: 0 OK (with --check: nothing to do); 1 with --check: there is something to do;
+               2 database not recognised, or not confirmed there is a backup; 3 other errors.
 """
 
 
-def sqlite3():
-    if sqlite_database_is_version3():
-        print('Database sqlite3 is already bots version 3. No action is taken.')
+def columns(connection, table):
+    with connection.cursor() as cursor:
+        return set(col.name for col in connection.introspection.get_table_description(cursor, table))
+
+
+def database_state(connection):
+    """Returns (state, explanation)."""
+    tables = set(connection.introspection.table_names())
+    present = [table for table in MANAGED_TABLES + dbschema.ENGINE_TABLES if table in tables]
+    if not present:
+        return EMPTY, ''
+    missing = [table for table in MANAGED_TABLES if table not in tables]
+    if missing:
+        return UNKNOWN, 'tables %s exist, but not %s' % (', '.join(present), ', '.join(missing))
+    if 'django_migrations' in tables:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM django_migrations WHERE app = 'bots'")
+            if cursor.fetchone()[0]:
+                return BOTS4, ''
+    for table, names in BOTS3_COLUMNS.items():
+        notfound = [name for name in names if name not in columns(connection, table)]
+        if notfound:
+            return UNKNOWN, 'table %s has no column %s: older than bots 3? Use bots 3 to update to bots 3 first.' % (
+                table, ', '.join(notfound))
+    missing = [table for table in dbschema.ENGINE_TABLES if table not in tables]
+    if missing:
+        return UNKNOWN, 'bots 3 database without table(s) %s' % ', '.join(missing)
+    return BOTS3, ''
+
+
+def pending_migrations(connection):
+    from django.db.migrations.executor import MigrationExecutor
+    executor = MigrationExecutor(connection)
+    return ['%s.%s' % (migration.app_label, migration.name)
+            for migration, _backwards in executor.migration_plan(executor.loader.graph.leaf_nodes())]
+
+
+def relative_channel_paths():
+    """
+    File channels with a relative path. Such a path is relative to the bots directory ('botspath');
+    after installing a new bots that directory is another one.
+    Returns list of (idchannel, path, absolute path)
+    """
+    from . import models
+    found = []
+    for channel in models.channel.objects.filter(type__in=FILE_CHANNELS).order_by('idchannel'):
+        for path in sorted(set((channel.path, channel.testpath))):
+            if path and not os.path.isabs(path):
+                found.append((channel.idchannel, path, botslib.join(path)))
+    return found
+
+
+TLS_CHANNELS = ('pop3s', 'imap4s', 'smtps', 'smtpstarttls', 'ftps', 'ftpis', 'https')
+
+
+def keep_tls_as_in_bots3():
+    """
+    Bots 3 did not verify the certificate of a server. The channels of a bots 3 database keep connecting
+    as they did: 'verify_cert' is set off for the channels that exist. New channels verify.
+    Returns list of the idchannel of channels with TLS.
+    """
+    from . import models
+    models.channel.objects.update(verify_cert=False)
+    return list(models.channel.objects.filter(type__in=TLS_CHANNELS).order_by('idchannel').values_list(
+        'idchannel', flat=True))
+
+
+def grant_view_permissions():
+    """
+    Bots 4 (django >= 2.1) has a permission 'view'. Give it to who could see the same in bots 3:
+    - users and groups that can change X can view X;
+    - active users can view reports, incoming files and transactions.
+    Returns number of permissions given.
+    """
+    from django.contrib.auth.models import Group, Permission, User
+    perms = dict((perm.codename, perm) for perm in Permission.objects.filter(content_type__app_label='bots'))
+    count = 0
+    holders = [(user, user.user_permissions) for user in User.objects.filter(is_superuser=False)]
+    holders += [(group, group.permissions) for group in Group.objects.all()]
+    for holder, related in holders:
+        has = set(related.filter(content_type__app_label='bots').values_list('codename', flat=True))
+        wanted = set('view_' + codename[len('change_'):] for codename in has if codename.startswith('change_'))
+        if isinstance(holder, User) and holder.is_active:
+            wanted.update(VIEW_FOR_ALL)
+        for codename in sorted(wanted - has):
+            if codename in perms:
+                related.add(perms[codename])
+                count += 1
+    return count
+
+
+def update(check=False, backup_confirmed=False, out=print):
+    """Do the update (or with check: report what is to do). Returns exit code."""
+    # pylint: disable=too-many-branches, too-many-return-statements
+    from django.core.management import call_command
+    from django.db import connection
+
+    out('Database: %s "%s".' % (connection.vendor, connection.settings_dict['NAME']))
+    state, why = database_state(connection)
+    out('This database is: %s%s.' % (STATETEXT[state], ' (%s)' % why if why else ''))
+    if state == UNKNOWN:
+        out('Nothing is changed.')
         return 2
 
-    print('Start changing sqlite3 database to bots version 3.')
-    cursor = botsglobal.db.cursor()
-    try:
-        # channel ****************************************
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "rsrv3" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "keyfile" VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "certfile" VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "testpath" VARCHAR(256) """)
-        # filereport ****************************************
-        cursor.execute("""DROP INDEX "filereport_reportidta" """)
-        cursor.execute("""ALTER TABLE "filereport" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        # partner *************************************
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr1" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr2" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr3" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr4" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr5" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name1" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name2" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name3" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address1" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address2" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address3" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "city" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "postalcode" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "countrysubdivision" VARCHAR(9) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "countrycode" VARCHAR(3) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "phone1" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "phone2" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "desc" TEXT """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "startdate" DATE """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "enddate" DATE """)
-        # report ****************************************
-        cursor.execute("""CREATE INDEX "report_ts" ON "report" ("ts")""")
-        cursor.execute("""ALTER TABLE "report" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "report" ADD COLUMN "acceptance" INTEGER DEFAULT 0""")
-        # routes ****************************************
-        cursor.execute("""ALTER TABLE "routes" ADD COLUMN "zip_incoming" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "routes" ADD COLUMN "zip_outgoing" INTEGER DEFAULT 0""")
-        # ta ****************************************
-        cursor.execute("""DROP INDEX "ta_script" """)
-        cursor.execute("""CREATE INDEX "ta_reference" ON "ta" ("reference")""")
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "numberofresends" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "rsrv5" VARCHAR(35) DEFAULT '' """)
-    except Exception:
-        txt = txtexc()
-        botsglobal.db.rollback()
-        cursor.close()
-        print('Error in adding fields to sqlite3 database: "%s".' % (txt))
+    pending = pending_migrations(connection)
+    narrow = dbschema.narrow_columns(connection) if state != EMPTY else []
+    if check:
+        if state == BOTS4 and not pending and not narrow:
+            out('The database is up to date.')
+            return 0
+        out('To do: %s.' % {EMPTY: 'create the tables', BOTS3: 'upgrade to bots 4', BOTS4: 'apply changes'}[state])
+        out('    %s changes (migrations) of the tables of django and bots' % len(pending))
+        for table, name, current, length in narrow:
+            out('    widen %s.%s: %s -> %s' % (table, name, current, length))
+        if state == BOTS3:
+            out('    give users the new permission "view"')
+            out('Make a backup of the database and run again with --yes-i-have-a-backup.')
         return 1
 
-    botsglobal.db.commit()
-    cursor.close()
+    if state == BOTS3 and not backup_confirmed:
+        out('Upgrading a bots 3 database can not be undone, and bots 3 can not use the database afterwards.\n'
+            'Make a backup of the database and run again with --yes-i-have-a-backup.\n'
+            'Nothing is changed.')
+        return 2
 
-    cursor = botsglobal.db.cursor()
-    try:
-        cursor.executescript(QUERYSTRING)
-    except Exception:
-        txt = txtexc()
-        botsglobal.db.rollback()
-        cursor.close()
-        print('Error in changing sqlite3 database-schema "routes": "%s".' % (txt))
-        return 1
-
-    botsglobal.db.commit()
-    cursor.close()
-    print('Succesful changed sqlite3 database to bots version 3.')
-    return 0
-
-
-def postgresql_psycopg2():
-    print('Start changing postgresql database to bots version 3.')
-    cursor = botsglobal.db.cursor()
-    try:
-        # channel ****************************************
-        cursor.execute("""ALTER TABLE "channel" ALTER COLUMN "filename" TYPE VARCHAR(256)""")
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "rsrv3" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "keyfile" VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "certfile" VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE "channel" ADD COLUMN "testpath" VARCHAR(256) """)
-        # ccode ****************************************
-        cursor.execute("""ALTER TABLE "ccode" ALTER COLUMN "rightcode" TYPE VARCHAR(70)""")
-        cursor.execute("""ALTER TABLE "ccode" ALTER COLUMN "attr1" TYPE VARCHAR(70)""")
-        # filereport ****************************************
-        # remove primary key
-        cursor.execute("""ALTER TABLE "filereport" DROP CONSTRAINT "filereport_pkey" """)
-        # drop contraint UNIQUE(idta, reportidta)
-        cursor.execute("""ALTER TABLE "filereport" DROP CONSTRAINT "filereport_idta_key" """)
-        # drop index on idta (will be primary key)
-        cursor.execute("""DROP INDEX "filereport_idta" """)
-        cursor.execute("""DROP INDEX "filereport_reportidta" """)
-        cursor.execute("""ALTER TABLE "filereport" DROP COLUMN "id" """)
-        #idta is primary key
-        cursor.execute("""ALTER TABLE "filereport" ADD CONSTRAINT "filereport_pkey" PRIMARY KEY("idta")""")
-        cursor.execute("""ALTER TABLE "filereport" ALTER COLUMN "errortext" TYPE TEXT""")
-        cursor.execute("""ALTER TABLE "filereport" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "filereport" ADD COLUMN "acceptance" INTEGER DEFAULT 0""")
-        # partner *************************************
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr1" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr2" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr3" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr4" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "attr5" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name1" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name2" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "name3" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address1" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address2" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "address3" VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "city" VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "postalcode" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "countrysubdivision" VARCHAR(9) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "countrycode" VARCHAR(3) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "phone1" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "phone2" VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "desc" TEXT """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "startdate" DATE """)
-        cursor.execute("""ALTER TABLE "partner" ADD COLUMN "enddate" DATE """)
-        # persist ****************************************
-        cursor.execute("""ALTER TABLE "persist" ALTER COLUMN "content" TYPE TEXT""")
-        # report ****************************************
-        cursor.execute("""CREATE INDEX "report_ts" ON "report" ("ts")""")
-        cursor.execute("""ALTER TABLE "report" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        # routes ****************************************
-        cursor.execute("""ALTER TABLE "routes" ALTER COLUMN "translateind" TYPE integer USING CASE WHEN "translateind"=FALSE THEN 0 ELSE 1 END""")
-        cursor.execute("""ALTER TABLE "routes" ADD COLUMN "zip_incoming" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "routes" ADD COLUMN "zip_outgoing" INTEGER DEFAULT 0""")
-        # ta ****************************************
-        cursor.execute("""DROP INDEX "ta_script" """)
-        cursor.execute("""CREATE INDEX "ta_reference" ON "ta" ("reference")""")
-        cursor.execute("""ALTER TABLE "ta" ALTER COLUMN "errortext" TYPE TEXT """)
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "filesize" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "numberofresends" INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE "ta" ADD COLUMN "rsrv5" VARCHAR(35) DEFAULT '' """)
-    except Exception:
-        txt = txtexc()
-        botsglobal.db.rollback()
-        cursor.close()
-        print('Error in changing postgresql database: "%s".' % (txt))
-        return 1
-
-    botsglobal.db.commit()
-    cursor.close()
-    print('Succesful changed postgresql database to bots version 3.')
-    return 0
-
-
-def mysql():
-    print('Start changing mysql database to bots version 3.')
-    cursor = botsglobal.db.cursor()
-    try:
-        # channel ****************************************
-        cursor.execute("""ALTER TABLE `channel` MODIFY `filename` VARCHAR(256) NOT NULL""")
-        cursor.execute("""ALTER TABLE `channel` ADD COLUMN `rsrv3` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `channel` ADD COLUMN `keyfile` VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE `channel` ADD COLUMN `certfile` VARCHAR(256) """)
-        cursor.execute("""ALTER TABLE `channel` ADD COLUMN `testpath` VARCHAR(256) """)
-        # ccode ****************************************
-        cursor.execute("""ALTER TABLE `ccode` MODIFY `rightcode` VARCHAR(70)""")
-        cursor.execute("""ALTER TABLE `ccode` MODIFY `attr1` VARCHAR(70)""")
-        # filereport ****************************************
-        cursor.execute("""ALTER TABLE `filereport` CHANGE `id` `id` INTEGER """)    # drop autoincrement
-        cursor.execute("""ALTER TABLE `filereport` DROP PRIMARY KEY """)            # drop index on id
-        cursor.execute("""ALTER TABLE `filereport` DROP COLUMN `id` """)            # drop id veld
-        cursor.execute("""ALTER TABLE `filereport` DROP KEY `idta` """)             # remove UNIQUE constraint
-        # ~ cursor.execute("""ALTER TABLE `filereport` DROP INDEX `reportidta` """)  # not possible as index name is not known
-        cursor.execute("""ALTER TABLE `filereport` MODIFY `errortext` TEXT""")
-        cursor.execute("""ALTER TABLE `filereport` ADD COLUMN `filesize` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `filereport` ADD COLUMN `acceptance` INTEGER DEFAULT 0""")
-        # partner *************************************
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `attr1` VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `attr2` VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `attr3` VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `attr4` VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `attr5` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `name1` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `name2` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `name3` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `address1` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `address2` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `address3` VARCHAR(70) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `city` VARCHAR(35) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `postalcode` VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `countrysubdivision` VARCHAR(9) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `countrycode` VARCHAR(3) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `phone1` VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `phone2` VARCHAR(17) """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `desc` TEXT """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `startdate` DATE """)
-        cursor.execute("""ALTER TABLE `partner` ADD COLUMN `enddate` DATE """)
-        # persist ****************************************
-        cursor.execute("""ALTER TABLE `persist` MODIFY `content` TEXT""")
-        # report ****************************************
-        cursor.execute("""CREATE INDEX `report_ts` ON `report` (`ts`)""")
-        cursor.execute("""ALTER TABLE `report` ADD COLUMN `filesize` INTEGER DEFAULT 0""")
-        # routes ****************************************
-        cursor.execute("""ALTER TABLE `routes` ADD COLUMN `zip_incoming` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `routes` ADD COLUMN `zip_outgoing` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `routes` MODIFY `translateind` integer NOT NULL""")
-        # ta ****************************************
-        # not possible as index name is not known
-        # ~ cursor.execute("""ALTER TABLE `ta` DROP INDEX `script` """)
-        cursor.execute("""CREATE INDEX `ta_reference` ON `ta` (`reference`)""")
-        cursor.execute("""ALTER TABLE `ta` ADD COLUMN `filesize` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `ta` ADD COLUMN `numberofresends` INTEGER DEFAULT 0""")
-        cursor.execute("""ALTER TABLE `ta` ADD COLUMN `rsrv5` VARCHAR(35) DEFAULT '' """)
-        cursor.execute("""ALTER TABLE `ta` MODIFY `errortext` TEXT """)
-    except Exception:
-        txt = txtexc()
-        botsglobal.db.rollback()
-        cursor.close()
-        print('Error in changing mysql database: "%s".' % (txt))
-        return 1
-
-    botsglobal.db.commit()
-    cursor.close()
-    print('Succesful changed mysql database to bots version 3.')
+    if state == BOTS3:
+        # the tables of bots 3 are what the first migrations would make: register these as done
+        call_command('migrate', fake_initial=True, interactive=False, verbosity=1)
+    else:
+        call_command('migrate', interactive=False, verbosity=1)
+    # also done in the migrations; here for a database that had these migrations before the tables
+    for text in dbschema.ensure_engine_tables(connection):
+        out(text)
+    if state == BOTS3:
+        out('Permissions "view" given: %s.' % grant_view_permissions())
+        notverified = keep_tls_as_in_bots3()
+        if notverified:
+            out('Channels with TLS/SSL: the certificate of the server is not verified, as in bots 3.\n'
+                'Advised: tick "Verify server certificate" in the channel (and set "CA certificate file" if needed):')
+            out('    ' + ', '.join(notverified))
+        relative = relative_channel_paths()
+        if relative:
+            out('Channels with a relative path; check if this is the directory you expect:')
+            for idchannel, path, absolute in relative:
+                out('    channel %s: "%s" is "%s"' % (idchannel, path, absolute))
+    out('The database is up to date.')
     return 0
 
 
 def start():
-    #********command line arguments**************************
-    usage = """
-    This is "%(name)s" version %(version)s, part of Bots open source edi translator (https://bots-edi.org).
-    Updates existing bots database to version %(version)s
-
-    Usage:
-        %(name)s  [config-option]
-    Options:
-        -c<directory>        directory for configuration files (default: config).
-
-    """ % {'name': os.path.basename(sys.argv[0]), 'version': botsglobal.version}
+    usage = USAGE % {'name': os.path.basename(sys.argv[0]), 'version': botsglobal.version}
     configdir = None
+    check = backup_confirmed = createsuperuser = False
     for arg in sys.argv[1:]:
-        if arg.startswith('-c'):
+        if arg.startswith('-c') and not arg.startswith('--'):
             configdir = arg[2:]
             if not configdir:
                 print('Error: configuration directory indicated, but no directory name.')
                 sys.exit(3)
+        elif arg == '--check':
+            check = True
+        elif arg == '--yes-i-have-a-backup':
+            backup_confirmed = True
+        elif arg == '--createsuperuser':
+            createsuperuser = True
         else:
-            # pick up names of routes to run
             print(usage)
             sys.exit(0)
-    # ***end handling command line arguments**************************
     # find locating of bots, configfiles, init paths etc.
     botsinit.generalinit(configdir)
 
-    # **************check if another instance of bots-engine is running/if port is free******************************
+    if not check:
+        # bots-engine should not run during the update
+        try:
+            engine_socket = botslib.check_if_other_engine_is_running()
+        except OSError:
+            print('Error: bots-engine is running (or another bots-updatedb). Nothing is changed.')
+            sys.exit(3)
     try:
-        engine_socket = botslib.check_if_other_engine_is_running()
-    except socket.error:
-        sys.exit(3)
-    else:
-        atexit.register(engine_socket.close)
-
-    # **************initialise logging******************************
-    botsglobal.logger = botsinit.initenginelogging(__name__)
-    atexit.register(logging.shutdown)
-    for key, value in botslib.botsinfo():
-        # log info about environement, versions, etc
-        botsglobal.logger.info('%(key)s: "%(value)s".', {'key': key, 'value': value})
-
-    # **************connect to database**********************************
-    try:
-        botsinit.connect()
-    except Exception as exc:
-        botsglobal.logger.exception(
-            _(
-                'Could not connect to database. Database settings are in bots/config/settings.py. Error: "%(exc)s".'
-            ),
-            {'exc': exc}
-        )
-        sys.exit(3)
-
-    botsglobal.logger.info(_("Connected to database."))
-    atexit.register(botsglobal.db.close)
-
-    # **************handle database lock****************************************
-    # set a lock on the database; if not possible,
-    # the database is locked: an earlier instance of bots-engine was terminated unexpectedly.
-    if not botslib.set_database_lock():
-        warn = _(
-            '!Bots database is locked!\n'
-            'Bots-engine has ended in an unexpected way during the last run.\n'
-            'Most likely causes: sudden power-down, system crash, problems with disk I/O, bots-engine terminated by user, etc.'
-        )
-        botsglobal.logger.critical(warn)
-        sys.exit(3)
-    atexit.register(botslib.remove_database_lock)
-
-    terug = 0
-    if botsglobal.settings.DATABASES['default']['ENGINE'] == 'django.db.backends.sqlite3':
-        terug = sqlite3()
-    elif botsglobal.settings.DATABASES['default']['ENGINE'] == 'django.db.backends.mysql':
-        terug = mysql()
-    elif botsglobal.settings.DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql_psycopg2':
-        terug = postgresql_psycopg2()
-
-    sys.exit(terug)
+        code = update(check=check, backup_confirmed=backup_confirmed)
+        if code == 0 and createsuperuser and not check:
+            from django.core.management import call_command
+            call_command('createsuperuser')
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        print('Error in updating the database: %s: %s' % (exc.__class__.__name__, exc))
+        code = 3
+    finally:
+        if not check:
+            engine_socket.close()
+    sys.exit(code)
 
 
 if __name__ == '__main__':

@@ -13,6 +13,8 @@ from . import botsglobal
 from . import botslib
 from . import inmessage
 from . import outmessage
+from .botsconfig import *  # noqa: F401,F403  pylint: disable=wildcard-import,unused-wildcard-import
+# (all constants of botsconfig can be used via transform, as in bots 3: transform.TRANSLATED, transform.ID)
 from .botsconfig import (
     OK,
     DONE,
@@ -364,7 +366,7 @@ def _translate_one_file(row, routedict, endstatus, userscript, scriptname):
         # original file goes straight to MERGED
         ta_parsed.copyta(status=MERGED, statust=OK)
         edifile.handleconfirm(ta_fromfile, routedict, error=False)
-        botsglobal.logger.error(_('Parse & passthrough for input file "%(filename)s".'), row)
+        botsglobal.logger.debug(_('Parse & passthrough for input file "%(filename)s".'), row)
 
     except FileTooLargeError as exc:
         ta_parsed.update(statust=ERROR, errortext=str(exc))
@@ -495,8 +497,14 @@ def persist_lookup(domein, botskey):
             " WHERE domein=%(domein)s"
             " AND botskey=%(botskey)s",
             {'domein': domein, 'botskey': botskey}):
-        return pickle.loads(row[str('content')].encode('iso-8859-1'))
+        return persist_loads(row[str('content')])
     return None
+
+
+def persist_loads(content):
+    """The value of a row in persist. Also for a row written by bots 3 (python 2): a byte string in it is
+    read as utf-8, or else as latin-1 (also needed for a date or time, that python 2 stored as bytes)."""
+    return botslib.loads_pickled(content.encode('iso-8859-1'))
 
 
 # *********************************************************************
@@ -743,7 +751,7 @@ def concat(*args, **kwargs):
     return terug if terug else None
 
 
-def partnerlookup(value, field, search_field="idpartner", safe=False):
+def partnerlookup(value, field, search_field="idpartner", safe=False, field_where_value_is_searched=None):
     """
     Lookup via table partner.
     :param value: value of the search_field to lookup
@@ -760,7 +768,12 @@ def partnerlookup(value, field, search_field="idpartner", safe=False):
      - True: if not found, return value
      - False: if not found, throw exception
      - None: if not found, return None
+    'not found' is also: the partner is there, but the field has no value (is empty).
+
+    field_where_value_is_searched: the name of parameter search_field in bots 3.
     """
+    if field_where_value_is_searched:
+        search_field = field_where_value_is_searched
     # Use Django quote_name to apply correct quotation character for database
     # to be able to use 'desc' field as value or search_field
     qn = botsglobal.connection.ops.quote_name
@@ -769,8 +782,8 @@ def partnerlookup(value, field, search_field="idpartner", safe=False):
             " FROM partner"
             f" WHERE {qn(search_field)}=%(value)s",
             {"value": value}):
-        # partner found
-        if row[field] is not None:
+        # partner found; a field without value is 'not found' (as in bots 3)
+        if row[field]:
             return row[field]
     # nothing found in partner table
     if safe is None:

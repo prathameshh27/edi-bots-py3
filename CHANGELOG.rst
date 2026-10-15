@@ -2,6 +2,401 @@ Bots - CHANGELOG
 ================
 
 
+4.0.0 (unreleased)
+------------------
+
+Based on 4.0.0rc4 below.
+
+What is compared with: "bots 3.2.0" is the release (github eppye-bots/bots, branch ``bots32``; the same as the
+installers on sourceforge). The first rounds of this work compared with the ``master`` branch of that
+repository, which is later development that was never released. Where that made a difference it is said below.
+The reference of the regression tests is made with the release.
+
+- x12 997: the IDs in the 997 and the IDs the confirm rules are checked with are GS02/GS03 of the received
+  group, as in 3.2.0. 4.0 used the IDs found by the QUERIES of the envelope grammar (mostly ISA06/ISA08): another
+  997, and 997's for one partner were not merged into one interchange. (An earlier change here was made to match
+  ``master``.) With this the official x12 plugins give exactly the output that is shipped in the plugins.
+- ``botslib.opendata()`` / ``readdata()`` without charset: the content is read and written as it is (each byte
+  one character, no conversion of line ends), as in bots 3. A route script that reads a file with
+  ``readdata()`` and writes it with ``opendata(name, 'wb')`` works again; in 4.0 that gave ``TypeError: a
+  bytes-like object is required``, and the encoding and the line ends depended on the platform.
+- xmlnocheck: a record without the internal ``BOTSIDnr`` (made or changed by a mapping itself) can be written
+  again.
+
+Carried over from the 3.2.0 release and from a patched bots 3 installation (a 3.2.0 release candidate with
+local changes, compared file by file with the release):
+
+- The partner of a mail address is also searched in the CC field of the partners, as 3.2.0 does (neither
+  ``master`` nor 4.0 did). An address has to be equal to one of the addresses in the field: 3.2.0 also accepted
+  a part of an address. New: also found when a partner has more than one address in its mail field.
+- ``transform.persist_lookup()`` reads values written by bots 3 (python 2). A stored text with non-ASCII
+  characters or a date/time raised ``UnicodeDecodeError`` in 4.0.
+- Incoming editype ``mailbag`` at the parser: the file is read as xml (messagetype ``mailbag``: found via
+  ``grammars/xml/mailbag.py``). 4.0 gave "Unknown editype for incoming message: mailbag". The normal way (a
+  route with editype ``mailbag``, the mailbag step recognises xml) worked and now has tests, also for a route in
+  parts (receive / translate / send).
+- ``bots-portusersys`` lists divisions for review: ``len(x)/2`` is a whole number in python 2 and a float in
+  python 3, where a slice or ``range()`` with it fails. 2to3 does not change these.
+- xml, xmlnocheck: the attributes of an element are written in alphabetical order again, as bots 3 did and as
+  the code says. Python 2 sorted them; since python 3.8 they came in the order of the puts in the mapping
+  (seen in the production replay: 22 of 29 xml files differed in nothing else).
+- An object of a database channel that bots 3 (python 2) received and stored is read: dates, decimals and
+  non-ASCII byte strings in such a pickle gave "[A59]: incoming file has not allowed characters". Matters for
+  files that are received but not translated at the moment of the move, and for re-processing the history
+  (production replay: 386 of 450 stored objects of one environment). ``botslib.loads_pickled()``; persist
+  uses the same.
+- ftps, ftpis: sending a file no longer depends on the server closing TLS on the data connection. With a
+  server that does not (seen with a public ftp service; the same with bots 3 on python 2.7) every upload
+  above a few hundred bytes waited for the time-out and failed, and the next files failed on the answers of
+  the server being out of step. Bots now waits at most 2 seconds for it.
+- sftp: a file that is not on the server yet is opened for writing, not for append. To append the ssh library
+  asks for the size of the file; a server that gives none for a new file got files of 0 bytes and
+  ``TypeError: int() argument ... NoneType`` (the same with bots 3).
+- Channels of type ``db``: new field "Database" (MySQL/MariaDB, PostgreSQL, SQLite, Microsoft SQL Server). When it is
+  set bots makes the connection (host, port, username, password; database from "path", or "filename" as the
+  scripts of bots 3 used; driver options from "parameters"); the communication script only needs
+  ``incommunicate`` / ``outcommunicate``; bots commits when they end without error and rolls back otherwise.
+  The connection behaves the same for every database: ``%(name)s`` or ``%s`` parameters, rows as dicts that can
+  also be used by position (``bots.dbconnect``). A script with its own ``connect``/``disconnect`` works as in
+  bots 3. Migration ``0007``.
+- Database of bots itself on Microsoft SQL Server (django backend ``mssql-django``): table definitions for the
+  engine tables, and bots-engine connects through ``bots.dbconnect`` (``merge``, a reserved word in SQL Server,
+  is quoted). Install option ``[mssql]``. (Tests on a server: see ``tests/servers.py``.)
+- Tests can run on a database server: ``BOTS_TEST_DATABASE=<kind>://<user>:<password>@<host>:<port>`` gives
+  every test environment its own new database there (dropped afterwards); ``BOTS_TEST_CHANNEL_DATABASE`` only
+  for the database of the channels.
+- ``bots.ini [settings] channels_use_testpath = True``: every channel uses its testpath (ftp, sftp, mail, database
+  become folders); a channel that would connect to another machine and has no testpath is not run. For a test
+  environment; unlike ``runacceptancetest`` the clock and counters are not frozen. ``bots-portenv --local-folders``
+  makes all folders of file channels inside the new environment, gives every other channel a testpath there and
+  sets this.
+- Database servers: interchanges are numbered and filled the same on every database. The order of the groups to
+  envelope, of the routes of a run and the choice between matching translations are no longer left to the
+  database: its collation may ignore case or punctuation, PostgreSQL sorts NULL last. Sorted as SQLite (and bots 3
+  on it) does. Eight engine queries got ``ORDER BY idta``. Tested with the 42 official plugins on PostgreSQL 17,
+  MySQL 8.4, MariaDB 11.4 and SQL Server 2022 as the database of bots.
+- Error texts with ``debug`` on: the error line reads ``MessageError: ...`` as in bots 3, not
+  ``bots.exceptions.MessageError: ...``.
+- ``bots-portenv --bots3-dir-on-server=<dir>``: file channels with a relative path get the full path of the
+  folder bots 3 used.
+- New: ``bots-portenv --bots3=<directory of bots 3> [--number=N] <new environment directory>`` makes an
+  environment from an environment of bots 3 in one go: usersys converted, a copy of the SQLite database
+  upgraded, configuration carried over, usersys checked. Bots 3 is only read. ``MIGRATION.md`` is the guide
+  for moving an installation.
+- Packaging: install options ``[bots3]`` (what an installation from bots 3 usually needs), ``[sftp]``,
+  ``[templatehtml]``, ``[mysql]``, ``[postgresql]``. Version ``4.0.0`` (first ``4.0.0rc4+stab1``); a build from a git repository
+  without version tag no longer gets version ``0.0.postN``.
+- New: ``bots-portconfig <config of bots 3> <config of the new environment> [--write]`` carries the
+  configuration over: every option of the ``bots.ini`` of bots 3 that this bots knows (comments of the new
+  file are kept; other name where it changed; reports what is not used any more), and from ``settings.py``
+  the mail settings for error reports (to ``MAILERS``), managers, time zone, session settings and secret
+  key. Without ``--write`` it only reports. The production installation changed 5 to 19 settings per
+  environment.
+- Web: a record of bots 3 can be saved again: a description longer than 256 characters (bots 3 did not check
+  the length), and a database channel without host (the script makes the connection). "Change password" is in
+  the menu by default again, as in bots 3 (``menu_changepassword``).
+- ``bots.ini`` with a section or an option twice is read as python 2 did (the last value is used). 4.0
+  stopped at start with ``DuplicateSectionError``; 7 of the 9 ``bots.ini`` files of the production installation
+  that was checked have a section twice.
+- Own logo and favicon per environment: ``[webserver]`` ``logo_image``, ``favicon_image`` (image files; shown in
+  the page itself, the files of bots are not changed).
+- About screen: own title and own support link via ``bots.ini`` (``[webserver]`` ``about_title``,
+  ``support_url``, ``support_text``), instead of changing the template.
+- Checked, already the same as 3.2.0: order of files in out-communication and of messages in an envelope
+  (``ORDER BY idta``), user enveloping criterion when merging, log file viewer, menu "Retry failed
+  out-communications", route names in the run menu are url-encoded, edifact viewer leaves indented files as
+  they are.
+- Json without the name of the root (``{...}`` instead of ``{"ROOT": {...}}``), for an installation that
+  patched bots 3 to write it so: syntax ``named_root_object: False``. No change in the program; now with a
+  test that one file per editype sets it for all grammars of an installation: the envelope grammar
+  ``usersys/grammars/json/json.py`` (and ``usersys/grammars/jsonnocheck/json.py``) with only that syntax.
+
+Work towards a release that existing bots 3.2.0 installations can move to. Ids (PAR-, API-, C-, WP- ...)
+refer to the migration audit and its action plan.
+
+Behaviour restored to bots 3.x:
+
+- Incoming field values are stripped again by default: syntax ``strip_value`` is now True for csv, excel,
+  edifact, x12 and tradacoms (C-03). Numeric fields ignore surrounding whitespace also when ``strip_value``
+  is off; a trailing blank no longer adds decimals (PAR-13).
+- ``botslib.addinfo()`` defaults ``statust`` to OK again in ``where`` and ``change`` (API-3).
+- All exception classes and all ``botsconfig`` constants are reachable through ``botslib`` again
+  (``botslib.BotsError``, ``botslib.CommunicationError``, ``botslib.FILEIN`` ...); ``GotoException`` is an
+  alias of ``DummyException``; ``BotsError.msg`` works (C-04, C-17).
+- x12: default syntax ``ISA14`` is ``'1'`` again; a value set by the mapping has priority, then syntax (C-22,
+  API-5). A confirmrule ``ask-x12-997`` does not change ``ISA14`` any more (4.0 set it to ``'1'``): an
+  installation with ``'ISA14': '0'`` in its x12 syntax and such a rule sends ``0``, as with 3.2.0. Found by
+  running a bots 3.2.0 development environment through both versions.
+- x12 997: confirmrules are evaluated per message (ST) again and only matching messages are acknowledged
+  (PAR-12). The 997 grammar is ``997004010`` again, as bots 3. 4.0 used ``997<GS08>`` when usersys has that
+  grammar, so a partner sending 004060 got its 997 in 004060 instead of 004010 (seen in the production
+  replay: 22 of 22 997's). That choice is now a setting: ``[settings] x12_997_version_as_received = True``;
+  with it an implementation suffix in GS08 falls back to ``997<first 6 of GS08>``, then ``997004010`` (PAR-5). Sender/receiver fall back to GS02/GS03 resp. UNB when the envelope grammar has no
+  QUERIES (PAR-1).
+- json: one message is written as an object, several messages as a list (as bots 3.x); syntax ``force_list``
+  always writes a list (C-10). ``jsonnocheck`` output works again (WRT-1).
+- ``trash`` channel registers the file as send (EXTERNOUT) again, so reports count it (C-38).
+- Outgoing mail: channel field 'as body or as attachment' not set means attachment again (COM-4).
+- Incoming mail: a header that mixes plain text and an encoded word is decoded, not rejected (COM-2); a mail
+  without Subject or Message-ID is accepted (COM-3); text attachments keep their line ends (COM-23).
+- ``sort()``: records without the sort key come first again (WRT-9).
+- Configuration: a relative config directory (``-cconfig``, relative ``BOTS_CONFIG_DIR``) works again
+  (API-17); ``log_file_number = daily``, lower-case log levels and a ``bots.ini`` without section
+  ``[dirmonitor]`` are accepted (API-7, API-15).
+- Enveloping: syntax parameter ``IDmode`` (``ISA_qualifier_GS``, ``ISA_qualifier``, ``UNB_qualifier``) and
+  ``frompartner_outer`` / ``_inner`` / ``_qualifier`` in ``ta_info`` of envelope scripts (C-21). These are
+  from ``master``; they are not in the 3.2.0 release.
+- Enveloping: ``ta_info['reference']`` is a string again (C-20).
+- Interchange counters: a counter with a name that is new in 4.0 (``isacounter_<sender>_<receiver>``,
+  or sender taken from the syntax) continues where the bots 3 counter was, instead of starting at 1 (C-46).
+- ``bots-updatedb`` is new (it was still the bots 2 to bots 3 script: no effect on PostgreSQL, errors on
+  MySQL). It recognises an empty database, the database of bots 3 and of bots 4, and refuses anything else:
+
+  - empty database: creates all tables, also ``ta``, ``mutex``, ``persist``, ``uniek`` (before: by hand
+    from ``bots/sql``);
+  - database of bots 3 (needs ``--yes-i-have-a-backup``): registers the existing tables, applies the
+    changes, widens the columns of ``ta``, ``persist``, ``uniek`` that are wider in bots 4 (without this
+    every file failed on PostgreSQL / MySQL: API-2), gives users the new ``view`` permissions for what
+    they could see in bots 3 (C-50), lists the channels with a relative path (C-37);
+  - ``--check`` reports and changes nothing; ``--createsuperuser`` for a new database.
+
+  Checked with databases made by bots 3.2.0 on PostgreSQL 17, MariaDB 11.4, MySQL 8.4 and SQLite.
+- The tables of bots-engine are part of the migrations (``0005``): ``migrate`` gives a complete database.
+- No pending model changes on any supported Django (``makemigrations --check``): migration ``0004``,
+  ``default_auto_field`` set (WEB-6). The help text of the channel field 'filename' was shown as a tuple.
+- ``uniek.domein`` is 128 everywhere (was 35 in the model, 70 in the sql files, 35 after an upgrade): the
+  counter names of 4.0 can be longer than 70 (WEB-9). ``persist.domein`` 70, ``persist.botskey`` 64.
+- bots-engine on a database without its tables says so and tells to run ``bots-updatedb``, instead of
+  '!Bots database is locked!' (DB-1).
+- PostgreSQL: bots-engine works with psycopg2 as the only driver again (API-11); rows of a query can be read
+  by position too (``row[0]``), as in bots 3 (DB-4); options in ``settings.py`` that are for django only
+  (``isolation_level``, ``pool``, ...) are not passed to the driver.
+- Counters (``unique()``): two processes can not draw the same number (checked with 4 processes on
+  SQLite, PostgreSQL, MariaDB, MySQL).
+- Cleanup deletes old reports in parts of 1000: with millions of reports one statement was too big for
+  MySQL / MariaDB and nothing was deleted (COM-20).
+- ``settings.py``: the MySQL example used ``storage_engine``, which MySQL 5.7+ does not know (DB-6).
+- Editype ``excel`` works again (it could not work on python 3: PAR-2). ``.xlsx`` / ``.xlsm`` are read with
+  ``openpyxl``, ``.xls`` with ``xlrd`` (``pip install bots-ediint[excel]``); the file is recognised by its
+  content. Values are passed as in bots 3: whole numbers without decimals, dates as ISO date, errors as text.
+- Preprocessing ``extractpdf`` works again, with ``pdfminer.six`` (``pip install bots-ediint[pdf]``); it used
+  an interface that pdfminer no longer has, and wrote bytes into a text csv (COM-15).
+- Route scripts: ``botsglobal.currentrun.get_minta4query_route()`` and ``get_minta4query_routepart()``
+  are back (C-14).
+- User exit ``accept_incoming_attachment`` with the arguments of bots 3 works: the arguments that are new
+  in 4.0 (``content_disposition``, ``filename``) are only passed to a function that has them (C-19).
+- ``import bots.usersys...`` in a user script imports from the usersys in use (part of C-45).
+- ``pluglib.make_index(cleaned_data, filename)``: the order of arguments of bots 3 is accepted (C-33).
+- ftp, ftps, ftpis receive in ASCII mode (the default of a channel): the bytes are written as received.
+  4.0 decoded as UTF-8 and wrote latin-1: UTF-8 text was silently re-coded, other non-ASCII files were not
+  received at all, and a CR on its own became LF (COM-1). This is what 3.2.0 does: bytes as received,
+  line end CRLF as LF. (Only ``master`` refused files with non-ASCII bytes in ASCII mode.) After a failed transfer
+  the answer of the server is read, so the next file is not affected.
+- http(s) channels (new in 4.0):
+
+  - parameters and headers are per channel and per file; a channel got the parameters and headers of the
+    channels that ran before it in the same run (COM-5);
+  - a channel with one parameter (``key=value``) sends it; a value can contain ``=`` and url-quoting
+    (COM-6);
+  - with debug 2 or higher every file ended in error after it was sent (COM-7);
+  - 'mime encoding: ascii' on a file without content type gave an error (COM-8);
+  - the second and later files of a run were posted to the url of the channel plus the name of the
+    previous file: ``Uri.uri(filename=...)`` no longer changes the Uri object (COM-13);
+  - a CA file (``ca_cert``, or ``caCert`` as in bots 3) is used for the channel itself, no longer set for
+    the whole process via ``REQUESTS_CA_BUNDLE``;
+  - ``pip install bots-ediint[http]`` installs ``requests``.
+- TLS/SSL in channels (pop3s, imap4s, smtps, smtpstarttls, ftps, ftpis, https): two new fields in a channel,
+  'Verify server certificate' (default on) and 'CA certificate file' (migration ``0006``).
+
+  - 4.0 verified the certificate in every one of these channels except ftpis, without a way to switch it
+    off: a channel of bots 3 to a server with a self-signed certificate stopped working (C-35). And ftpis
+    accepted any certificate (COM-25).
+  - Now all of them verify, unless switched off in the channel. ``bots-updatedb`` switches it off for the
+    channels in a bots 3 database (bots 3 never verified) and lists the channels this concerns.
+  - 'CA certificate file' can be used together with a client certificate ('Certificate chain file' with
+    'Private key file'); before, a private CA and a client certificate could not be combined.
+  - ftpis: ``parameters`` 16 and 17 could not work; the TLS version is negotiated, ``5`` demands TLS 1.2
+    (COM-10).
+- sftp: a private key of any type paramiko knows is read (RSA, ECDSA, Ed25519), with or without passphrase;
+  it was RSA only, and with paramiko 4+ a user script asking for another type failed on the removed
+  ``DSSKey`` (COM-11). Keys in ``parameters`` of the channel that paramiko does not know are ignored
+  instead of breaking the connection (COM-26). The paramiko version is compared as a number.
+- Two processes of bots starting at the same moment (engine, webserver, dirmonitor) could fail on creating
+  the same directory.
+- Web interface, security (all in functionality new in 4.0):
+
+  - log viewer: on Windows a user with permission to view reports could read any file the webserver can
+    read, eg ``config/settings.py`` with the ``SECRET_KEY`` (``?engine=../../../config/settings.py``):
+    the name is now a file name only and has to be in the log directory (WEB-1);
+  - source viewer: a ``.py`` file in a directory next to usersys with a name that starts the same
+    (``usersys_old``) could be read (WEB-14);
+  - a saved selection is read by name from the directory of the user only (WEB-15);
+  - file viewer: an incoming file with content type ``text/html`` ran its scripts in the session of the
+    user who viewed it; it is now shown in a sandbox: no scripts, no access to the page of bots (WEB-8);
+  - lists in the admin (channels, routes): an id or message type with html in it was shown as html; such
+    values are escaped (WEB-21). The same for texts shown after reading a plugin.
+- bots-dirmonitor:
+
+  - never started a route on Windows: the name of a file in an event was compared in a way that could
+    not match (SVC-1). On Linux a recursive watch did not see files in sub-directories (SVC-20), and a
+    path written with ``//``, ``/../`` or relative never matched (SVC-21). Events are now matched on the
+    name of the file and its directory, the same way on both platforms;
+  - did not start with the ``bots.ini`` that is installed (sections ``[dirmonitorN]`` without ``path``:
+    SVC-3);
+  - ``--reload`` and the 'dirmonitor' tick of a route work on Windows; the threads that watch can be
+    stopped (SVC-10);
+  - watches first and looks for files that are already there after that; a file that arrived while
+    starting or reloading was not seen;
+  - sends the job as ``bots-engine``; the jobqueue-server knows where that is. Before, the job could be
+    refused as 'Invalid task' (SVC-2);
+  - a job that could not be sent because the jobqueue-server is away is sent when it is back;
+  - new: ``[dirmonitor] trigger_on_modify = True`` (Linux) starts the route for every write to a file,
+    as bots 3 did; default is once, when the file is closed (C-56);
+  - usage text; 'Several routes to run for same watched path' was logged for every route (SVC-17).
+- bots-jobqueueserver:
+
+  - order of jobs: priority 1 first, within a priority first in first out. It was the reverse: lowest
+    priority first, newest first (SVC-4);
+  - accepts ``bots-engine`` by name (Windows: also ``bots-engine.exe``) and by the path it is installed
+    in, also when PATH is not set for the daemon (SVC-2);
+  - a job with output that is not UTF-8, a wrong priority, a job that can not start: logged, and the
+    queue goes on (SVC-9, SVC-22); with ``killjobsintimeout`` the processes started by the job are killed
+    too and the queue does not wait for them;
+  - after 10 jobs in a row that can not start, new jobs are refused (code 6) instead of accepted and
+    never run (SVC-11);
+  - stop (SIGTERM, Ctrl-C): the running job can finish (``[jobqueue] stopwait``, default 60 seconds), the
+    jobs that are not run are logged, exit code 0 (SVC-23); ``nr_threads`` is not used: jobs run one at
+    a time;
+  - listens on and is called via 127.0.0.1: on Windows each call via ``localhost`` took 2 seconds.
+- Outgoing mail (smtp, mimefile):
+
+  - mime-encoding 'never': the content of the file is in the mail as it is. 4.0 changed every line end in
+    it (a LF or CR on its own) to CRLF (COM-9);
+  - resend of a mail that was made by bots 3, or that was send in an automatic retry: the document is
+    send again in a mail as before. It was send as the old mail inside a new mail (COM-24, C-41).
+- bots-engine, start and exit:
+
+  - the engine always ends. If at the end a thread is still running (started by a library or a user
+    script) python waited for it for ever, with the database locked for the next run. Now the engine
+    waits ``[settings] maxsecondsexit`` (default 30) seconds, logs which thread is running and where,
+    removes the database lock and ends with its normal exit code (ENG-1);
+  - a second engine for the same environment says on stderr why it does not run (exit code 3 as before);
+  - ``log_when = report``: no error at exit when a log with the number of the run exists (Windows:
+    COM-21);
+  - the error report (mail) for a route that does not exist had the text with ``%(route)s`` as subject
+    and a dict as text (COM-12);
+  - zip of outgoing files: only the files made in the route-part itself, as in bots 3 (COM-18).
+- ``bots-configure`` works on python 3.13 and later (SVC-5); ``bots-plugoutindex`` works (SVC-6).
+- json (functionality new in 4.0, unless said otherwise):
+
+  - boolean fields (format ``B``) could not be written (WRT-3) and not be read: a value was checked as
+    a number. A boolean is ``True`` / ``False`` in a mapping; ``true``, ``false``, ``1``, ``0`` are accepted;
+  - 'a record with MAX 1 as object instead of a list' never worked (WRT-4). It works now, but only when
+    asked for with syntax parameter ``'max1_as_object': True``. Default is as bots 3 writes json: records
+    in a record are always a list. (The default of 4.0 would have changed every json bots 3 writes, had
+    it worked.) ``force_list`` is for the list of messages only;
+  - a list of values in a file: the values are strings, as every value in bots; objects in the same list
+    are records; a list for a field that can not be repeated is error [J57] instead of an internal
+    error (PAR-6);
+  - empty content (``{}``, ``[]``) is ``[J52]: No usable content`` again, not an internal error (PAR-7,
+    regression);
+  - jsonnocheck: ``{"order": {...}}`` is read as a message with root ``order`` again, as in bots 3. 4.0
+    put it in a record ``ROOT``, so ``inn.get({'BOTSID': 'order', ...})`` found nothing (C-09,
+    regression). If ``defaultBOTSIDroot`` is set in the grammar that is the root, as in 4.0.
+- Web interface, screens and actions:
+
+  - 'Resend All' in the outgoing screen did nothing: the button had the name of 'Rereceive All' (WEB-3);
+  - setting 'refresh' in a screen logged the user out after the interval: the page posted its first
+    form, which is the log-out form (WEB-22). The same mistake in deleting a saved selection;
+  - 'Run engine' from the menu waited until the engine was ready, as long as the run took (WEB-4), and
+    needed ``bots-engine`` in the PATH of the webserver (WEB-5): the engine is started with the python
+    of the webserver and the request returns at once. ``/bots/runengine?clparameter=--new`` without a
+    character after ``runengine`` showed the home page and ran nothing (WEB-18);
+  - menu 'Manual confirm' showed the wrong files (WEB-7); a text filter with two spaces gave error 500
+    (WEB-10); ``/bots/filer?idta=abc`` gave error 500 (WEB-11, regression);
+  - 'Log out' on the password pages gave error 405 on django 5 and later (WEB-13);
+  - values of one request (title of the window, shortcuts of the user) could show up in a request
+    handled at the same time (WEB-16);
+  - code lists in the admin as a user that is not superuser: error 500 on PostgreSQL (DB-3);
+  - the 404 page of the webserver had a broken title (WEB-17).
+- New: ``bots-portusersys <source> <destination>`` converts the user scripts of bots 3 to python 3: a
+  usersys directory, a plugin or a zip with grammars. It makes imports of a file next to it explicit
+  (``from recordsD96AUN import recorddefs`` -> ``from .recordsD96AUN import ...``), converts python 2
+  syntax and names (with python library ``fissix``: ``pip install bots-ediint[port]``), writes a file
+  that is not utf-8 as utf-8, compiles every file, and lists the lines that are valid python 3 but can
+  work differently (cmp, encode/decode, loops over a set, ...). The source is not changed.
+- New: ``bots-checkusersys`` checks the usersys of an environment as bots-engine uses it: compiles every
+  python file, reads every grammar with the checks of a translation, imports every script.
+- Extra ``tools`` asked for ``pdfminer`` (the python 2 library); now ``pdfminer.six``.
+- Mapping scripts: ``transform.partnerlookup``: a partner of which the field is empty is 'not found'
+  again (exception, or with ``safe`` the value or None); 4.0 returned ``''`` (C-15). The 3rd parameter
+  can be given by its bots 3 name ``field_where_value_is_searched`` (C-16).
+- Mapping scripts: the constants of ``botsconfig`` via ``transform`` (``transform.TRANSLATED``,
+  ``transform.ID``: C-17); ``inn.envelope`` is ``inn.envelope_content`` (C-18; a name from ``master``, not in
+  the 3.2.0 release).
+- Syntax parameters ``no_results_if_any_error_in_translation_edifile`` (now ``KillWholeFile``) and
+  ``allow_spaces_between_records: False`` (now ``strict_syntax_check: True``) work by their older
+  names; they were ignored without notice (C-25). These names are from ``master``, not from the 3.2.0 release.
+- Configuration: a ``settings.py`` of bots 3 is refused at start with the reason and what to do; it was
+  read without error and then nothing in the web interface worked (C-44). ``bots.ini``:
+  ``use_email_address_validation`` works by its bots 3 name (C-47); a relative ``usersys`` is looked for
+  in the environment first, not in the bots package.
+- Error of a file (in the database, in the web interface, in the error mail) is the error itself again.
+  4.0 put the python errors that led to it in front: ``'NoneType' object is not subscriptable ... The
+  above exception was the direct cause of the following exception ...`` (PAR-3).
+- An error that is handled (reported for the file) is no longer written to the log as ERROR with a
+  traceback; the traceback is logged at level DEBUG (API-12). 'Parse & passthrough' of a file is not an
+  error in the log (API-13).
+- A numeric field with ``_`` in it is not a number: python 3 reads ``1_0`` as 10 (PAR-10).
+- ``bots-grammarcheck``: a grammar that can not be imported gives the error, not a traceback (SVC-19).
+
+Fixes of defects that are also in bots 3 (checked with ``master``):
+
+- edifact interchanges with functional groups (UNB-UNG-UNH) are split into messages (PAR-4).
+- fixed files with ``noBOTSID``: record length is calculated correctly (PAR-11).
+- ``getdecimal()`` returns 0 for a non-numeric value, as documented (WRT-11).
+- Texts of errors: [A67] had an empty position (PAR-9); grammar error 'field length has to be greater
+  than nr of decimals' had an empty length (WRT-12).
+
+Fixes in functionality new in 4.0:
+
+- ``putraw()`` works (WRT-2); ``sort(..., sort_decimal=True)`` works (WRT-5); ``inn.sort()`` /
+  ``out.sort()`` accept the keyword arguments (WRT-6).
+- csv ``skip_firstline`` on an empty file (PAR-8).
+- Texts: [A69] had an empty position (PAR-9); the allowed formats of a field were shown as
+  ``dict_keys([...])`` (WRT-15); the debug line for a partner syntax was never written (WRT-10).
+- Merging: messages for which the mapping set different envelope data are no longer merged into one
+  interchange under the envelope data of the first group (API-1); merging only collects messages of the
+  route itself; an error in one group no longer marks the result of another group as failed.
+- x12: ``GS04`` set in the mapping is used for versions before 004010 too (API-4).
+- ``BotsConfig.get()``: an explicit default, also ``''``, is never an error; ``[dirmonitorN]`` without
+  ``route`` is "no route".
+- ``bots/config/bots.ini`` (used with ``-cconfig`` in a source tree) is the same as the install template;
+  it no longer switches on acceptance-test mode (API-8).
+
+Plugins:
+
+- A python plugin index (``botsindex.py`` of bots 2/3) is parsed, not executed; python 2 long literals
+  (``10L``) are accepted (C-30). No use of ``zipimport.load_module`` (removed in python 3.15).
+- Reading a plugin is all-or-nothing again: a failing plugin leaves nothing in the database (SVC-7).
+- Files in a plugin can not be written outside usersys/botssys (SVC-8).
+- All files under ``usersys/`` in a plugin are installed, not only ``.py``/``.html`` (C-31).
+- Plugin versions are compared as numbers (SVC-14).
+
+Other fixes:
+
+- ``import bots`` works from a source tree without installed distribution metadata (SVC-15).
+- Initialisation with an absolute config/usersys path no longer fails under import hooks on Windows (SVC-18).
+- ``txtexc()`` no longer fails when called before logging is initialised (API-12).
+
+Tests:
+
+- ``tests/regression``: 42 official plugins are run and compared with stored results of bots 3.2.0
+  (python 2.7): run counters and every output file.
+- ``tests/unit``: unit tests on a temporary bots environment.
+- The bots 3 unit test scripts moved to ``tests/legacy`` (not ported yet).
+
+
 4.0.0rc4 (2026-09-05)
 ------------------
 - Python 3 only >= 3.10

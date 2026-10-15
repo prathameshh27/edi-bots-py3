@@ -1,0 +1,1603 @@
+<section id="welcome" data-title="Welcome" data-group="Start here">
+<h2>Welcome</h2>
+<p class="lead">This is the manual of Bots EDI Translator, version 4.0.0. It tells you what Bots does, how to install it, how to set it up for your partners, and how to keep it running. Start here if you are new to Bots or to EDI.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Your company and its partners exchange orders, invoices and delivery notes as files. Each side wants these files in its own layout. Bots picks up the files, rewrites them into the layout the other side wants, and delivers them. It keeps a record of every file, so you can see what came in, what went out, and what went wrong.</p></div>
+
+<h3 id="welcome--how-it-works">How it works</h3>
+<h4>What Bots is</h4>
+<p>Bots is a program that <b>receives</b>, <b>translates</b> and <b>sends</b> business documents. It is open source (GNU GPL version 3) and written in Python. Version 4.0.0 runs on Python 3.10 or newer, on Windows and on Linux.</p>
+<p>Bots has three parts that you will meet all the time:</p>
+<ul>
+<li><b>The engine</b> (<code>bots-engine</code>): the program that does the work. Each time it runs, it fetches files, translates them and sends the results. It runs, finishes and stops. You start it by hand, from the web interface, or on a schedule.</li>
+<li><b>The web interface</b> (<code>bots-webserver</code>): the screens in your browser where you set up Bots and look at the results.</li>
+<li><b>Your own files</b>: the configuration (<code>config</code>), your grammars and mappings (<code>usersys</code>) and the data and database (<code>botssys</code>). Together these are an <a href="#environments">environment</a>.</li>
+</ul>
+
+<h4>What EDI is, in five sentences</h4>
+<p>EDI (Electronic Data Interchange) is the exchange of business documents, such as orders and invoices, between companies as structured files instead of paper or e-mail text. Both sides agree on a <b>standard</b> that fixes the layout of each document: in North America this is mostly <b>X12</b> (an order is an "850"), in Europe and elsewhere mostly <b>EDIFACT</b> (an order is "ORDERS"). Your own systems (the ERP) usually work with simpler layouts, such as csv, fixed-length records, xml or json. A translator such as Bots converts between the standard layout of the partner and the layout of your own systems. Files are wrapped in an <b>envelope</b> with the sender, the receiver and a control number, and the receiver often sends back an <b>acknowledgement</b> to confirm it got them.</p>
+
+<h4>What this manual covers</h4>
+<div class="table-wrap"><table>
+<tr><th>Group</th><th>What you find there</th></tr>
+<tr><td>Start here</td><td>How Bots works, the <a href="#glossary">glossary</a>, installation on <a href="#install-windows">Windows</a> and <a href="#install-linux">Linux</a>, <a href="#environments">environments</a>, the <a href="#first-start">first start</a>, two tutorials, and the <a href="#upgrade-from-bots3">upgrade from Bots 3</a>.</td></tr>
+<tr><td>Configure</td><td>The screens of the web interface: <a href="#routes">routes</a>, <a href="#channels">channels</a>, <a href="#partners">partners</a>, <a href="#translations">translations</a>, <a href="#confirm-rules">confirm rules</a>, <a href="#code-lists">code lists</a>, <a href="#counters">counters</a>.</td></tr>
+<tr><td>Grammars and mappings</td><td>How to describe a file layout (<a href="#grammars">grammars</a>) and how to write the translation itself (<a href="#mappings">mappings</a>), per kind of file.</td></tr>
+<tr><td>Envelopes, acknowledgements, scripts</td><td><a href="#envelopes">Envelopes</a>, <a href="#acknowledgements">997, CONTRL and MDN</a>, and the Python <a href="#user-scripts">user scripts</a> that change how Bots behaves.</td></tr>
+<tr><td>Run and maintain</td><td>Every setting of <a href="#bots-ini">bots.ini</a> and <a href="#settings-py">settings.py</a>, <a href="#databases">databases</a>, the <a href="#command-line">command line</a>, <a href="#scheduling">scheduling</a>, <a href="#acceptance-testing">testing</a>, <a href="#logging">logs</a>, <a href="#maintenance">maintenance</a> and <a href="#security">security</a>.</td></tr>
+<tr><td>Web interface</td><td>Every <a href="#web-interface">screen</a>, the <a href="#web-reports">reports</a>, <a href="#web-users">users and rights</a>, and <a href="#plugins">plugins</a>.</td></tr>
+<tr><td>Troubleshooting</td><td>A <a href="#troubleshooting">method</a> for finding problems, every <a href="#error-messages">error message</a>, and the <a href="#faq">FAQ</a>.</td></tr>
+</table></div>
+
+<h3 id="welcome--how-to-read">How to read this manual</h3>
+<p>Each section is one page with the same parts: a short explanation, <b>How it works</b>, one or more <b>How to</b> task guides, a <b>Reference</b> table with every setting, and a <b>Troubleshooting</b> table. Pick the path that fits you.</p>
+<h4>If you are new to EDI and to Bots</h4>
+<ol class="steps">
+<li><b>Read</b> <a href="#how-bots-works">How Bots works</a> and keep the <a href="#glossary">Glossary</a> open next to it.</li>
+<li><b>Install</b> Bots on <a href="#install-windows">Windows</a> or <a href="#install-linux">Linux</a>.</li>
+<li><b>Start</b> the web interface and log in: <a href="#first-start">First start</a>.</li>
+<li><b>Do</b> <a href="#tutorial-first-route">Tutorial: your first route</a>, then <a href="#tutorial-first-translation">Tutorial: your first translation</a>.</li>
+<li><b>Go on</b> with <a href="#routes">Routes</a>, <a href="#channels">Channels</a> and <a href="#grammars">Grammars</a> when you set up your first real partner.</li>
+</ol>
+<h4>If you are the administrator</h4>
+<ol class="steps">
+<li><b>Read</b> <a href="#environments">Environments</a>: how Bots finds its configuration, and how to run test and production side by side.</li>
+<li><b>Choose</b> the database in <a href="#databases">Databases</a> and go through <a href="#bots-ini">bots.ini</a> and <a href="#settings-py">settings.py</a>.</li>
+<li><b>Set up</b> <a href="#scheduling">scheduling</a>, <a href="#logging">logging</a>, <a href="#maintenance">maintenance</a> and <a href="#security">security</a>.</li>
+<li><b>Coming from Bots 3?</b> Follow <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</li>
+</ol>
+<h4>If you write grammars, mappings or scripts</h4>
+<ol class="steps">
+<li><b>Read</b> <a href="#how-bots-works">How Bots works</a> and <a href="#tutorial-first-translation">Tutorial: your first translation</a>.</li>
+<li><b>Look up</b> <a href="#grammar-syntax">grammar syntax</a>, <a href="#grammar-records">records and fields</a> and <a href="#mapping-functions">mapping functions</a>.</li>
+<li><b>Use</b> <a href="#mapping-recipes">mapping recipes</a> and the <a href="#user-scripts">user scripts</a> for special cases.</li>
+</ol>
+
+<div class="note info"><span class="label">Note</span><p>The official Bots documentation at <code>https://bots.readthedocs.io</code> was written for Bots 3. This manual follows the program of version 4.0.0. Where the two differ, this manual is right for 4.0.0, and the difference is marked <span class="badge green">new in 4.0</span> or <span class="badge orange">changed in 4.0</span>.</p></div>
+
+<h3 id="welcome--conventions">Conventions in this manual</h3>
+<div class="table-wrap"><table>
+<tr><th>You see</th><th>It means</th></tr>
+<tr><td><span class="ui">Configuration</span> → <span class="ui">Routes</span></td><td>A menu, screen, button or field in the web interface.</td></tr>
+<tr><td><code>bots-engine -c/srv/bots/env/production/config</code></td><td>Something you type, a file name, a setting.</td></tr>
+<tr><td><span class="badge green">new in 4.0</span> <span class="badge orange">changed in 4.0</span> <span class="badge red">removed</span></td><td>Differences from Bots 3.</td></tr>
+<tr><td><span class="badge gray">advanced</span></td><td>A setting you rarely need.</td></tr>
+<tr><td><code>MyCompany</code>, <code>PartnerA</code>, <code>PartnerB</code>, <code>PartnerC</code></td><td>The example companies used throughout the manual: your own company, a retailer, a supplier and a logistics company. All names, hosts and addresses in the examples are invented.</td></tr>
+</table></div>
+
+<h3 id="welcome--troubleshooting">Troubleshooting</h3>
+<p>The first problems most people meet, and where the answer is.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>'bots-webserver' is not recognized as an internal or external command</code> (Windows) or <code>bots-webserver: command not found</code> (Linux)</td><td>The virtual environment where Bots is installed is not active, or Bots is not installed.</td><td>Activate the virtual environment, or start the command with its full path. See <a href="#install-windows">Install on Windows</a> or <a href="#install-linux">Install on Linux</a>.</td></tr>
+<tr><td>The browser shows "This site can't be reached" for <code>http://localhost:8080</code></td><td>The web server is not running, or it uses another port.</td><td>Start <code>bots-webserver</code> and read the line <code>Serving at port: "…"</code>. See <a href="#first-start">First start</a>.</td></tr>
+<tr><td><code>Please enter a correct username and password. Note that both fields may be case-sensitive.</code></td><td>Wrong user name or password.</td><td>See <a href="#first-start">First start</a> for the first login and for making a new user from the command line.</td></tr>
+<tr><td>The engine report says <code>0 files received/processed in run.</code></td><td>The route is not active, or the incoming channel looks in another folder.</td><td>See the troubleshooting of <a href="#tutorial-first-route">Tutorial: your first route</a>.</td></tr>
+<tr><td><code>Translation not found for editype "csv", messagetype "…"</code></td><td>No active translation rule matches the incoming file.</td><td>See <a href="#tutorial-first-translation">Tutorial: your first translation</a> and <a href="#translations">Translations</a>.</td></tr>
+<tr><td>You come from Bots 3 and your scripts give Python errors</td><td>Bots 4.0.0 runs on Python 3; scripts of Bots 3 are Python 2.</td><td>Convert them with <code>bots-portusersys</code>: <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</td></tr>
+</table></div>
+</section>
+
+
+<section id="how-bots-works" data-title="How Bots works" data-group="Start here">
+<h2>How Bots works</h2>
+<p class="lead">This page follows one run of the engine from start to end: how files come in, how they are translated, enveloped and sent, and what Bots writes in its database on the way. Read it once before you set up your first route; it explains most of what you see later in the web interface.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Think of a sorting office. A <b>channel</b> is a mailbox: Bots empties the incoming ones and fills the outgoing ones. A <b>route</b> says which mailbox to empty, what to do with the letters, and which mailbox to put the result in. For each letter Bots keeps a log line, and at the end of the day it writes a summary.</p></div>
+
+<h3 id="how-bots-works--how-it-works">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 170" width="760" role="img" aria-label="One route: receive through an incoming channel, translate with grammars and a mapping, envelope and merge, send through an outgoing channel">
+<defs><marker id="arrow-howbots-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="40" width="160" height="90" rx="10"/><text x="90" y="74" text-anchor="middle" font-weight="600">1. Receive</text><text class="small" x="90" y="96" text-anchor="middle">incoming channel</text><text class="small" x="90" y="114" text-anchor="middle">file, ftp, sftp, mail…</text>
+<path class="arrow" d="M174,85 L206,85" marker-end="url(#arrow-howbots-1)"/>
+<rect class="box mid" x="210" y="40" width="160" height="90" rx="10"/><text x="290" y="74" text-anchor="middle" font-weight="600">2. Translate</text><text class="small" x="290" y="96" text-anchor="middle">grammar in, mapping,</text><text class="small" x="290" y="114" text-anchor="middle">grammar out</text>
+<path class="arrow" d="M374,85 L406,85" marker-end="url(#arrow-howbots-1)"/>
+<rect class="box mid" x="410" y="40" width="160" height="90" rx="10"/><text x="490" y="74" text-anchor="middle" font-weight="600">3. Envelope</text><text class="small" x="490" y="96" text-anchor="middle">merge messages,</text><text class="small" x="490" y="114" text-anchor="middle">ISA/GS, UNB</text>
+<path class="arrow" d="M574,85 L606,85" marker-end="url(#arrow-howbots-1)"/>
+<rect class="box out" x="610" y="40" width="140" height="90" rx="10"/><text x="680" y="74" text-anchor="middle" font-weight="600">4. Send</text><text class="small" x="680" y="96" text-anchor="middle">outgoing channel</text>
+</svg></div>
+
+<p>One run of <code>bots-engine</code> goes like this:</p>
+<ol>
+<li><b>Start.</b> The engine reads the <a href="#environments">configuration</a> (<code>bots.ini</code>, <code>settings.py</code>), connects to its database, and makes sure no other engine runs for this environment (it opens a local port, <code>[settings] port</code>, default <code>28081</code>). If the last run was cut off (power failure, killed process), it first does a crash recovery.</li>
+<li><b>Choose the routes.</b> With no route names on the command line, the engine runs every route that is <span class="ui">Active</span> and not <span class="ui">Not in default run</span>, in alphabetical order of the route name. A route with several parts (same name, different <span class="ui">Sequence</span>) runs its parts in order.</li>
+<li><b>Receive.</b> For each route part with an <span class="ui">Incoming channel</span>, Bots runs that channel: it reads the files from a folder, an FTP or SFTP server, a mailbox, a database or a script, and stores a copy of each file in <code>botssys/data</code>. The route then gives each received file its <b>editype</b> and <b>messagetype</b> (the kind of file, see the <a href="#glossary">glossary</a>), and if set, its partners.</li>
+<li><b>Split (mailbag).</b> For the editypes <code>edifact</code>, <code>x12</code>, <code>tradacoms</code> and <code>mailbag</code>, a file can hold several interchanges. Bots splits it into one file per interchange first.</li>
+<li><b>Translate.</b> What happens next depends on the field <span class="ui">Translate</span> of the route:
+<ul>
+<li><b>Translate</b>: Bots reads the file with the incoming <b>grammar</b> (the description of the file layout) and checks it. It splits the file into messages (documents). For each message it looks up a <a href="#translations">translation rule</a> that says which <b>mapping script</b> to use and what to make. The mapping script copies the data into a new message, which Bots writes with the outgoing grammar.</li>
+<li><b>Pass-through</b>: the file is not read; it goes to the outgoing channel as it is.</li>
+<li><b>Parse &amp; Pass-through</b>: Bots reads and checks the file with its grammar, but sends the original.</li>
+<li><b>Nothing</b>: the files of this route part are only received.</li>
+</ul></li>
+<li><b>Envelope and merge.</b> Translated messages for the same partner and the same kind are put together (merged) into one file, and Bots adds the <a href="#envelopes">envelope</a>: for X12 the ISA and GS segments with control numbers, for EDIFACT the UNB segment. csv, xml and json files get no envelope by default.</li>
+<li><b>Send.</b> The outgoing files are passed to the <span class="ui">Outgoing channel</span> of the route part, which writes them to a folder or sends them to a server or mailbox. With <span class="ui">Defer</span> ticked, sending waits for a later route part that uses the same channel.</li>
+<li><b>Acknowledgements.</b> If a <a href="#confirm-rules">confirm rule</a> says so, Bots sends an acknowledgement for received files (X12 997, EDIFACT CONTRL, e-mail MDN), or marks sent files as waiting for one.</li>
+<li><b>Report.</b> At the end Bots traces every received file through all its steps, writes a <b>file report</b> per file and one <b>run report</b>, and, if set in <code>bots.ini</code>, sends an error report by e-mail. Then it cleans up old data (once a day, <code>whencleanup</code>).</li>
+</ol>
+
+<h4 id="how-bots-works--records">What Bots writes in its database</h4>
+<p>Everything in the steps above is recorded, so you can follow each file in the web interface:</p>
+<div class="table-wrap"><table>
+<tr><th>Table</th><th>One row per</th><th>What it holds</th><th>Where you see it</th></tr>
+<tr><td><code>ta</code> (transaction)</td><td>step of a file or message</td><td>Each time a file or message moves to the next step, Bots adds a row with a new number, the <b>idta</b>. The row has the step (<code>status</code>), the result (<code>statust</code>), the route, channels, partners, editype, messagetype, reference, file name, and the error text. Rows point to their parent and child, so Bots can trace an outgoing file back to the received file.</td><td><span class="ui">All phases</span>, <span class="ui">Document-in</span>, <span class="ui">Document-out</span>, <span class="ui">Process Errors</span>, the detail screen</td></tr>
+<tr><td><code>filereport</code></td><td>received file</td><td>The summary of one received file after the run: in and out editype and messagetype, partners, channels, file names, number of messages, the mapping used, the error text, and the overall result.</td><td><span class="ui">Incoming</span>, <span class="ui">Outgoing</span></td></tr>
+<tr><td><code>report</code></td><td>run of the engine</td><td>The type of run (<code>new</code>, <code>resend</code>, <code>rereceive</code>, <code>automaticretrycommunication</code>, <code>crashrecovery</code>), the time, and the counts: received, done, in error, open, stuck, sent, process errors; the command line of the run.</td><td><span class="ui">All runs</span> → <span class="ui">Report (per run)</span></td></tr>
+</table></div>
+
+<h4 id="how-bots-works--status">Statuses</h4>
+<p>Each <code>ta</code> row has two values. <b>status</b> is the step the file or message has reached; <b>statust</b> is how that step ended. The web interface shows the names in the right-hand column.</p>
+<div class="table-wrap"><table>
+<tr><th>status</th><th>Shown as</th><th>Meaning</th></tr>
+<tr><td>200</td><td>Received</td><td>The file was taken in by the incoming channel.</td></tr>
+<tr><td>220</td><td>Infile</td><td>The file is in Bots and has its editype and messagetype from the route.</td></tr>
+<tr><td>310</td><td>Parsed</td><td>The file was read with its grammar.</td></tr>
+<tr><td>320</td><td>Document-in</td><td>One incoming message, split from the file.</td></tr>
+<tr><td>330</td><td>Document-out</td><td>One translated message, made by the mapping.</td></tr>
+<tr><td>400</td><td>Merged</td><td>Messages merged and enveloped into one outgoing file (or a passed-through file).</td></tr>
+<tr><td>500</td><td>Outfile</td><td>The file is assigned to an outgoing channel.</td></tr>
+<tr><td>520</td><td>Send</td><td>The file was handed to the outgoing channel.</td></tr>
+<tr><td>1</td><td>Process</td><td>Not a file but a step of Bots itself, such as a channel connection. An error here is a <b>process error</b>.</td></tr>
+<tr><td>3</td><td>Discarded</td><td>The mapping said not to write this message.</td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th>statust</th><th>Shown as</th><th>Meaning</th></tr>
+<tr><td>0</td><td>Open</td><td>The step did not end. After a run this means something went badly wrong.</td></tr>
+<tr><td>1</td><td>Error</td><td>The step failed; the error text tells why.</td></tr>
+<tr><td>2</td><td>Stuck</td><td>The step succeeded, but the next step did not pick it up. Usually a route with no outgoing channel for this file, or a filter of the route that does not match.</td></tr>
+<tr><td>3</td><td>Done</td><td>The step succeeded and the next step took it over.</td></tr>
+<tr><td>4</td><td>Resend</td><td>The file was sent again by a user (<span class="ui">resend</span>).</td></tr>
+<tr><td>5</td><td>No retry</td><td>The file will not be retried automatically.</td></tr>
+</table></div>
+
+<h4 id="how-bots-works--exit">How the engine ends</h4>
+<p>The engine prints the run report and ends with an exit code that a scheduler can check:</p>
+<div class="table-wrap"><table>
+<tr><th>Exit code</th><th>Meaning</th></tr>
+<tr><td>0</td><td>The run had no errors.</td></tr>
+<tr><td>1</td><td>A system error: wrong command line, no database connection, a severe error in Bots.</td></tr>
+<tr><td>2</td><td>The run went through, but there were errors in files or process errors.</td></tr>
+<tr><td>3</td><td>Nothing was done: another engine is running for this environment, or the database has no engine tables.</td></tr>
+</table></div>
+<p><span class="badge green">new in 4.0</span> The engine always ends. If a library or a user script leaves a thread running, the engine waits at most <code>[settings] maxsecondsexit</code> seconds (default 30), writes what is still running to the log, and ends anyway.</p>
+
+<h3 id="how-bots-works--how-to-follow">How to follow one file through a run</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Incoming</span> in the menu bar (the icon with the tooltip <span class="ui">Incoming</span>). Each line is one received file of the latest runs.</li>
+<li><b>Look</b> at the status column: a green mark is <span class="ui">Done</span>, a red one is <span class="ui">Error</span>.</li>
+<li><b>Click</b> the number (the <code>idta</code>) at the start of the line to open the detail screen. It shows the tree of the file: received, parsed, the messages in it, the translated messages, the outgoing file, and its sending, each with its <code>idta</code>, status and error text.</li>
+<li><b>Click</b> a file name in that tree to see the content of the file at that step.</li>
+<li><b>Open</b> <span class="ui">All runs</span> → <span class="ui">Report (per run)</span> to see the counts of the whole run.</li>
+</ol>
+
+<h3 id="how-bots-works--reference">Reference</h3>
+<p>Settings in <code>bots.ini</code> that change how a run goes. The full list is in <a href="#bots-ini">bots.ini</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[settings] port</code></td><td>Local port the engine opens to make sure only one engine runs per environment.</td><td><code>28081</code></td><td>Different for each environment on one machine.</td></tr>
+<tr><td><code>[settings] maxruntime</code></td><td>Minutes an engine may run. A second engine started within this time does not end in error.</td><td><code>60</code></td><td>Number of minutes.</td></tr>
+<tr><td><code>[settings] maxsecondsexit</code> <span class="badge green">new in 4.0</span> <span class="badge gray">advanced</span></td><td>Seconds the engine waits at the end for threads that are still running.</td><td><code>30</code></td><td>Number of seconds.</td></tr>
+<tr><td><code>[settings] compatibility_mailbag</code> <span class="badge gray">advanced</span></td><td>If True, only editype <code>mailbag</code> is split into interchanges (as Bots 2.2); edifact, x12 and tradacoms are not.</td><td><code>False</code></td><td><code>True</code>, <code>False</code></td></tr>
+<tr><td><code>[settings] maxfilesizeincoming</code></td><td>Incoming files larger than this (bytes) are not translated and give an error.</td><td><code>5000000</code></td><td>Number of bytes.</td></tr>
+<tr><td><code>[settings] whencleanup</code></td><td>When old data is removed: at the first run of the day, or only when you ask (<code>--cleanup</code>).</td><td><code>daily</code></td><td><code>daily</code>, <code>never</code></td></tr>
+<tr><td><code>[settings] sendreportiferror</code></td><td>Send an e-mail report to the managers when a run has errors.</td><td><code>False</code></td><td><code>True</code>, <code>False</code></td></tr>
+<tr><td><code>[settings] sendreportifprocesserror</code></td><td>Also send that e-mail when there are only process errors.</td><td><code>True</code></td><td><code>True</code>, <code>False</code></td></tr>
+<tr><td><code>[acceptance] runacceptancetest</code></td><td>Run as an acceptance test: channels use their test path, clock and counters frozen. See <a href="#acceptance-testing">Acceptance testing</a>.</td><td><code>False</code></td><td><code>True</code>, <code>False</code></td></tr>
+</table></div>
+
+<h3 id="how-bots-works--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>bots-engine does not run: another bots-engine is running for this environment (port 28081 is in use).</code></td><td>An engine is still running, or another program (or another Bots environment) uses this port.</td><td>
+<ol class="steps"><li><b>Wait</b> until the running engine ends and try again.</li><li><b>Check</b> that each environment on this machine has its own <code>[settings] port</code>.</li></ol></td></tr>
+<tr><td><code>!Bots database is locked! Bots-engine has ended in an unexpected way during the last run.</code></td><td>The last run was cut off (power failure, crash, killed process).</td><td>Nothing to do: Bots does a crash recovery at the start of this run. Look at the report of the crashed run and check that its files were sent.</td></tr>
+<tr><td><code>The database does not have the tables of bots-engine.</code></td><td>A new, empty database, or a Bots 3 database that is not upgraded.</td><td>Run <code>bots-updatedb</code> for this environment. See <a href="#upgrade-from-bots3">Upgrade from Bots 3</a> and <a href="#databases">Databases</a>.</td></tr>
+<tr><td><code>There is no (active) route "orders_in".</code></td><td>The route named on the command line or in the <span class="ui">Run</span> menu does not exist or is not <span class="ui">Active</span>.</td><td>Open <span class="ui">Configuration</span> → <span class="ui">Routes</span>, check the spelling of <span class="ui">Idroute</span> and tick <span class="ui">Active</span>.</td></tr>
+<tr><td>Files show status <span class="ui">Stuck</span></td><td>A step succeeded but nothing took the result further: often the route part has no <span class="ui">Outgoing channel</span>, or the filter of the outgoing channel (editype, messagetype, partner, test indicator) does not match.</td><td>Open the detail of the file, see at which step it stopped, and check the route fields under <span class="ui">Filtering for outchannel</span>. See <a href="#routes">Routes</a>.</td></tr>
+<tr><td><code>Route "orders_in" is empty: no routescript, not enough parameters.</code></td><td>The route part has no incoming channel, no outgoing channel, no translation and no route script.</td><td>Fill in at least an incoming or outgoing channel, or set <span class="ui">Translate</span>.</td></tr>
+<tr><td><code>bots-engine is ready, but something is still running after 30 seconds; bots-engine ends now.</code></td><td>A library or user script started a thread that did not end. The log shows the stack of each thread.</td><td>Read the stack in the engine log to find the script, and make it close its connections. Raise <code>[settings] maxsecondsexit</code> if the thread needs more time.</td></tr>
+</table></div>
+</section>
+
+
+<section id="glossary" data-title="Glossary" data-group="Start here">
+<h2>Glossary</h2>
+<p class="lead">The words of Bots and of EDI that this manual uses, in alphabetical order. Other sections link here the first time they use a term.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>EDI has many short codes and Bots has its own words for its parts. When a word on a screen or in an error message is not clear, look it up here.</p></div>
+
+<h3 id="glossary--how-it-works">How it works</h3>
+<p>Each entry gives the meaning in one or two sentences and, where useful, the place in Bots where you meet it. Words in <code>code</code> are names of fields, settings or files.</p>
+
+<h3 id="glossary--terms">Terms</h3>
+<dl>
+<dt id="glossary--997">997</dt>
+<dd>The X12 Functional Acknowledgment: the message a receiver sends back to say an X12 group arrived and whether it was correct. Bots can send one for each received group, and can wait for one for each sent group. See <a href="#acknowledgements">Acknowledgements</a>.</dd>
+
+<dt id="glossary--acceptance-test">acceptance test</dt>
+<dd>A run in which Bots does not talk to the outside world: each channel uses its <span class="ui">Acceptance test path</span> (a folder), and the clock and the counters are frozen so that every run gives the same output. Switched on with <code>[acceptance] runacceptancetest = True</code> in <code>bots.ini</code>. See <a href="#acceptance-testing">Acceptance testing</a>.</dd>
+
+<dt id="glossary--acknowledgement">acknowledgement</dt>
+<dd>A message that confirms the receipt of another message. In Bots: X12 <a href="#glossary--997">997</a>, EDIFACT <a href="#glossary--contrl">CONTRL</a> and e-mail <a href="#glossary--mdn">MDN</a>. Bots calls this a <a href="#glossary--confirm">confirmation</a>.</dd>
+
+<dt id="glossary--alt">alt (alternative translation)</dt>
+<dd>A free text that selects one of several translations for the same editype and messagetype. A route can set it, and a mapping can return it to start a second translation of the same message (chained translation).</dd>
+
+<dt id="glossary--botsid">BOTSID</dt>
+<dd>The field in a grammar and in a mapping that holds the record ID (for example <code>ST</code>, <code>BEG</code>, <code>UNH</code>, or <code>HDR</code> in a csv file). Every record in a mapping is addressed with it: <code>{'BOTSID': 'BEG', 'BEG03': None}</code>.</dd>
+
+<dt id="glossary--botskey">botskey</dt>
+<dd>A key that a mapping sets for a message, usually the order or invoice number (<code>out.ta_info['botskey'] = ...</code>). It is shown as the reference of the document in the web interface and can be used in outgoing file names (<code>{botskey}</code>).</dd>
+
+<dt id="glossary--bots-ini">bots.ini</dt>
+<dd>The main configuration file of an environment, in the <code>config</code> folder: sections such as <code>[settings]</code>, <code>[webserver]</code>, <code>[jobqueue]</code>, <code>[directories]</code>. See <a href="#bots-ini">bots.ini</a>.</dd>
+
+<dt id="glossary--botssys">botssys</dt>
+<dd>The folder of an environment where Bots keeps its working data: the received and made files (<code>data</code>), the logs (<code>logging</code>), the SQLite database (<code>sqlitedb/botsdb</code>) and the files of the web interface (<code>static</code>). By convention also <code>infile</code> and <code>outfile</code> for test files. See <a href="#environments">Environments</a>.</dd>
+
+<dt id="glossary--channel">channel</dt>
+<dd>A way in or out of Bots: a folder, an FTP, FTPS or SFTP server, a mailbox (POP3, IMAP4, SMTP), HTTP(S), a database, or a script. A channel is either <code>in</code> or <code>out</code>. Set up in <span class="ui">Configuration</span> → <span class="ui">Channels</span>. See <a href="#channels">Channels</a>.</dd>
+
+<dt id="glossary--channels-use-testpath">channels_use_testpath</dt>
+<dd><span class="badge green">new in 4.0</span> A setting in <code>bots.ini</code> (<code>[settings]</code>) for a test environment: every channel reads and writes its <span class="ui">Acceptance test path</span> instead of the real server; a channel that would connect to another machine and has no test path is not run. Unlike an acceptance test, the clock and the counters run normally.</dd>
+
+<dt id="glossary--code-list">code list (user code)</dt>
+<dd>A table of codes that a mapping can look up, for example your unit codes and the partner's unit codes. Set up in <span class="ui">Configuration</span> → <span class="ui">User Codes list</span>. See <a href="#code-lists">Code lists</a>.</dd>
+
+<dt id="glossary--communication-script">communication script</dt>
+<dd>A Python file in <code>usersys/communicationscripts</code> with the same name as a channel. It changes how that channel works, or, for type <code>communicationscript</code> and <code>db</code>, does the whole communication. See <a href="#communication-scripts">Communication scripts</a>.</dd>
+
+<dt id="glossary--config">config</dt>
+<dd>The folder of an environment with <code>bots.ini</code> and <code>settings.py</code>. Every command of Bots is told which one to use with <code>-c&lt;folder&gt;</code> or the environment variable <code>BOTS_CONFIG_DIR</code>.</dd>
+
+<dt id="glossary--confirm">confirm, confirmation, confirm rule</dt>
+<dd>Bots' word for <a href="#glossary--acknowledgement">acknowledgements</a>. A <b>confirm rule</b> says for which files Bots asks for or sends a confirmation (by route, channel, partner or messagetype). The screen <span class="ui">All runs</span> → <span class="ui">Confirmations</span> shows which sent files are confirmed. See <a href="#confirm-rules">Confirm rules</a>.</dd>
+
+<dt id="glossary--contrl">CONTRL</dt>
+<dd>The EDIFACT acknowledgement message, the EDIFACT counterpart of the X12 997.</dd>
+
+<dt id="glossary--counter">counter</dt>
+<dd>A number that Bots keeps in its database and raises each time it is used: interchange control numbers, message numbers, the <code>*</code> in file names. Seen and changed in <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span>. See <a href="#counters">Counters</a>.</dd>
+
+<dt id="glossary--csv">csv</dt>
+<dd>A text file with one record per line and the fields separated by a character such as a comma or semicolon. An editype in Bots. See <a href="#editype-csv-fixed">csv and fixed</a>.</dd>
+
+<dt id="glossary--defer">defer</dt>
+<dd>A field of a route part: the outgoing files are made ready but not sent yet; a later route part with the same outgoing channel sends them all together.</dd>
+
+<dt id="glossary--dirmonitor">directory monitor (dirmonitor)</dt>
+<dd>A program, <code>bots-dirmonitor</code>, that watches folders and starts a route as soon as a file arrives, instead of on a schedule. See <a href="#scheduling">Scheduling</a>.</dd>
+
+<dt id="glossary--edi">EDI</dt>
+<dd>Electronic Data Interchange: the exchange of business documents between companies as structured files. See <a href="#welcome">Welcome</a>.</dd>
+
+<dt id="glossary--edifact">EDIFACT</dt>
+<dd>The international EDI standard of the United Nations (UN/EDIFACT). Messages have six-letter names (ORDERS, INVOIC, DESADV, CONTRL), segments end with <code>'</code> and fields are separated by <code>+</code>. See <a href="#editype-edifact">EDIFACT</a>.</dd>
+
+<dt id="glossary--editype">editype</dt>
+<dd>The kind of file, which decides how Bots reads and writes it: <code>csv</code>, <code>db</code>, <code>database</code> (old), <code>edifact</code>, <code>email-confirmation</code>, <code>excel</code> (incoming only), <code>fixed</code>, <code>idoc</code>, <code>json</code>, <code>jsonnocheck</code>, <code>mailbag</code>, <code>raw</code>, <code>templatehtml</code>, <code>tradacoms</code>, <code>xml</code>, <code>xmlnocheck</code>, <code>x12</code>. Grammars and mappings are stored in a folder per editype.</dd>
+
+<dt id="glossary--engine">engine</dt>
+<dd>The program <code>bots-engine</code> that receives, translates and sends. It runs once and stops. See <a href="#how-bots-works">How Bots works</a>.</dd>
+
+<dt id="glossary--envelope">envelope</dt>
+<dd>The header and trailer around one or more messages that say who sends, who receives, and give a control number: ISA/GS for X12, UNB for EDIFACT, STX for Tradacoms. Bots makes the envelope of outgoing files and reads it for incoming files. See <a href="#envelopes">Envelopes</a>.</dd>
+
+<dt id="glossary--envelope-script">envelope script</dt>
+<dd>A Python file in <code>usersys/envelopescripts/&lt;editype&gt;</code> that changes or replaces the envelope Bots makes. See <a href="#envelope-scripts">Envelope scripts</a>.</dd>
+
+<dt id="glossary--environment">environment</dt>
+<dd>One complete, separate Bots setup: a <code>config</code>, a <code>usersys</code> and a <code>botssys</code> folder, usually side by side in one environment directory. Test and production are two environments. See <a href="#environments">Environments</a>.</dd>
+
+<dt id="glossary--extra">extra (install option)</dt>
+<dd>An optional part you choose when you install Bots with pip, written in square brackets: <code>bots-ediint[sftp,mysql]</code>. It installs the Python libraries a feature needs. See <a href="#install-windows--extras">the list of extras</a>.</dd>
+
+<dt id="glossary--field">field</dt>
+<dd>One value in a record, such as an order number. In a grammar each field has an ID, mandatory or not, a length and a format.</dd>
+
+<dt id="glossary--filereport">filereport</dt>
+<dd>The database table with one row per received file and its overall result; shown in <span class="ui">Incoming</span> and <span class="ui">Outgoing</span>.</dd>
+
+<dt id="glossary--fixed">fixed</dt>
+<dd>A text file in which every field has a fixed position and length. An editype in Bots.</dd>
+
+<dt id="glossary--functional-group">functional group</dt>
+<dd>In X12, the GS ... GE envelope around messages of one kind. GS01 holds the functional identifier code, for example <code>PO</code> for orders and <code>IN</code> for invoices; in Bots this is the syntax parameter <code>functionalgroup</code> of the grammar.</dd>
+
+<dt id="glossary--grammar">grammar</dt>
+<dd>A Python file that describes a file layout: the records, their order (<code>structure</code>), the fields of each record (<code>recorddefs</code>) and settings (<code>syntax</code>). Stored in <code>usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py</code>. Bots reads incoming files and writes outgoing files with grammars. See <a href="#grammars">Grammars</a>.</dd>
+
+<dt id="glossary--idta">idta</dt>
+<dd>The number of a row in the <code>ta</code> table: every step of every file or message has one. It is the number you see on the left in <span class="ui">Incoming</span> and in the detail screen, and the file name under <code>botssys/data</code>.</dd>
+
+<dt id="glossary--interchange">interchange</dt>
+<dd>One envelope with its content: in X12 from ISA to IEA, in EDIFACT from UNB to UNZ. A file can hold several interchanges; Bots splits them (see <a href="#glossary--mailbag">mailbag</a>).</dd>
+
+<dt id="glossary--isa-gs-st">ISA / GS / ST</dt>
+<dd>The three levels of an X12 file. ISA ... IEA is the interchange envelope (sender, receiver, control number, test or production). GS ... GE is the functional group. ST ... SE is one message (transaction set), for example an 850 order.</dd>
+
+<dt id="glossary--job-queue">job queue</dt>
+<dd>A program, <code>bots-jobqueueserver</code>, that takes requests to run the engine and runs them one after the other, so that runs never overlap. See <a href="#scheduling">Scheduling</a>.</dd>
+
+<dt id="glossary--mailbag">mailbag</dt>
+<dd>An editype for a file with several interchanges, possibly of different standards. It is also the step in which Bots splits edifact, x12 and tradacoms files into one file per interchange.</dd>
+
+<dt id="glossary--mapping">mapping (mapping script)</dt>
+<dd>A Python file with a function <code>main(inn, out)</code> that copies data from the incoming message (<code>inn</code>) to the outgoing message (<code>out</code>). Stored in <code>usersys/mappings/&lt;editype of the incoming file&gt;/</code>. See <a href="#mappings">Mappings</a>.</dd>
+
+<dt id="glossary--mdn">MDN</dt>
+<dd>Message Disposition Notification: an e-mail that confirms another e-mail was received. Bots can ask for one and send one for mail channels.</dd>
+
+<dt id="glossary--merge">merge</dt>
+<dd>Putting several translated messages for the same receiver into one outgoing file under one envelope. Controlled by the syntax parameter <code>merge</code> of the outgoing grammar.</dd>
+
+<dt id="glossary--message">message (document)</dt>
+<dd>One business document: one order, one invoice. A file can hold many. In X12 a message is a transaction set (ST ... SE), in EDIFACT UNH ... UNT.</dd>
+
+<dt id="glossary--messagetype">messagetype</dt>
+<dd>The name of the grammar to use within an editype, for example <code>850004010</code> (X12 850, version 004010), <code>ORDERSD96AUN</code> (EDIFACT ORDERS D.96A), or <code>orders_erp</code> for your own csv layout. For incoming EDIFACT and X12 files the route uses the messagetype <code>edifact</code> or <code>x12</code>: Bots finds the real messagetype in the file.</dd>
+
+<dt id="glossary--mpath">mpath</dt>
+<dd>The path to a record or field in a mapping, written as a list of dicts from the top record down: <code>inn.get({'BOTSID': 'HDR'}, {'BOTSID': 'LIN', 'ITEM': None})</code>.</dd>
+
+<dt id="glossary--nextmessage">nextmessage</dt>
+<dd>A part of a grammar that tells Bots where one message ends and the next begins in an incoming file, for example at every <code>HDR</code> record in a csv file.</dd>
+
+<dt id="glossary--partner">partner</dt>
+<dd>A company you exchange EDI with, with an ID (for example <code>PARTNERA</code>) that Bots matches with the IDs in envelopes and that routes, translations and confirm rules can select on. Partners can be put in <b>partner groups</b> (for example <code>Retailers</code>). See <a href="#partners">Partners</a>.</dd>
+
+<dt id="glossary--pass-through">pass-through</dt>
+<dd>A route that receives a file and sends it on without translating it (<span class="ui">Translate</span> = <span class="ui">Pass-through</span>). <span class="ui">Parse &amp; Pass-through</span> first checks the file with its grammar.</dd>
+
+<dt id="glossary--plugin">plugin</dt>
+<dd>A zip file with configuration (routes, channels, partners, translations ...) and the files of a usersys, to move a setup between environments or to install examples. Read and made in <span class="ui">SysTasks</span> → <span class="ui">Plugins</span>. See <a href="#plugins">Plugins</a>.</dd>
+
+<dt id="glossary--preprocessing">preprocessing</dt>
+<dd>A step before the translation that changes incoming files, for example unzipping, or extracting text from a PDF. See <a href="#preprocessing">Preprocessing</a>.</dd>
+
+<dt id="glossary--process-error">process error</dt>
+<dd>An error of Bots itself rather than of a file, for example a channel that cannot connect. Shown in <span class="ui">All runs</span> → <span class="ui">Process Errors</span>.</dd>
+
+<dt id="glossary--record">record (segment)</dt>
+<dd>One line or group of fields in a file. EDI standards call it a segment (BEG, PO1, UNH, NAD). In a grammar every record has an ID, the <a href="#glossary--botsid">BOTSID</a>.</dd>
+
+<dt id="glossary--report">report (run report)</dt>
+<dd>The summary of one run of the engine, in the database table <code>report</code>; shown in <span class="ui">All runs</span> → <span class="ui">Report (per run)</span>.</dd>
+
+<dt id="glossary--rereceive">rereceive, resend</dt>
+<dd>Doing a file again. <b>Rereceive</b> processes a received file again from the start (after you fixed a grammar or mapping); <b>resend</b> sends an outgoing file again. You mark the files in the web interface and start <span class="ui">Run</span> → <span class="ui">Run user-indicated rereceives</span> or <span class="ui">resends</span>.</dd>
+
+<dt id="glossary--route">route</dt>
+<dd>The instruction for the engine: which incoming channel to read, what kind of files these are, whether to translate them, and which outgoing channel to use. A route can have several parts with the same name and a different <span class="ui">Sequence</span>. See <a href="#routes">Routes</a>.</dd>
+
+<dt id="glossary--route-script">route script</dt>
+<dd>A Python file in <code>usersys/routescripts</code> with the same name as a route. Its functions run at fixed points of the route, or replace the route. See <a href="#route-scripts">Route scripts</a>.</dd>
+
+<dt id="glossary--settings-py">settings.py</dt>
+<dd>The second configuration file of an environment, in the <code>config</code> folder: the database of Bots, mail settings for error reports, time zone, language, sessions. See <a href="#settings-py">settings.py</a>.</dd>
+
+<dt id="glossary--status">status, statust</dt>
+<dd>Two values of each step of a file in the database: <b>status</b> is the step reached (Received, Infile, Parsed, Document-in, Document-out, Merged, Outfile, Send), <b>statust</b> the result (Open, Error, Stuck, Done, Resend, No retry). See <a href="#how-bots-works--status">Statuses</a>.</dd>
+
+<dt id="glossary--syntax">syntax</dt>
+<dd>The settings in a grammar (separators, character set, envelope, version, merge and many more), in the dict <code>syntax</code>. A partner can have its own syntax in <code>usersys/partners/&lt;editype&gt;/</code>. See <a href="#grammar-syntax">Grammar syntax</a>.</dd>
+
+<dt id="glossary--ta">ta</dt>
+<dd>The main table in the database of Bots: one row (with an <a href="#glossary--idta">idta</a>) for each step of each file and message, linked from parent to child. See <a href="#how-bots-works--records">What Bots writes in its database</a>.</dd>
+
+<dt id="glossary--testindicator">testindicator</dt>
+<dd>A mark in the envelope that says whether an interchange is a test or real: in X12 ISA15 (<code>T</code> or <code>P</code>), in EDIFACT UNB field 0035 (<code>1</code> for test). Bots reads it from incoming files; a mapping can set it for outgoing files; a route can send only files with a given test indicator.</dd>
+
+<dt id="glossary--tradacoms">Tradacoms</dt>
+<dd>An older UK retail EDI standard. An editype in Bots. See <a href="#editype-other">Other editypes</a>.</dd>
+
+<dt id="glossary--translation">translation (translation rule)</dt>
+<dd>A row in <span class="ui">Configuration</span> → <span class="ui">Translations</span> that says: a message of this editype and messagetype (and optionally this alt and these partners) is translated with this mapping script into that editype and messagetype. See <a href="#translations">Translations</a>.</dd>
+
+<dt id="glossary--unb-unh">UNB / UNH</dt>
+<dd>The two levels of an EDIFACT file. UNB ... UNZ is the interchange envelope (sender, receiver, control reference, test indicator). UNH ... UNT is one message, for example ORDERS. An optional UNA segment in front gives the separators.</dd>
+
+<dt id="glossary--usersys">usersys</dt>
+<dd>The folder of an environment with everything you write yourself: <code>grammars</code>, <code>mappings</code>, <code>partners</code>, <code>routescripts</code>, <code>communicationscripts</code>, <code>envelopescripts</code>, <code>charsets</code>. It is a Python package, so every folder in it needs a file <code>__init__.py</code>. See <a href="#environments">Environments</a>.</dd>
+
+<dt id="glossary--web-interface">web interface (bots-monitor)</dt>
+<dd>The screens of Bots in a browser, served by <code>bots-webserver</code>. The Bots 3 documentation calls it bots-monitor. See <a href="#web-interface">Web interface</a>.</dd>
+
+<dt id="glossary--x12">X12</dt>
+<dd>The EDI standard of ASC X12, mostly used in North America. Messages have numbers (850 order, 810 invoice, 856 ship notice, 997 acknowledgement); segments usually end with <code>~</code> and fields are separated by <code>*</code>. See <a href="#editype-x12">X12</a>.</dd>
+
+<dt id="glossary--xml-json">xml, json</dt>
+<dd>Structured text formats used by many ERP systems and web services. Editypes in Bots; the <code>nocheck</code> variants (<code>xmlnocheck</code>, <code>jsonnocheck</code>) do not check the content against a grammar. See <a href="#editype-xml-json">xml and json</a>.</dd>
+</dl>
+
+<h3 id="glossary--troubleshooting">Troubleshooting</h3>
+<p>Words that are often mixed up.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>A route has <span class="ui">Fromeditype</span> <code>x12</code> and <span class="ui">Frommessagetype</span> <code>850004010</code>, and incoming files fail</td><td>For incoming X12 and EDIFACT the route gives the envelope type, not the message: Bots finds the message in the file.</td><td>Set <span class="ui">Frommessagetype</span> to <code>x12</code> (or <code>edifact</code>). The translation rule then uses <code>850004010</code>.</td></tr>
+<tr><td><code>Translation not found for editype "…", messagetype "…"</code> although a route exists</td><td>A route and a translation are different things: the route moves files, the translation rule says how to translate one message.</td><td>Add the rule in <span class="ui">Configuration</span> → <span class="ui">Translations</span>.</td></tr>
+<tr><td>You look for "acknowledgement" settings and find none</td><td>Bots calls them confirmations.</td><td>Use <span class="ui">Configuration</span> → <span class="ui">Confirmrules</span>.</td></tr>
+<tr><td>Status <span class="ui">Stuck</span> is taken for an error</td><td><span class="ui">Stuck</span> is statust OK: the step worked, but nothing took the file further.</td><td>Check the outgoing part of the route. See <a href="#how-bots-works--status">Statuses</a>.</td></tr>
+<tr><td>A test file was sent with ISA15 <code>P</code></td><td>The test indicator comes from the grammar syntax (<code>ISA15</code>) or the mapping, not from the environment being a test environment.</td><td>Set <code>'ISA15': 'T'</code> in the syntax of the test environment, or set the test indicator in the mapping.</td></tr>
+</table></div>
+</section>
+
+
+<section id="install-windows" data-title="Install on Windows" data-group="Start here">
+<h2>Install on Windows</h2>
+<p class="lead">How to install Bots 4.0.0 on a Windows computer or server: Python, a virtual environment, Bots with the options you need, the first start, running as a background task, and removing it again.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots is a Python program. You install Python, make a private folder for Bots and its libraries (a "virtual environment"), and install Bots into it with one command. Bots makes its own working folders the first time it starts.</p></div>
+
+<h3 id="install-windows--how-it-works">How it works</h3>
+<ol>
+<li><b>Python.</b> Bots 4.0.0 needs Python 3.10 or newer (3.10, 3.11, 3.12, 3.13 and 3.14 are supported; Python 2 is not).</li>
+<li><b>Virtual environment.</b> A folder (for example <code>C:\bots4</code>) with its own copy of Python's package tools. Everything Bots needs is installed there, separate from other Python programs on the machine.</li>
+<li><b>The package.</b> Bots is the Python package <code>bots-ediint</code>. pip installs it with what it always needs: Django (4 up to 6), CherryPy and cheroot (the web server), lxml and defusedxml (xml), and on Windows pywin32 (for the directory monitor). Optional parts are added with <a href="#install-windows--extras">extras</a>.</li>
+<li><b>Commands.</b> pip puts the commands of Bots in <code>C:\bots4\Scripts</code>: <code>bots-webserver.exe</code>, <code>bots-engine.exe</code>, <code>bots-jobqueueserver.exe</code> and the others listed in <a href="#command-line">Command line</a>.</li>
+<li><b>Your environment.</b> The program does not hold your data. The first time a command of Bots starts without being told which environment to use, it makes one in <code>%USERPROFILE%\.bots\env\default</code> with the folders <code>config</code>, <code>botssys</code> and <code>usersys</code>. You can also make it in a place you choose (see <a href="#environments">Environments</a>).</li>
+</ol>
+
+<div class="table-wrap"><table>
+<tr><th>What</th><th>Where (example)</th></tr>
+<tr><td>Python</td><td><code>C:\Program Files\Python312</code> or <code>%LOCALAPPDATA%\Programs\Python\Python312</code></td></tr>
+<tr><td>Virtual environment with Bots</td><td><code>C:\bots4</code>; the program in <code>C:\bots4\Lib\site-packages\bots</code></td></tr>
+<tr><td>Commands</td><td><code>C:\bots4\Scripts\bots-*.exe</code></td></tr>
+<tr><td>Default environment</td><td><code>%USERPROFILE%\.bots\env\default\config</code>, <code>…\botssys</code>, <code>…\usersys</code></td></tr>
+<tr><td>Environment in a place you choose</td><td>for example <code>C:\edi\bots\production</code></td></tr>
+</table></div>
+
+<h3 id="install-windows--how-to-install">How to install Bots on Windows</h3>
+<ol class="steps">
+<li><b>Check Python.</b> Open a Command Prompt and type <code>py --list</code>. If you see a version 3.10 or newer, go to step 3.</li>
+<li><b>Install Python</b> from the installer of python.org. Tick <span class="ui">Add python.exe to PATH</span> on the first screen. For a server, choose <span class="ui">Customize installation</span> and install for all users.</li>
+<li><b>Make the virtual environment.</b>
+<pre><code class="language-powershell">py -3.12 -m venv C:\bots4</code></pre>
+Use the version you have instead of <code>3.12</code>.</li>
+<li><b>Activate it</b> in this window. In a Command Prompt:
+<pre><code class="language-text">C:\bots4\Scripts\activate.bat</code></pre>
+In PowerShell:
+<pre><code class="language-powershell">C:\bots4\Scripts\Activate.ps1</code></pre>
+The prompt now starts with <code>(bots4)</code>.</li>
+<li><b>Update pip:</b>
+<pre><code class="language-powershell">python -m pip install --upgrade pip</code></pre></li>
+<li><b>Install Bots</b> from the file you received (a wheel file) or from the source folder, with the extras you need. For example, with SFTP and HTTP:
+<pre><code class="language-powershell">pip install "C:\install\bots_ediint-4.0.0-py3-none-any.whl[sftp,http]"</code></pre>
+or from a source folder:
+<pre><code class="language-powershell">pip install "C:\install\bots-ediint-4.0.0[sftp,http]"</code></pre>
+Keep the quotes: they protect the square brackets. Without extras, leave out the brackets.</li>
+<li><b>Check</b> the installation:
+<pre><code class="language-powershell">pip show bots-ediint</code></pre>
+The line <code>Version: 4.0.0</code> shows the version.</li>
+<li><b>Make the environment</b> in the folder you want:
+<pre><code class="language-powershell">bots-configure botsenv_path=C:\edi\bots\production -y</code></pre>
+Expected result:
+<pre><code class="language-text">Installation of bots env: C:\edi\bots\production
+Installing bots config: C:\edi\bots\production\config
+Installing botssys: C:\edi\bots\production\botssys
+Installing bots usersys: C:\edi\bots\production\usersys
+
+---------- [Bots Environment] ----------
+    webserver port        : 8080
+    ...
+    bots version          : 4.0.0
+    botsenv path          : C:\edi\bots\production
+    config path           : C:\edi\bots\production\config
+    ...
+----------------------------------------</code></pre>
+If you skip this step, the first start of a Bots command makes the default environment in <code>%USERPROFILE%\.bots\env\default</code>.</li>
+<li><b>Start the web server</b> and log in: see <a href="#first-start">First start</a>.
+<pre><code class="language-powershell">bots-webserver -cC:\edi\bots\production\config</code></pre></li>
+</ol>
+
+<div class="note tip"><span class="label">Tip</span><p>You do not have to activate the virtual environment to use Bots. Start the commands with their full path, for example <code>C:\bots4\Scripts\bots-engine.exe -cC:\edi\bots\production\config</code>. Scheduled tasks and services should always use the full path.</p></div>
+
+<h3 id="install-windows--extras">How to choose the extras</h3>
+<p>Extras add Python libraries for features that not every installation needs. You can add an extra later by running the same <code>pip install</code> command again with the extra.</p>
+<div class="table-wrap"><table>
+<tr><th>Extra</th><th>Installs</th><th>You need it for</th></tr>
+<tr><td><code>sftp</code></td><td>paramiko (2 or newer)</td><td>Channels of type <code>sftp</code>. Without it: <code>Dependency failure: communicationtype "sftp" requires python library "paramiko".</code></td></tr>
+<tr><td><code>http</code></td><td>requests</td><td>Channels of type <code>http</code> and <code>https</code>.</td></tr>
+<tr><td><code>templatehtml</code></td><td>Genshi</td><td>Editype <code>templatehtml</code>: writing HTML (for example a readable order sent by e-mail) from a template.</td></tr>
+<tr><td><code>excel</code></td><td>openpyxl, xlrd (2 or newer)</td><td>Editype <code>excel</code> for incoming <code>.xlsx</code> and <code>.xls</code> files.</td></tr>
+<tr><td><code>pdf</code></td><td>pdfminer.six</td><td>The preprocessing <code>extractpdf</code> (reading text from PDF files).</td></tr>
+<tr><td><code>mysql</code></td><td>mysqlclient</td><td>The database of Bots on MySQL or MariaDB, or communication scripts that <code>import MySQLdb</code>.</td></tr>
+<tr><td><code>postgresql</code></td><td>psycopg</td><td>The database of Bots on PostgreSQL, and channels of type <code>db</code> on PostgreSQL.</td></tr>
+<tr><td><code>mssql</code> <span class="badge green">new in 4.0</span></td><td>mssql-django (1.6 or newer)</td><td>The database of Bots on Microsoft SQL Server, or channels of type <code>db</code> on SQL Server. See <a href="#databases">Databases</a>.</td></tr>
+<tr><td><code>port</code></td><td>fissix</td><td><code>bots-portusersys</code> and <code>bots-portenv</code>: converting Python 2 scripts of Bots 3.</td></tr>
+<tr><td><code>bots3</code> <span class="badge green">new in 4.0</span></td><td>fissix, Genshi, paramiko, requests, openpyxl, xlrd, pdfminer.six</td><td>An installation that comes from Bots 3: everything Bots 3 usually used, plus the conversion tools. See <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</td></tr>
+<tr><td><code>tools</code> <span class="badge gray">advanced</span></td><td>Genshi, paramiko, pdfminer.six, xlrd, openpyxl</td><td>An older group with the same libraries as <code>templatehtml</code>, <code>sftp</code>, <code>pdf</code> and <code>excel</code> together.</td></tr>
+<tr><td><code>testing</code> <span class="badge gray">advanced</span></td><td>pytest and test helpers</td><td>Running the tests of the Bots source code. Not for production.</td></tr>
+</table></div>
+<p>Examples: <code>[sftp,http]</code> for a typical new installation; <code>[bots3]</code> when you move from Bots 3; <code>[bots3,mysql]</code> when your Bots 3 used MySQL.</p>
+
+<h3 id="install-windows--service">How to run Bots in the background</h3>
+<p>In production, the web server should run all the time and the engine should run on a schedule, also when nobody is logged in. Windows Task Scheduler can do both. More choices (job queue, directory monitor) are in <a href="#scheduling">Scheduling</a>.</p>
+<ol class="steps">
+<li><b>Choose an account</b> for Bots: a local or domain account that may read and write the environment folder (<code>C:\edi\bots\production</code>) and the folders of your file channels.</li>
+<li><b>Make the web server task.</b> In a Command Prompt run as administrator:
+<pre><code class="language-text">schtasks /Create /TN "Bots webserver production" /SC ONSTART /RU MYCOMPANY\bots /RP * ^
+  /TR "C:\bots4\Scripts\bots-webserver.exe -cC:\edi\bots\production\config"</code></pre>
+<code>/RP *</code> asks for the password of the account. Replace <code>MYCOMPANY\bots</code> by your account.</li>
+<li><b>Allow it to run long.</b> Open Task Scheduler, open the task, tab <span class="ui">Settings</span>, and clear <span class="ui">Stop the task if it runs longer than</span>. By default Windows stops a task after 3 days.</li>
+<li><b>Make the engine task,</b> here every 5 minutes:
+<pre><code class="language-text">schtasks /Create /TN "Bots engine production" /SC MINUTE /MO 5 /RU MYCOMPANY\bots /RP * ^
+  /TR "C:\bots4\Scripts\bots-engine.exe -cC:\edi\bots\production\config"</code></pre>
+If a run is still busy when the next one starts, the second engine ends with exit code 3 and does nothing.</li>
+<li><b>Start</b> the web server task now: <code>schtasks /Run /TN "Bots webserver production"</code>, and open <code>http://localhost:8080</code>.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>Instead of Task Scheduler you can use a service wrapper: a tool that runs any program as a Windows service. Give it the program <code>C:\bots4\Scripts\bots-webserver.exe</code>, the argument <code>-cC:\edi\bots\production\config</code>, the account of step 1, and let it restart the program when it stops. Bots itself does not install a Windows service.</p></div>
+<div class="note warn"><span class="label">Watch out</span><p>A path with spaces must be quoted including the option: <code>"-cC:\EDI Data\bots\production\config"</code>. Or set the system environment variable <code>BOTS_CONFIG_DIR</code> to the config folder and leave out <code>-c</code>.</p></div>
+
+<h3 id="install-windows--uninstall">How to uninstall</h3>
+<ol class="steps">
+<li><b>Stop</b> the web server, job queue and directory monitor, and delete or disable their tasks: <code>schtasks /Delete /TN "Bots webserver production"</code>, and the same for the engine task.</li>
+<li><b>Remove the program:</b> <code>C:\bots4\Scripts\pip uninstall bots-ediint</code>, or delete the whole folder <code>C:\bots4</code> (this also removes all libraries of the virtual environment).</li>
+<li><b>Keep or remove your environments.</b> Uninstalling does not touch <code>config</code>, <code>botssys</code> and <code>usersys</code>. These hold your configuration, database, files and scripts. Make a backup first, then delete the environment folders only if you no longer need them.</li>
+</ol>
+
+<h3 id="install-windows--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Python version</td><td>The Python that runs Bots.</td><td>—</td><td>3.10 to 3.14</td></tr>
+<tr><td>Package name</td><td>The name for pip.</td><td>—</td><td><code>bots-ediint</code></td></tr>
+<tr><td>Extras</td><td>Optional libraries, see <a href="#install-windows--extras">the table above</a>.</td><td>none</td><td><code>[sftp,http]</code></td></tr>
+<tr><td><code>BOTS_CONFIG_DIR</code></td><td>Environment variable with the config folder that commands use when there is no <code>-c</code>.</td><td>not set</td><td><code>C:\edi\bots\production\config</code></td></tr>
+<tr><td><code>BOTSENV</code></td><td>Environment variable with the name of the default environment: <code>%USERPROFILE%\.bots\env\%BOTSENV%</code>. Also used in the cookie names of the web interface.</td><td><code>default</code></td><td><code>test</code></td></tr>
+<tr><td><code>bots-configure</code></td><td>Makes an environment (if it does not exist) and shows its details. Options: <code>botsenv_path=&lt;folder&gt;</code>, <code>botsenv=&lt;name&gt;</code>, <code>-c&lt;folder&gt;</code> or <code>configdir=&lt;folder&gt;</code>, <code>-y</code> or <code>--yes</code> (do not ask), <code>-h</code>.</td><td>asks before making</td><td><code>bots-configure botsenv_path=C:\edi\bots\test -y</code></td></tr>
+<tr><td><code>[webserver] port</code></td><td>Port of the web interface.</td><td><code>8080</code></td><td><code>8090</code></td></tr>
+</table></div>
+
+<h3 id="install-windows--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>ERROR: Package 'bots-ediint' requires a different Python: 3.9.13 not in '&lt;4,&gt;=3.10'</code></td><td>The virtual environment was made with a Python that is too old.</td><td>
+<ol class="steps"><li><b>Install</b> Python 3.10 or newer.</li><li><b>Delete</b> the virtual environment folder and make it again with <code>py -3.12 -m venv C:\bots4</code>.</li></ol></td></tr>
+<tr><td><code>'bots-webserver' is not recognized as an internal or external command, operable program or batch file.</code></td><td>The virtual environment is not active in this window.</td><td>Activate it (<code>C:\bots4\Scripts\activate.bat</code>), or use the full path <code>C:\bots4\Scripts\bots-webserver.exe</code>.</td></tr>
+<tr><td><code>Activate.ps1 cannot be loaded because running scripts is disabled on this system.</code></td><td>The PowerShell execution policy blocks scripts.</td><td>Use a Command Prompt with <code>activate.bat</code>, or allow local scripts for your user: <code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code>, or use the full paths of the commands.</td></tr>
+<tr><td><code>OSError: No socket could be created -- (('0.0.0.0', 8080): [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted)</code></td><td>Another program, or a second Bots web server, already uses port 8080.</td><td>Stop the other program, or set another port in <code>bots.ini</code>: <code>[webserver]</code> <code>port = 8090</code>, and open <code>http://localhost:8090</code>.</td></tr>
+<tr><td><code>Dependency failure: communicationtype "sftp" requires python library "paramiko".</code> (or <code>"requests"</code> for http, <code>"genshi"</code> for templatehtml)</td><td>The extra for this feature was not installed.</td><td>Run the install command again with the extra, for example <code>pip install "…whl[sftp]"</code>, and restart the web server.</td></tr>
+<tr><td><code>error: Microsoft Visual C++ 14.0 or greater is required</code> while installing <code>mysqlclient</code></td><td>pip found no ready-made package (wheel) for your Python version and tries to build it.</td><td>Use a Python version for which a wheel exists, or install the build tools that the message names, then run pip again.</td></tr>
+<tr><td>A scheduled task shows result <code>0x1</code> or the engine does not run from Task Scheduler, but runs from the Command Prompt</td><td>The task runs as another user: without <code>-c</code> it uses that user's <code>%USERPROFILE%\.bots\env\default</code>, or it may not read the folders.</td><td>Always give <code>-c</code> with the full config path in the task, and give the task account rights on the environment folder and the channel folders.</td></tr>
+</table></div>
+</section>
+
+
+<section id="install-linux" data-title="Install on Linux" data-group="Start here">
+<h2>Install on Linux</h2>
+<p class="lead">How to install Bots 4.0.0 on a Linux server: Python, a virtual environment, Bots with the options you need, a user for Bots, the first start, systemd units, and removing it again.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots is a Python program. You make a private folder for Bots and its libraries, install Bots into it with one command, and let it run as its own user with systemd.</p></div>
+
+<h3 id="install-linux--how-it-works">How it works</h3>
+<ol>
+<li><b>Python.</b> Bots 4.0.0 needs Python 3.10 or newer (3.10 up to 3.14). Most current distributions have a suitable <code>python3</code>.</li>
+<li><b>Virtual environment.</b> A folder, for example <code>/opt/bots4</code>, with its own Python packages, separate from the packages of the system.</li>
+<li><b>The package.</b> <code>bots-ediint</code>, with Django (4 up to 6), CherryPy and cheroot, lxml, defusedxml, and on Linux pyinotify and pyasyncore (for the directory monitor). Optional parts are added with <a href="#install-windows--extras">extras</a>; they are the same on Windows and Linux.</li>
+<li><b>Commands.</b> In <code>/opt/bots4/bin</code>: <code>bots-webserver</code>, <code>bots-engine</code>, <code>bots-jobqueueserver</code> and the others in <a href="#command-line">Command line</a>.</li>
+<li><b>Your environment.</b> Without <code>-c</code> or <code>BOTS_CONFIG_DIR</code>, the first command of Bots makes <code>~/.bots/env/default</code> in the home folder of the user that runs it. For a server, make the environment in a fixed place, for example <code>/srv/bots/env/production</code>.</li>
+</ol>
+<div class="table-wrap"><table>
+<tr><th>What</th><th>Where (example)</th></tr>
+<tr><td>Virtual environment with Bots</td><td><code>/opt/bots4</code>; the program in <code>/opt/bots4/lib/python3.12/site-packages/bots</code></td></tr>
+<tr><td>Commands</td><td><code>/opt/bots4/bin/bots-*</code></td></tr>
+<tr><td>User</td><td><code>bots</code>, home folder <code>/srv/bots</code></td></tr>
+<tr><td>Environment</td><td><code>/srv/bots/env/production/config</code>, <code>…/botssys</code>, <code>…/usersys</code></td></tr>
+<tr><td>Default environment of a user</td><td><code>~/.bots/env/default</code> (or <code>~/.bots/env/$BOTSENV</code>)</td></tr>
+</table></div>
+
+<h3 id="install-linux--how-to-install">How to install Bots on Linux</h3>
+<ol class="steps">
+<li><b>Check Python:</b> <code>python3 --version</code> must show 3.10 or newer.</li>
+<li><b>Install the venv module</b> if your distribution keeps it separate. On Debian and Ubuntu:
+<pre><code class="language-bash">sudo apt install python3-venv</code></pre></li>
+<li><b>Make a user</b> for Bots:
+<pre><code class="language-bash">sudo useradd --system --create-home --home-dir /srv/bots --shell /bin/bash bots</code></pre></li>
+<li><b>Make the virtual environment:</b>
+<pre><code class="language-bash">sudo python3 -m venv /opt/bots4
+sudo /opt/bots4/bin/pip install --upgrade pip</code></pre></li>
+<li><b>Install Bots</b> from the file you received (a wheel file) or from a source folder, with the extras you need:
+<pre><code class="language-bash">sudo /opt/bots4/bin/pip install "/tmp/bots_ediint-4.0.0-py3-none-any.whl[sftp,http]"</code></pre>
+Keep the quotes: the shell would otherwise read the square brackets itself.</li>
+<li><b>Check:</b> <code>/opt/bots4/bin/pip show bots-ediint</code> shows <code>Version: 4.0.0</code>.</li>
+<li><b>Make the environment</b> as user <code>bots</code>:
+<pre><code class="language-bash">sudo -u bots /opt/bots4/bin/bots-configure botsenv_path=/srv/bots/env/production -y</code></pre>
+Expected result:
+<pre><code class="language-text">Installation of bots env: /srv/bots/env/production
+Installing bots config: /srv/bots/env/production/config
+Installing botssys: /srv/bots/env/production/botssys
+Installing bots usersys: /srv/bots/env/production/usersys
+...</code></pre></li>
+<li><b>Start the web server</b> to test it:
+<pre><code class="language-bash">sudo -u bots /opt/bots4/bin/bots-webserver -c/srv/bots/env/production/config</code></pre>
+Then open <code>http://&lt;server&gt;:8080</code> and log in: see <a href="#first-start">First start</a>. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>.</li>
+</ol>
+
+<h3 id="install-linux--systemd">How to run Bots with systemd</h3>
+<ol class="steps">
+<li><b>Write the unit</b> of the web server as <code>/etc/systemd/system/bots-webserver-production.service</code>:
+<pre><code class="language-ini">[Unit]
+Description=Bots web server (production)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bots
+Group=bots
+Environment=BOTS_CONFIG_DIR=/srv/bots/env/production/config
+Environment=BOTSENV=production
+ExecStart=/opt/bots4/bin/bots-webserver
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<code>BOTSENV=production</code> gives the login cookie of this environment its own name (see <a href="#environments">Environments</a>).</li>
+<li><b>Start it</b> and start it at boot:
+<pre><code class="language-bash">sudo systemctl daemon-reload
+sudo systemctl enable --now bots-webserver-production.service
+systemctl status bots-webserver-production.service</code></pre>
+The status shows <code>active (running)</code> and the log line <code>Serving at port: "8080".</code></li>
+<li><b>Run the engine on a schedule.</b> The simplest way is cron for user <code>bots</code> (<code>sudo crontab -u bots -e</code>), here every 5 minutes:
+<pre><code class="language-text">*/5 * * * * /opt/bots4/bin/bots-engine -c/srv/bots/env/production/config &gt;/dev/null 2&gt;&amp;1</code></pre>
+The engine writes its own log in <code>botssys/logging/engine</code>. For the job queue, a systemd timer, and the directory monitor see <a href="#scheduling">Scheduling</a>.</li>
+<li><b>Read the log</b> of the web server when something is wrong: <code>journalctl -u bots-webserver-production.service</code>, and <code>/srv/bots/env/production/botssys/logging/webserver/webserver.log</code>.</li>
+</ol>
+
+<h3 id="install-linux--uninstall">How to uninstall</h3>
+<ol class="steps">
+<li><b>Stop and disable</b> the units: <code>sudo systemctl disable --now bots-webserver-production.service</code>; remove the unit files and run <code>sudo systemctl daemon-reload</code>. Remove the cron line of the engine.</li>
+<li><b>Remove the program:</b> <code>sudo rm -r /opt/bots4</code> (or <code>sudo /opt/bots4/bin/pip uninstall bots-ediint</code> to keep the virtual environment).</li>
+<li><b>Keep or remove the environments.</b> <code>/srv/bots/env/…</code> holds your configuration, database, files and scripts. Make a backup, then remove it only when you no longer need it. Remove the user with <code>sudo userdel bots</code> if wanted.</li>
+</ol>
+
+<h3 id="install-linux--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Python version</td><td>The Python that runs Bots.</td><td>—</td><td>3.10 to 3.14</td></tr>
+<tr><td>Extras</td><td>Optional libraries; same list as on <a href="#install-windows--extras">Windows</a>.</td><td>none</td><td><code>[sftp,http,postgresql]</code></td></tr>
+<tr><td><code>BOTS_CONFIG_DIR</code></td><td>Config folder used by every command without <code>-c</code>.</td><td>not set</td><td><code>/srv/bots/env/production/config</code></td></tr>
+<tr><td><code>BOTSENV</code></td><td>Name of the default environment (<code>~/.bots/env/$BOTSENV</code>); also part of the cookie names and of the sender address of error reports in the default <code>settings.py</code>.</td><td><code>default</code></td><td><code>production</code></td></tr>
+<tr><td>Linux-only libraries</td><td>pyinotify and pyasyncore are installed automatically on Linux; the directory monitor needs them.</td><td>installed</td><td>—</td></tr>
+<tr><td><code>[webserver] port</code></td><td>Port of the web interface. Below 1024 needs root rights; keep the default or use a reverse proxy.</td><td><code>8080</code></td><td><code>8090</code></td></tr>
+</table></div>
+
+<h3 id="install-linux--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>The virtual environment was not created successfully because ensurepip is not available.</code></td><td>The venv module of the distribution is not installed.</td><td>Install it (<code>sudo apt install python3-venv</code> on Debian and Ubuntu) and make the virtual environment again.</td></tr>
+<tr><td><code>ERROR: Package 'bots-ediint' requires a different Python: 3.9.18 not in '&lt;4,&gt;=3.10'</code></td><td>The system Python is too old.</td><td>Install a newer Python from your distribution (for example a <code>python3.12</code> package) and make the virtual environment with it: <code>python3.12 -m venv /opt/bots4</code>.</td></tr>
+<tr><td><code>bots-webserver: command not found</code></td><td>The commands are in <code>/opt/bots4/bin</code>, which is not in the <code>PATH</code>.</td><td>Use the full path, or activate the virtual environment: <code>source /opt/bots4/bin/activate</code>.</td></tr>
+<tr><td><code>OSError: No socket could be created -- (('0.0.0.0', 8080): [Errno 98] Address already in use)</code></td><td>Another program, or a second Bots web server, uses the port.</td><td>Find it with <code>ss -ltnp | grep 8080</code>. Stop it, or give this environment another <code>[webserver] port</code>.</td></tr>
+<tr><td><code>Dependency failure: bots directory monitoring requires python library "pyinotify" on linux.</code></td><td>pyinotify is missing, for example because Bots was installed with <code>--no-deps</code>.</td><td><code>/opt/bots4/bin/pip install pyinotify pyasyncore</code>.</td></tr>
+<tr><td>Installing the extra <code>mysql</code> fails with <code>Exception: Can not find valid pkg-config name</code> or a missing <code>mysql_config</code></td><td>mysqlclient is built on your machine and needs the MySQL or MariaDB client headers and pkg-config.</td><td>Install the build tools and client headers of your distribution (on Debian and Ubuntu for example <code>build-essential pkg-config default-libmysqlclient-dev python3-dev</code>), then run pip again.</td></tr>
+<tr><td><code>PermissionError: [Errno 13] Permission denied</code> on a folder of <code>botssys</code> or a channel folder</td><td>The engine or web server runs as a user that may not write there, for example after you started a command once as <code>root</code>.</td><td>Run every Bots command as user <code>bots</code>, and give that user the folders: <code>sudo chown -R bots:bots /srv/bots/env/production</code>.</td></tr>
+</table></div>
+</section>
+
+
+<section id="environments" data-title="Environments" data-group="Start here">
+<h2>Environments</h2>
+<p class="lead">An environment is one complete Bots setup with its own configuration, scripts, database and files. This page explains the three folders of an environment, how each Bots command finds the environment to use, and how to run several environments, such as test and production, on one machine.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>The program Bots is installed once. Your work lives in separate folders: one for settings, one for your grammars and mappings, one for data. Each set of folders is an environment. You tell every Bots command which set to use.</p></div>
+
+<h3 id="environments--how-it-works">How it works</h3>
+<h4>The three folders</h4>
+<p>An environment directory holds three folders. Bots makes all three when it makes a new environment.</p>
+<div class="table-wrap"><table>
+<tr><th>Folder</th><th>What is in it</th><th>Made from</th></tr>
+<tr><td><code>config</code></td><td><code>bots.ini</code> (the settings of Bots), <code>settings.py</code> (database, mail, time zone, web sessions), and an empty <code>__init__.py</code>.</td><td>copies of the files in <code>bots/install</code> of the program; a new random <code>SECRET_KEY</code> is written into <code>settings.py</code>, and <code>bots.ini</code> gets the full paths of <code>botssys</code> and <code>usersys</code>.</td></tr>
+<tr><td><code>usersys</code></td><td>What you write: <code>grammars/&lt;editype&gt;</code>, <code>mappings/&lt;editype&gt;</code>, <code>partners/&lt;editype&gt;</code>, <code>envelopescripts/&lt;editype&gt;</code>, <code>routescripts</code>, <code>communicationscripts</code>, <code>charsets</code>. Every folder has an <code>__init__.py</code>: usersys is a Python package.</td><td>a copy of the empty <code>usersys</code> of the program (only the folders, <code>__init__.py</code> files and the UNOA/UNOB character sets).</td></tr>
+<tr><td><code>botssys</code></td><td>What Bots writes: <code>data</code> (every received and made file, by idta), <code>logging</code> (<code>engine</code>, <code>webserver</code>, <code>jobqueue</code>, <code>dirmonitor</code>), <code>sqlitedb/botsdb</code> (the SQLite database), <code>static</code> (files of the web interface). By convention also <code>infile</code> and <code>outfile</code> for test files of plugins.</td><td>a new folder with a copy of the empty database <code>bots/install/botsdb</code>. <code>data</code> and <code>logging</code> are made at the first start.</td></tr>
+</table></div>
+
+<h4 id="environments--finding">How a command finds its environment</h4>
+<p>Every command of Bots (<code>bots-webserver</code>, <code>bots-engine</code>, <code>bots-jobqueueserver</code>, <code>bots-dirmonitor</code>, <code>bots-updatedb</code> …) looks for the <code>config</code> folder in this order:</p>
+<ol>
+<li><b>The option <code>-c</code></b> on the command line, written without a space: <code>-c/srv/bots/env/production/config</code> or <code>-cC:\edi\bots\production\config</code>. A relative path is taken from the current folder.</li>
+<li><b>The environment variable <code>BOTS_CONFIG_DIR</code></b>, if there is no <code>-c</code>.</li>
+<li><b>The default environment</b> <code>~/.bots/env/&lt;name&gt;/config</code> (on Windows <code>%USERPROFILE%\.bots\env\&lt;name&gt;\config</code>), where <code>&lt;name&gt;</code> is the value of the environment variable <code>BOTSENV</code>, or <code>default</code>. If this folder does not exist, Bots makes the whole environment there without asking.</li>
+</ol>
+<p>The <b>environment directory</b> is the folder above <code>config</code>. Bots then reads <code>bots.ini</code> and finds the other two folders with <code>[directories]</code>:</p>
+<ul>
+<li><code>usersys</code>: a full path is used as it is. A relative path (such as <code>usersys</code>, as in a <code>bots.ini</code> of Bots 3) means the folder of that name in the environment directory, if it has an <code>__init__.py</code>.</li>
+<li><code>botssys</code>: a full path is used as it is; a relative path is taken from the environment directory.</li>
+</ul>
+<p>Relative paths elsewhere, for example the <span class="ui">Path</span> of a file channel (<code>botssys/infile/orders</code>), are also taken from the environment directory: the engine changes to that folder when it starts. <span class="badge orange">changed in 4.0</span> In Bots 3 they were relative to the folder of the program.</p>
+
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="How a command finds its environment: option -c, else BOTS_CONFIG_DIR, else the default environment">
+<defs><marker id="arrow-env-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="200" height="80" rx="10"/><text x="110" y="64" text-anchor="middle" font-weight="600">1. -c&lt;folder&gt;</text><text class="small" x="110" y="86" text-anchor="middle">on the command line</text>
+<path class="arrow" d="M214,70 L266,70" marker-end="url(#arrow-env-1)"/>
+<rect class="box mid" x="270" y="30" width="210" height="80" rx="10"/><text x="375" y="64" text-anchor="middle" font-weight="600">2. BOTS_CONFIG_DIR</text><text class="small" x="375" y="86" text-anchor="middle">if no -c</text>
+<path class="arrow" d="M484,70 L536,70" marker-end="url(#arrow-env-1)"/>
+<rect class="box out" x="540" y="30" width="210" height="80" rx="10"/><text x="645" y="64" text-anchor="middle" font-weight="600">3. ~/.bots/env/…</text><text class="small" x="645" y="86" text-anchor="middle">$BOTSENV or "default"; made if missing</text>
+</svg></div>
+
+<div class="note warn"><span class="label">Watch out</span><p>A command started without <code>-c</code> and without <code>BOTS_CONFIG_DIR</code> silently uses (or makes) the default environment of the user who runs it. A scheduled task that runs as another user then works on another environment than you expect. In production, always give <code>-c</code> or set <code>BOTS_CONFIG_DIR</code>.</p></div>
+
+<h4 id="environments--several">Several environments side by side</h4>
+<p>You can run as many environments on one machine as you like, with one installation of the program. Each environment has its own database, files and scripts. Some things are shared by the machine and must differ per environment:</p>
+<div class="table-wrap"><table>
+<tr><th>What</th><th>Where</th><th>Why it must differ</th></tr>
+<tr><td>Port of the web interface</td><td><code>bots.ini</code> <code>[webserver] port</code></td><td>Two web servers cannot listen on one port.</td></tr>
+<tr><td>Port of the engine lock</td><td><code>bots.ini</code> <code>[settings] port</code></td><td>The engine opens this port to make sure only one engine runs. With the same port, the engine of one environment blocks the engine of the other.</td></tr>
+<tr><td>Port of the job queue</td><td><code>bots.ini</code> <code>[jobqueue] port</code></td><td>Each job queue server listens on its own port.</td></tr>
+<tr><td>Login cookie</td><td><code>settings.py</code> <code>SESSION_COOKIE_NAME</code>, <code>CSRF_COOKIE_NAME</code></td><td>Browsers share cookies between ports of the same host. The default names end in the value of <code>BOTSENV</code> (<code>bots_sessionid_default</code>); with the same name, logging in to one environment logs you out of the other.</td></tr>
+<tr><td>Database</td><td><code>settings.py</code> <code>DATABASES</code></td><td>Each environment needs its own database. The default SQLite file in its own <code>botssys</code> already is.</td></tr>
+</table></div>
+
+<h3 id="environments--how-to-new">How to make a new environment</h3>
+<ol class="steps">
+<li><b>Choose the environment directory</b>, for example <code>/srv/bots/env/test</code> or <code>C:\edi\bots\test</code>. It must not exist yet.</li>
+<li><b>Run <code>bots-configure</code></b>:
+<pre><code class="language-bash">bots-configure botsenv_path=/srv/bots/env/test -y</code></pre>
+Without <code>-y</code> it asks <code>Confirm creation of bots env: '/srv/bots/env/test' (y/n) ?</code>. It prints the folders it made and the details of the new environment.</li>
+<li><b>Set the ports</b> in <code>/srv/bots/env/test/config/bots.ini</code> if another environment runs on this machine (see the table above), for example:
+<pre><code class="language-ini">[settings]
+port = 28091
+
+[webserver]
+port = 8090
+environment_text = TEST
+environment_text_color = Red
+
+[jobqueue]
+port = 28092</code></pre></li>
+<li><b>Give the cookies their own name</b> in <code>config/settings.py</code>, or start the commands of this environment with the environment variable <code>BOTSENV=test</code>:
+<pre><code class="language-python">SESSION_COOKIE_NAME = "bots_sessionid_test"
+CSRF_COOKIE_NAME = "bots_csrftoken_test"</code></pre></li>
+<li><b>Start the web server</b> of the new environment:
+<pre><code class="language-bash">bots-webserver -c/srv/bots/env/test/config</code></pre>
+It shows <code>Serving at port: "8090".</code> Open <code>http://localhost:8090</code>; the text <code>TEST</code> appears next to the logo.</li>
+</ol>
+<p>Other ways to make an environment:</p>
+<ul>
+<li><code>bots-configure botsenv=test -y</code> makes <code>~/.bots/env/test</code>.</li>
+<li>Setting <code>BOTSENV=test</code> and starting any command without <code>-c</code> makes and uses <code>~/.bots/env/test</code>.</li>
+<li><code>bots-portenv</code> makes an environment from one of Bots 3: see <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</li>
+</ul>
+
+<h3 id="environments--how-to-use">How to point the commands at an environment</h3>
+<ol class="steps">
+<li><b>Per command:</b> add <code>-c</code> with the config folder:
+<pre><code class="language-bash">bots-engine -c/srv/bots/env/test/config
+bots-webserver -c/srv/bots/env/test/config</code></pre></li>
+<li><b>Per shell or service:</b> set <code>BOTS_CONFIG_DIR</code>. Linux:
+<pre><code class="language-bash">export BOTS_CONFIG_DIR=/srv/bots/env/test/config
+bots-engine</code></pre>
+Windows (Command Prompt):
+<pre><code class="language-text">set BOTS_CONFIG_DIR=C:\edi\bots\test\config
+bots-engine</code></pre>
+PowerShell:
+<pre><code class="language-powershell">$env:BOTS_CONFIG_DIR = "C:\edi\bots\test\config"
+bots-engine</code></pre></li>
+<li><b>Check</b> which environment a command uses: <code>bots-configure -c/srv/bots/env/test/config</code> prints <code>config path</code>, <code>botssys path</code>, <code>usersys path</code> and the database. In the web interface the same is on the home screen.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>When you start the engine from the <span class="ui">Run</span> menu, the web server starts it with the same config folder and the same Python as itself.</p></div>
+
+<h3 id="environments--how-to-move">How to put botssys or usersys somewhere else</h3>
+<ol class="steps">
+<li><b>Stop</b> the web server, job queue, directory monitor and scheduled engine of the environment.</li>
+<li><b>Move</b> the folder, for example <code>botssys</code> to a data disk <code>/data/bots/production/botssys</code>.</li>
+<li><b>Set</b> the full path in <code>bots.ini</code>:
+<pre><code class="language-ini">[directories]
+botssys = /data/bots/production/botssys
+usersys = /srv/bots/env/production/usersys</code></pre>
+Use forward slashes, also on Windows (<code>C:/edi/data/botssys</code>), and no slash at the end.</li>
+<li><b>Check</b> <code>DATABASES</code> in <code>settings.py</code>: the default SQLite path is built from <code>botssys</code> in <code>bots.ini</code>, so it moves with it.</li>
+<li><b>Start</b> again and check the paths on the home screen.</li>
+</ol>
+
+<h3 id="environments--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>-c&lt;folder&gt;</code></td><td>Option of every command: the config folder to use. No space after <code>-c</code>.</td><td>—</td><td><code>-c/srv/bots/env/production/config</code></td></tr>
+<tr><td><code>BOTS_CONFIG_DIR</code></td><td>Environment variable: the config folder when there is no <code>-c</code>.</td><td>not set</td><td><code>C:\edi\bots\production\config</code></td></tr>
+<tr><td><code>BOTSENV</code></td><td>Environment variable: name of the default environment <code>~/.bots/env/&lt;name&gt;</code>. In the default <code>settings.py</code> also part of <code>SESSION_COOKIE_NAME</code>, <code>CSRF_COOKIE_NAME</code> and <code>SERVER_EMAIL</code>.</td><td><code>default</code></td><td><code>test</code></td></tr>
+<tr><td><code>[directories] botssys</code></td><td>Folder for data, logs, database and static files.</td><td><code>botssys</code> (full path written by <code>bots-configure</code>)</td><td><code>/data/bots/production/botssys</code></td></tr>
+<tr><td><code>[directories] usersys</code></td><td>Folder with grammars, mappings and scripts.</td><td><code>usersys</code> (full path written by <code>bots-configure</code>)</td><td><code>/srv/bots/env/production/usersys</code></td></tr>
+<tr><td><code>[settings] port</code></td><td>Port of the engine lock (127.0.0.1).</td><td><code>28081</code></td><td><code>28091</code></td></tr>
+<tr><td><code>[webserver] port</code></td><td>Port of the web interface (all network interfaces).</td><td><code>8080</code></td><td><code>8090</code></td></tr>
+<tr><td><code>[jobqueue] port</code></td><td>Port of the job queue server (localhost).</td><td><code>28082</code></td><td><code>28092</code></td></tr>
+<tr><td><code>[webserver] environment_text</code></td><td>Text next to the logo, to see at once which environment you are in.</td><td>empty</td><td><code>TEST</code>, <code>PRODUCTION</code></td></tr>
+<tr><td><code>[webserver] environment_text_color</code></td><td>Color of that text (a color name or <code>#RGB</code>).</td><td>theme color</td><td><code>Red</code>, <code>#f00</code></td></tr>
+<tr><td><code>[webserver] environment_text_style</code> <span class="badge gray">advanced</span></td><td>CSS for that text; overrides the color.</td><td>empty</td><td><code>color:#000;font-size:2em;</code></td></tr>
+<tr><td><code>[webserver] logo_image</code>, <code>favicon_image</code> <span class="badge green">new in 4.0</span></td><td>Own logo and browser icon for this environment (png, gif, jpg, svg, ico; at most 512 kB). A relative path is relative to the config folder.</td><td>Bots logo</td><td><code>branding/logo.png</code></td></tr>
+<tr><td><code>SESSION_COOKIE_NAME</code>, <code>CSRF_COOKIE_NAME</code></td><td>Names of the cookies of the web interface (in <code>settings.py</code>).</td><td><code>bots_sessionid_&lt;BOTSENV&gt;</code>, <code>bots_csrftoken_&lt;BOTSENV&gt;</code></td><td><code>bots_sessionid_test</code></td></tr>
+<tr><td><code>DATABASES</code></td><td>Database of the environment (in <code>settings.py</code>). See <a href="#databases">Databases</a>.</td><td>SQLite <code>botssys/sqlitedb/botsdb</code></td><td>—</td></tr>
+<tr><td><code>STATIC_ROOT</code> <span class="badge gray">advanced</span></td><td>Folder where the web server puts the files of the web interface at start (in <code>settings.py</code>).</td><td><code>botssys/static</code></td><td>—</td></tr>
+<tr><td><code>bots-configure</code> options</td><td><code>botsenv_path=&lt;folder&gt;</code> (environment directory), <code>botsenv=&lt;name&gt;</code> (makes <code>~/.bots/env/&lt;name&gt;</code>), <code>-c&lt;folder&gt;</code> or <code>configdir=&lt;folder&gt;</code> (config folder only; botssys and usersys then go to the <code>botsenv_path</code>), <code>-y</code> / <code>--yes</code>, <code>-h</code> / <code>--help</code>.</td><td>—</td><td><code>bots-configure botsenv_path=/srv/bots/env/test -y</code></td></tr>
+</table></div>
+
+<h3 id="environments--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>In initilisation: path to configuration does not exists: "config"</code> (the message is spelled this way)</td><td>The folder given with <code>-c</code> or <code>BOTS_CONFIG_DIR</code> does not exist, often a relative path such as <code>-cconfig</code> started from another folder.</td><td>Give the full path of the config folder: <code>-c/srv/bots/env/production/config</code>.</td></tr>
+<tr><td><code>Initilisation: settings file imported "…" not in BOTS_CONFIG_DIR: "…"Fixe PYTHON_PATH or rename BOTS_CONFIG_DIR folder "config"</code></td><td>Python found another folder with the same name (<code>config</code>) earlier on its search path and read the wrong <code>settings.py</code>.</td><td>Give the full path of the config folder; check <code>PYTHONPATH</code> for a folder that contains another <code>config</code>.</td></tr>
+<tr><td><code>"…/settings.py" is a settings.py of bots 3; it can not be used with this version of bots.</code></td><td>The config folder holds the <code>settings.py</code> of Bots 3.</td><td>Use a copy of <code>bots/install/settings.py</code> of the program (the message gives the path) and set in it what was set in the old file. Or let <code>bots-portconfig</code> do it: see <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>.</td></tr>
+<tr><td><code>bots-engine does not run: another bots-engine is running for this environment (port 28081 is in use).</code>, while no engine of this environment runs</td><td>Another environment on this machine uses the same <code>[settings] port</code>, and its engine runs.</td><td>Give each environment its own <code>[settings] port</code>.</td></tr>
+<tr><td>You are logged out of one environment as soon as you log in to another on the same server</td><td>Both use the same cookie name (<code>bots_sessionid_default</code>); the browser shares cookies between ports.</td><td>Set <code>SESSION_COOKIE_NAME</code> and <code>CSRF_COOKIE_NAME</code> per environment in <code>settings.py</code>, or start each web server with its own <code>BOTSENV</code>.</td></tr>
+<tr><td>The engine run from a schedule shows no routes, or another configuration than the web interface</td><td>It runs without <code>-c</code> as another user and uses that user's default environment.</td><td>Add <code>-c</code> with the full config path to the scheduled command, or set <code>BOTS_CONFIG_DIR</code> for it.</td></tr>
+<tr><td><code>No entry "…" in section "…" in "bots.ini"</code></td><td>A required option is missing from <code>bots.ini</code>, for example after editing it by hand.</td><td>Compare with <code>bots/install/bots.ini</code> of the program and add the option.</td></tr>
+<tr><td><code>django_db: '…' not found in DATABASES: default</code></td><td><code>[settings] django_db</code> in <code>bots.ini</code> names a database that <code>settings.py</code> does not define.</td><td>Remove <code>django_db</code> from <code>bots.ini</code>, or add that name to <code>DATABASES</code>.</td></tr>
+<tr><td><code>Could not find SQLite database file: …/botssys/sqlitedb/botsdb</code></td><td>The database file is not where <code>settings.py</code> says, for example after moving <code>botssys</code> without changing <code>bots.ini</code>.</td><td>Set <code>[directories] botssys</code> to the new place, or copy <code>botssys/sqlitedb/botsdb</code> back.</td></tr>
+</table></div>
+</section>
+
+
+<section id="first-start" data-title="First start" data-group="Start here">
+<h2>First start</h2>
+<p class="lead">How to start the web server, log in for the first time, make users for your colleagues, and change a password. Do this right after the installation.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>You start a small web server that belongs to Bots and open it in your browser. A new Bots comes with one administrator account. You log in with it, give it a new password, and make an account for each person who works with Bots.</p></div>
+
+<h3 id="first-start--how-it-works">How it works</h3>
+<ol>
+<li><b>The web server.</b> <code>bots-webserver</code> reads the environment, copies the files of the web interface to <code>botssys/static</code>, and serves the web interface on all network interfaces of the machine at the port of <code>[webserver] port</code> (default <code>8080</code>). It runs until you stop it.</li>
+<li><b>The first user.</b> The empty database that every new environment gets has one user: <code>bots</code>, a superuser (allowed everything). Its password is <code>botsbots</code>, as documented for Bots since version 3.</li>
+<li><b>Other users.</b> Users are kept in the database of the environment, so each environment has its own users. A superuser makes them in the web interface. Without the web interface, <code>bots-updatedb --createsuperuser</code> makes a new superuser from the command line.</li>
+<li><b>Rights.</b> What a user sees depends on his rights: a superuser sees all menus; other users see only the menus their rights allow. See <a href="#web-users">Users and rights</a>.</li>
+</ol>
+<div class="note stop"><span class="label">Stop</span><p>The password <code>botsbots</code> is known to everybody who has read the documentation of Bots, and the web server can be reached from the network. Change it at the first login, before you put anything in Bots.</p></div>
+
+<h3 id="first-start--how-to-start">How to start the web server and log in</h3>
+<ol class="steps">
+<li><b>Start the web server</b> with the config folder of your environment:
+<pre><code class="language-bash">bots-webserver -c/srv/bots/env/production/config</code></pre>
+Expected output:
+<pre><code class="language-text">2026.10.15 09:00:01 STARTINFO [bots.webserver] Starting ...
+2026.10.15 09:00:03 STARTINFO [bots.webserver] configdir: "/srv/bots/env/production/config".
+2026.10.15 09:00:03 STARTINFO [bots.webserver] using plain http (no ssl).
+2026.10.15 09:00:03 STARTINFO [bots.webserver] Serving at port: "8080".</code></pre>
+Leave this window open. <kbd>Ctrl</kbd>+<kbd>C</kbd> stops the web server.</li>
+<li><b>Open</b> <code>http://localhost:8080</code> in a browser on the same machine (or <code>http://&lt;server name&gt;:8080</code> from another machine). You see the Bots page with <span class="ui">Log in</span> in the menu bar.</li>
+<li><b>Log in</b> with user name <code>bots</code> and password <code>botsbots</code>. Bots opens the home screen.</li>
+<li><b>Change the password</b> at once: menu <span class="ui">Home</span> (the house icon on the left) → <span class="ui">Change password</span>. Type the old password, then the new one twice, and click <span class="ui">Change my password</span>. You see a page that confirms the change.</li>
+</ol>
+
+<h3 id="first-start--home">The home screen</h3>
+<p>The home screen (<code>/bots/home</code>) shows the title <span class="ui">Bots Open Source EDI Translator</span> (or the <code>[webserver] about_title</code> you set), links to documentation and support, and a table with:</p>
+<ul>
+<li><span class="ui">Current user</span> and <span class="ui">Last login</span>;</li>
+<li><span class="ui">Webserver port</span>, <span class="ui">Platform</span>, <span class="ui">Machine</span>, <span class="ui">Python version</span>, <span class="ui">Django version</span>, <span class="ui">Bots version</span>;</li>
+<li><span class="ui">Bots installation path</span> (the program), <span class="ui">Botsenv path</span>, <span class="ui">Config path</span>, <span class="ui">Botssys path</span>, <span class="ui">Usersys path</span>;</li>
+<li>the database: <span class="ui">Database</span>, <span class="ui">Database_engine</span>, <span class="ui">Database_name</span> and, for a database server, user, host, port and options.</li>
+</ul>
+<p>Use it to check that you work in the environment you expect. The menu bar has icons; hold the mouse over an icon to see its name: <span class="ui">Home</span>, <span class="ui">Incoming</span>, <span class="ui">Outgoing</span>, <span class="ui">All runs</span>, <span class="ui">Configuration</span>, <span class="ui">SysTasks</span> (superusers only) and <span class="ui">Run</span>. On the right is a switch for the light or dark theme. Every screen is described in <a href="#web-interface">Web interface</a>.</p>
+
+<h3 id="first-start--users">How to make a user</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">SysTasks</span> → <span class="ui">Users</span> → <span class="ui">Add</span>.</li>
+<li><b>Type</b> the <span class="ui">Username</span>, for example <code>operator</code>, and the password twice. Click <span class="ui">Save</span>.</li>
+<li><b>Fill in</b> on the next screen, under <span class="ui">Permissions</span>:
+<ul>
+<li><span class="ui">Active</span>: ticked, or the user cannot log in.</li>
+<li><span class="ui">Staff status</span>: ticked if the user must see the <span class="ui">Configuration</span> menu (routes, channels, partners …).</li>
+<li><span class="ui">Superuser status</span>: only for administrators. A superuser has every right and sees <span class="ui">SysTasks</span>.</li>
+<li><span class="ui">Groups</span> and <span class="ui">User permissions</span>: the rights of a user who is not a superuser. For example, an operator who may look at results and start runs needs <code>Can view report</code>, <code>Can view filereport</code>, <code>Can view ta</code> and <code>Can change mutex</code> (the right to run the engine) of the application <code>Bots EDI Translator</code>.</li>
+</ul></li>
+<li><b>Click</b> <span class="ui">Save</span>. Log in as the new user in another browser (or a private window) to check what he sees.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Give rights to groups (<span class="ui">SysTasks</span> → <span class="ui">UserGroups</span> → <span class="ui">Add</span>), for example a group <code>operators</code> and a group <code>viewers</code>, and put users in a group. <a href="#web-users">Users and rights</a> lists every right.</p></div>
+
+<h3 id="first-start--cli-user">How to make an administrator from the command line</h3>
+<p>Use this when nobody can log in any more, for example when the password of the only superuser is lost.</p>
+<ol class="steps">
+<li><b>Stop</b> scheduled engine runs for a moment: the command refuses to work while an engine runs.</li>
+<li><b>Run</b>:
+<pre><code class="language-bash">bots-updatedb -c/srv/bots/env/production/config --createsuperuser</code></pre>
+It first checks the database (<code>The database is up to date.</code>), then asks for <code>Username</code>, <code>Email address</code> and the password twice.</li>
+<li><b>Log in</b> with the new user, and set a new password for the old user in <span class="ui">SysTasks</span> → <span class="ui">Users</span>.</li>
+</ol>
+
+<h3 id="first-start--reference">Reference</h3>
+<p>Settings for the web server and the login. The full lists are in <a href="#bots-ini">bots.ini</a> and <a href="#settings-py">settings.py</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>bots-webserver -c&lt;folder&gt;</code></td><td>Starts the web server for that environment. The only option; any other argument shows the help.</td><td>see <a href="#environments--finding">how the environment is found</a></td><td><code>bots-webserver -c/srv/bots/env/production/config</code></td></tr>
+<tr><td><code>[webserver] port</code></td><td>Port of the web interface.</td><td><code>8080</code></td><td><code>8090</code></td></tr>
+<tr><td><code>[webserver] environment</code> <span class="badge gray">advanced</span></td><td>Mode of the web server: <code>production</code>, or <code>development</code> (errors while writing the log are shown).</td><td><code>production</code></td><td><code>development</code></td></tr>
+<tr><td><code>[webserver] ssl_certificate</code>, <code>ssl_private_key</code></td><td>Files of a certificate and its private key: the web server then uses https. Both can be in the same file; self-signed certificates are allowed.</td><td>not set (plain http)</td><td><code>/srv/bots/tls/bots.pem</code></td></tr>
+<tr><td><code>[webserver] menu_changepassword</code></td><td>Shows <span class="ui">Change password</span> in the <span class="ui">Home</span> menu.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>[webserver] about_title</code>, <code>support_url</code>, <code>support_text</code> <span class="badge green">new in 4.0</span></td><td>Own title and support link on the home screen.</td><td>Bots title and links</td><td><code>support_url = mailto:edi@mycompany.example</code></td></tr>
+<tr><td><code>[webserver] log_level</code>, <code>log_console</code>, <code>log_console_level</code>, <code>log_file_level</code>, <code>log_file_number</code>, <code>log_cherrypy_access</code></td><td>Logging of the web server; see <a href="#logging">Logging</a>.</td><td><code>INFO</code>, <code>True</code>, <code>STARTINFO</code>, <code>INFO</code>, <code>30</code>, <code>False</code></td><td>—</td></tr>
+<tr><td><code>SESSION_COOKIE_AGE</code></td><td>Seconds without activity after which you must log in again (in <code>settings.py</code>).</td><td><code>3600</code></td><td><code>28800</code></td></tr>
+<tr><td><code>SESSION_EXPIRE_AT_BROWSER_CLOSE</code></td><td>Log in again after closing the browser.</td><td><code>True</code></td><td><code>False</code></td></tr>
+<tr><td><code>AUTH_PASSWORD_VALIDATORS</code></td><td>Rules for new passwords: not like the user name, at least 8 characters, not a common password, not only digits.</td><td>the four Django validators</td><td>—</td></tr>
+<tr><td><code>LANGUAGE_CODE</code></td><td>Language of the web interface.</td><td><code>en-us</code></td><td><code>nl</code>, <code>fr</code></td></tr>
+<tr><td><code>TIME_ZONE</code></td><td>Time zone for times in the web interface.</td><td><code>Europe/Paris</code></td><td><code>America/Chicago</code></td></tr>
+<tr><td><code>bots-updatedb --createsuperuser</code></td><td>After checking the database, asks for a name and password and makes a superuser.</td><td>—</td><td>—</td></tr>
+</table></div>
+
+<h3 id="first-start--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Please enter a correct username and password. Note that both fields may be case-sensitive.</code></td><td>Wrong user name or password, or the password of <code>bots</code> was already changed.</td><td>Check <kbd>Caps Lock</kbd>. If nobody knows a password, make a new superuser with <code>bots-updatedb --createsuperuser</code>.</td></tr>
+<tr><td>The same message for a user whose password you are sure of</td><td><span class="ui">Active</span> is not ticked for this user; an inactive user gets the same message as a wrong password.</td><td>A superuser ticks <span class="ui">Active</span> in <span class="ui">SysTasks</span> → <span class="ui">Users</span>.</td></tr>
+<tr><td>After login the menu bar shows almost nothing</td><td>The user has no rights, or no <span class="ui">Staff status</span> for the configuration.</td><td>Give the user rights or a group, and <span class="ui">Staff status</span> if needed. See <a href="#web-users">Users and rights</a>.</td></tr>
+<tr><td><code>This password is too short. It must contain at least 8 characters.</code> (also <code>This password is too common.</code>, <code>This password is entirely numeric.</code>, <code>The password is too similar to the username.</code>)</td><td>The new password does not pass the password rules of <code>AUTH_PASSWORD_VALIDATORS</code>.</td><td>Choose a longer, less common password.</td></tr>
+<tr><td><code>OSError: No socket could be created -- (('0.0.0.0', 8080): …</code></td><td>The port is in use by another program or by the web server of another environment.</td><td>Set another <code>[webserver] port</code> in <code>bots.ini</code> and start again.</td></tr>
+<tr><td>The web interface works on the server, but not from another computer</td><td>A firewall blocks the port.</td><td>Allow incoming connections on the port of the web server in the firewall of the server (only from the networks that need it). See <a href="#security">Security</a>.</td></tr>
+<tr><td><code>Invalid STATIC_ROOT: …</code> in the log, and pages without layout</td><td>The web server cannot make or write <code>botssys/static</code>.</td><td>Give the user that runs the web server write rights on <code>botssys</code>.</td></tr>
+<tr><td><code>Error: bots-engine is running (or another bots-updatedb). Nothing is changed.</code> when using <code>--createsuperuser</code></td><td>An engine runs at this moment.</td><td>Wait until it ends (or pause the schedule) and run the command again.</td></tr>
+<tr><td>You are sent back to the login page every few minutes</td><td>Another environment on the same server uses the same cookie name, or <code>SESSION_COOKIE_AGE</code> is short.</td><td>See <a href="#environments">Environments</a> for the cookie names; raise <code>SESSION_COOKIE_AGE</code> if wanted.</td></tr>
+</table></div>
+</section>
+
+
+<section id="tutorial-first-route" data-title="Tutorial: your first route" data-group="Start here">
+<h2>Tutorial: your first route</h2>
+<p class="lead">In this tutorial you make Bots pick up files from one folder and put them, unchanged, in another folder. It takes about 15 minutes and teaches you channels, routes, a run of the engine and the result screens. You need an installed Bots and a user who may change the configuration (for example <code>bots</code>).</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>You tell Bots: "look in this folder; whatever <code>.csv</code> file you find, move it to that folder". Then you put a file in the first folder, press <span class="ui">Run</span>, and see the file appear in the second folder and in the screens of Bots.</p></div>
+
+<h3 id="tutorial-first-route--how-it-works">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Pass-through route: incoming channel local_orders_in, route orders_in without translation, outgoing channel local_orders_out">
+<defs><marker id="arrow-tut1-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="220" height="80" rx="10"/><text x="120" y="64" text-anchor="middle" font-weight="600">local_orders_in</text><text class="small" x="120" y="86" text-anchor="middle">botssys/infile/orders/*.csv</text>
+<path class="arrow" d="M234,70 L266,70" marker-end="url(#arrow-tut1-1)"/>
+<rect class="box mid" x="270" y="30" width="220" height="80" rx="10"/><text x="380" y="64" text-anchor="middle" font-weight="600">route orders_in</text><text class="small" x="380" y="86" text-anchor="middle">Translate: Pass-through</text>
+<path class="arrow" d="M494,70 L526,70" marker-end="url(#arrow-tut1-1)"/>
+<rect class="box out" x="530" y="30" width="220" height="80" rx="10"/><text x="640" y="64" text-anchor="middle" font-weight="600">local_orders_out</text><text class="small" x="640" y="86" text-anchor="middle">botssys/outfile/orders/order_*.csv</text>
+</svg></div>
+<ol>
+<li>An <b>incoming channel</b> of type <code>file</code> reads every file that matches <code>*.csv</code> in <code>botssys/infile/orders</code>, and removes it there after reading.</li>
+<li>A <b>route</b> takes these files and, with <span class="ui">Translate</span> set to <span class="ui">Pass-through</span>, sends them on without reading their content.</li>
+<li>An <b>outgoing channel</b> of type <code>file</code> writes each file to <code>botssys/outfile/orders</code> with a new name: <code>order_</code> plus a counter.</li>
+</ol>
+<p>Relative paths in channels are taken from the environment directory, so <code>botssys/infile/orders</code> is the folder <code>infile/orders</code> in the <code>botssys</code> of your environment.</p>
+
+<h3 id="tutorial-first-route--how-to-channels">How to make the two channels</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Configuration</span> (the gear icon) → <span class="ui">Channels</span> → <span class="ui">In</span> → <span class="ui">Add incoming channel</span>.</li>
+<li><b>Fill in:</b>
+<ul>
+<li><span class="ui">Idchannel</span>: <code>local_orders_in</code></li>
+<li><span class="ui">In/out</span>: <code>in</code> (already set); <span class="ui">Type</span>: <code>file</code></li>
+<li><span class="ui">Remove</span>: ticked. Without it, the file stays in the folder and is read again at every run.</li>
+<li><span class="ui">Path</span>: <code>botssys/infile/orders</code></li>
+<li><span class="ui">Filename</span>: <code>*.csv</code></li>
+</ul>
+Click <span class="ui">Save</span>. The channel appears in the list.</li>
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">Out</span> → <span class="ui">Add outgoing channel</span>.</li>
+<li><b>Fill in:</b>
+<ul>
+<li><span class="ui">Idchannel</span>: <code>local_orders_out</code>; <span class="ui">Type</span>: <code>file</code></li>
+<li><span class="ui">Path</span>: <code>botssys/outfile/orders</code></li>
+<li><span class="ui">Filename</span>: <code>order_*.csv</code>. Bots replaces the <code>*</code> with a counter of this channel: <code>order_1.csv</code>, <code>order_2.csv</code> …</li>
+</ul>
+Click <span class="ui">Save</span>.</li>
+</ol>
+
+<h3 id="tutorial-first-route--how-to-route">How to make the route</h3>
+<ol class="steps">
+<li><b>Open</b> <span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>.</li>
+<li><b>Fill in:</b>
+<ul>
+<li><span class="ui">Active</span>: ticked</li>
+<li><span class="ui">Idroute</span>: <code>orders_in</code>; <span class="ui">Sequence</span>: <code>1</code></li>
+<li><span class="ui">Incoming channel</span>: <code>local_orders_in (file)</code></li>
+<li><span class="ui">Fromeditype</span> and <span class="ui">Frommessagetype</span>: leave empty. A pass-through route does not need them.</li>
+<li><span class="ui">Translate</span>: <span class="ui">Pass-through</span></li>
+<li><span class="ui">Outgoing channel</span>: <code>local_orders_out (file)</code></li>
+</ul>
+Click <span class="ui">Save</span>.</li>
+</ol>
+
+<h3 id="tutorial-first-route--how-to-test">How to test it</h3>
+<ol class="steps">
+<li><b>Make the folder</b> <code>botssys/infile/orders</code> in your environment directory (the <span class="ui">Botssys path</span> on the home screen shows where <code>botssys</code> is), and <b>put a file</b> in it, for example <code>test_order.csv</code> with any text:
+<pre><code class="language-text">HDR,PARTNERA,PO1001,20261015
+LIN,1,ITEM-100,10,EA,4.50</code></pre></li>
+<li><b>Run the engine:</b> in the web interface, <span class="ui">Run</span> → <span class="ui">Run (only new)</span>. You see the message <code>Bots-engine is started.</code> and the list of runs. Or on the command line:
+<pre><code class="language-bash">bots-engine -c/srv/bots/env/production/config</code></pre>
+The end of the output is:
+<pre><code class="language-text">... START     [bots.engine] Running route: orders_in 1
+... START     [bots.engine] Start communication channel in: local_orders_in (file)
+... DONE      [bots.engine] Finished communication channel in: local_orders_in (file)
+... START     [bots.engine] Start communication channel out: local_orders_out (file)
+... DONE      [bots.engine] Finished communication channel out: local_orders_out (file)
+... DONE      [bots.engine] Finished route: orders_in 1
+... INFO      [bots.engine] Bots Report; type: new, time: ..., duration: ...
+    1 files received/processed in run.
+    1 files without errors,
+    1 files send in run.</code></pre></li>
+<li><b>Check the folders.</b> <code>botssys/infile/orders</code> is empty; <code>botssys/outfile/orders</code> has <code>order_1.csv</code> with the same content.</li>
+<li><b>Check the web interface.</b>
+<ul>
+<li><span class="ui">All runs</span> → <span class="ui">Report (per run)</span>: the last run, type <code>new</code>, with 1 received and 1 sent.</li>
+<li><span class="ui">Incoming</span>: one line for <code>test_order.csv</code>, route <code>orders_in</code>, channel <code>local_orders_in</code>, status <span class="ui">Done</span>.</li>
+<li><span class="ui">Outgoing</span>: one line for <code>order_1.csv</code> to <code>local_orders_out</code>.</li>
+<li>Click the number at the start of the line in <span class="ui">Incoming</span> to see the steps of the file, and click a file name to see its content.</li>
+</ul></li>
+<li><b>Run again</b> without a new file: the report says <code>0 files received/processed in run.</code> This is correct.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>To keep the original file name, use <code>{infile}</code> in the <span class="ui">Filename</span> of the outgoing channel, for example <code>{infile:name}_*.{infile:ext}</code>. All options are in <a href="#channel-file">File channels</a>.</p></div>
+
+<h3 id="tutorial-first-route--reference">Reference</h3>
+<p>The fields used in this tutorial. Every field of routes and channels is in <a href="#routes">Routes</a> and <a href="#channels">Channels</a>.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Channel <span class="ui">Idchannel</span></td><td>Name of the channel (at most 35 characters).</td><td>—</td><td><code>local_orders_in</code></td></tr>
+<tr><td>Channel <span class="ui">In/out</span>, <span class="ui">Type</span></td><td>Direction and kind of channel.</td><td>—</td><td><code>in</code>, <code>file</code></td></tr>
+<tr><td>Channel <span class="ui">Remove</span></td><td>Incoming: delete the file after reading it.</td><td>off</td><td>ticked in production</td></tr>
+<tr><td>Channel <span class="ui">Path</span></td><td>Folder; relative to the environment directory, or a full path.</td><td>—</td><td><code>botssys/infile/orders</code>, <code>C:\edi\in</code>, <code>/srv/edi/in</code></td></tr>
+<tr><td>Channel <span class="ui">Filename</span></td><td>Incoming: a pattern with <code>*</code> and <code>?</code>. Outgoing: the name to write; <code>*</code> becomes a counter; also <code>{infile}</code>, <code>{datetime:%Y%m%d}</code>, <code>{botskey}</code> and other values. Empty for outgoing means <code>*</code>.</td><td>—</td><td><code>*.csv</code>, <code>order_*.csv</code></td></tr>
+<tr><td>Route <span class="ui">Idroute</span>, <span class="ui">Sequence</span></td><td>Name of the route and number of the part.</td><td>sequence <code>1</code></td><td><code>orders_in</code>, <code>1</code></td></tr>
+<tr><td>Route <span class="ui">Active</span></td><td>Only active routes run.</td><td>off</td><td>ticked</td></tr>
+<tr><td>Route <span class="ui">Translate</span></td><td>What to do with the received files: <span class="ui">Nothing</span>, <span class="ui">Translate</span>, <span class="ui">Pass-through</span>, <span class="ui">Parse &amp; Pass-through</span>.</td><td><span class="ui">Translate</span></td><td><span class="ui">Pass-through</span></td></tr>
+<tr><td>Route <span class="ui">Incoming channel</span>, <span class="ui">Outgoing channel</span></td><td>Where files come from and go to.</td><td>—</td><td><code>local_orders_in</code>, <code>local_orders_out</code></td></tr>
+</table></div>
+
+<h3 id="tutorial-first-route--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>0 files received/processed in run.</code> while the file is in the folder</td><td>The channel looks in another folder, the file name does not match the <span class="ui">Filename</span> pattern (on Linux <code>*.csv</code> does not match <code>ORDER.CSV</code>), or the route is not active.</td><td>
+<ol class="steps"><li><b>Compare</b> the <span class="ui">Botssys path</span> on the home screen with the folder you used.</li><li><b>Check</b> the case of the extension.</li><li><b>Check</b> <span class="ui">Active</span> on the route; the engine log line <code>Run active routes from database that are in default run: "[…]"</code> lists the routes it ran.</li></ol></td></tr>
+<tr><td><code>When using an inchannel and not pass-through, both "fromeditype" and "frommessagetype" are required.</code> when saving the route</td><td><span class="ui">Translate</span> is not <span class="ui">Pass-through</span>.</td><td>Set <span class="ui">Translate</span> to <span class="ui">Pass-through</span>, or fill in the editype and messagetype.</td></tr>
+<tr><td>The same file is sent at every run</td><td><span class="ui">Remove</span> is not ticked on the incoming channel.</td><td>Tick <span class="ui">Remove</span>, and delete the file from the incoming folder.</td></tr>
+<tr><td><code>Trying to run "bots-engine", but another instance of "bots-engine" is running. Please try again later.</code></td><td>An engine runs already (perhaps a scheduled one).</td><td>Wait a moment and choose <span class="ui">Run</span> → <span class="ui">Run (only new)</span> again.</td></tr>
+<tr><td>The <span class="ui">Run</span> menu is missing</td><td>Your user does not have the right to run the engine (<code>Can change mutex</code>).</td><td>Log in as a superuser, or ask for that right. See <a href="#web-users">Users and rights</a>.</td></tr>
+<tr><td>Status <span class="ui">Error</span> on the outgoing file with <code>PermissionError</code> in the error text</td><td>Bots may not write in the outgoing folder (or the file is open in another program on Windows).</td><td>Give the user that runs the engine write rights on the folder, close the file, and resend it (<a href="#web-reports">Reports</a>).</td></tr>
+<tr><td>Output files have the date of today in their name instead of a number</td><td><span class="ui">Filename</span> has <code>{datetime:…}</code> but no <code>*</code>: all files of the day get the same name and are appended to one file.</td><td>Add <code>*</code> (or <code>{unique}</code>) to the name, for example <code>order_{datetime:%Y%m%d}_*.csv</code>.</td></tr>
+</table></div>
+</section>
+
+
+<section id="tutorial-first-translation" data-title="Tutorial: your first translation" data-group="Start here">
+<h2>Tutorial: your first translation</h2>
+<p class="lead">In this tutorial you translate purchase orders from your ERP, as a csv file, into X12 850 orders for PartnerB. You write three grammars and one mapping, add two partners, two channels, a translation and a route, and run it. It takes about an hour. Do <a href="#tutorial-first-route">Tutorial: your first route</a> first.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots needs to know what the ERP file looks like (the incoming grammar), what an X12 order looks like (the outgoing grammar and its envelope), and which value goes where (the mapping). Then a route tells Bots to take the ERP files, translate them, and put the result where PartnerB picks it up.</p></div>
+
+<h3 id="tutorial-first-translation--how-it-works">How it works</h3>
+<div class="diagram"><svg viewBox="0 0 760 170" width="760" role="img" aria-label="Translation: ERP csv file read with grammar orders_erp, mapping orders_erp_to_x12, X12 850 written with grammar 850004010 and envelope x12">
+<defs><marker id="arrow-tut2-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="40" width="170" height="90" rx="10"/><text x="95" y="74" text-anchor="middle" font-weight="600">ERP csv</text><text class="small" x="95" y="96" text-anchor="middle">grammar csv/</text><text class="small" x="95" y="114" text-anchor="middle">orders_erp</text>
+<path class="arrow" d="M184,85 L216,85" marker-end="url(#arrow-tut2-1)"/>
+<rect class="box mid" x="220" y="40" width="170" height="90" rx="10"/><text x="305" y="74" text-anchor="middle" font-weight="600">Mapping</text><text class="small" x="305" y="96" text-anchor="middle">mappings/csv/</text><text class="small" x="305" y="114" text-anchor="middle">orders_erp_to_x12</text>
+<path class="arrow" d="M394,85 L426,85" marker-end="url(#arrow-tut2-1)"/>
+<rect class="box mid" x="430" y="40" width="150" height="90" rx="10"/><text x="505" y="74" text-anchor="middle" font-weight="600">X12 850</text><text class="small" x="505" y="96" text-anchor="middle">grammar x12/</text><text class="small" x="505" y="114" text-anchor="middle">850004010</text>
+<path class="arrow" d="M584,85 L616,85" marker-end="url(#arrow-tut2-1)"/>
+<rect class="box out" x="620" y="40" width="130" height="90" rx="10"/><text x="685" y="74" text-anchor="middle" font-weight="600">Envelope</text><text class="small" x="685" y="96" text-anchor="middle">grammar x12/x12</text><text class="small" x="685" y="114" text-anchor="middle">ISA, GS</text>
+</svg></div>
+<ol>
+<li>The incoming channel <code>erp_orders_in</code> reads the csv files the ERP writes to <code>botssys/infile/erp_orders</code>.</li>
+<li>The route <code>orders_out</code> says these files are editype <code>csv</code>, messagetype <code>orders_erp</code>. Bots reads them with the grammar <code>usersys/grammars/csv/orders_erp.py</code>. The grammar says that every <code>HDR</code> record starts a new order, so one file can hold many orders.</li>
+<li>For each order Bots looks up the translation rule for <code>csv</code> / <code>orders_erp</code>. It names the mapping <code>orders_erp_to_x12</code> and the result: editype <code>x12</code>, messagetype <code>850004010</code>.</li>
+<li>The mapping <code>usersys/mappings/csv/orders_erp_to_x12.py</code> builds the 850: ST, BEG, DTM, PO1 per line, CTT, SE. It also sets the sender (<code>MYCOMPANY</code>) and receiver (<code>PARTNERB</code>).</li>
+<li>Bots writes the 850 with the grammar <code>usersys/grammars/x12/850004010.py</code>, merges the orders for the same receiver, and adds the ISA/GS envelope with the grammar <code>usersys/grammars/x12/x12.py</code>, with control numbers from its counters.</li>
+<li>The outgoing channel <code>partnerb_x12_out</code> writes the file to <code>botssys/outfile/partnerb</code>. In real life this would be an SFTP channel such as <code>partnerb_sftp_out</code>.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>The X12 grammars in this tutorial are cut down to the segments the example uses, so that you can read them in full. For real partners, use complete grammars, for example from the plugins on the Bots website, and the implementation guide of your partner. See <a href="#editype-x12">X12</a>.</p></div>
+
+<h3 id="tutorial-first-translation--how-to-files">How to write the grammars and the mapping</h3>
+<p>All files go in the <code>usersys</code> folder of your environment (the <span class="ui">Usersys path</span> on the home screen). The folders <code>grammars/csv</code>, <code>grammars/x12</code> and <code>mappings/csv</code> already exist, each with an <code>__init__.py</code>. Save the files as UTF-8 text.</p>
+<ol class="steps">
+<li><b>Look at the ERP file.</b> This is what the ERP writes: a header line <code>HDR</code> per order (partner, order number, order date, wanted delivery date), and a line <code>LIN</code> per order line (line number, item, quantity, unit, price). Dates are <code>YYYYMMDD</code>. The second order has no delivery date.
+<pre><code class="language-text">HDR,PARTNERB,PO1001,20261015,20261022
+LIN,1,ITEM-100,10,EA,4.50
+LIN,2,ITEM-200,5,EA,12.00
+HDR,PARTNERB,PO1002,20261015
+LIN,1,ITEM-300,2,BX,30.00</code></pre></li>
+<li><b>Write the incoming grammar</b> <code>usersys/grammars/csv/orders_erp.py</code>:
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'field_sep': ',',
+    'quote_char': '"',
+    'charset': 'utf-8',
+}
+
+nextmessage = ({'BOTSID': 'HDR'},)
+
+structure = [
+    {ID: 'HDR', MIN: 1, MAX: 9999, LEVEL: [
+        {ID: 'LIN', MIN: 1, MAX: 9999},
+    ]},
+]
+
+recorddefs = {
+    'HDR': [
+        ['BOTSID', 'M', 3, 'A'],
+        ['PARTNER', 'M', 35, 'A'],
+        ['PO_NUMBER', 'M', 22, 'A'],
+        ['PO_DATE', 'M', 8, 'D'],
+        ['DELIVERY_DATE', 'C', 8, 'D'],
+    ],
+    'LIN': [
+        ['BOTSID', 'M', 3, 'A'],
+        ['LINE_NUMBER', 'M', 6, 'A'],
+        ['ITEM', 'M', 48, 'A'],
+        ['QUANTITY', 'M', 15, 'R'],
+        ['UNIT', 'M', 2, 'A'],
+        ['PRICE', 'C', 17, 'R'],
+    ],
+}</code></pre>
+<ul>
+<li><code>syntax</code>: fields separated by a comma, text may be quoted with <code>"</code>, the file is UTF-8.</li>
+<li><code>nextmessage</code>: each <code>HDR</code> starts a new message, so each order is translated on its own.</li>
+<li><code>structure</code>: a <code>HDR</code> with one or more <code>LIN</code> under it.</li>
+<li><code>recorddefs</code>: the fields of each record, in order. Each field is <code>[name, M (mandatory) or C (conditional), maximum length, format]</code>. Format <code>A</code> is text, <code>D</code> a date (<code>YYYYMMDD</code>), <code>R</code> a number with any decimals. The first field, <code>BOTSID</code>, is the record ID.</li>
+</ul></li>
+<li><b>Write the outgoing message grammar</b> <code>usersys/grammars/x12/850004010.py</code>. The name is the message (850) and the version (004010):
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'functionalgroup': 'PO',
+}
+
+structure = [
+    {ID: 'ST', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'BEG', MIN: 1, MAX: 1},
+        {ID: 'DTM', MIN: 0, MAX: 10},
+        {ID: 'PO1', MIN: 1, MAX: 100000},
+        {ID: 'CTT', MIN: 0, MAX: 1},
+        {ID: 'SE', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ST': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ST01', 'M', (3, 3), 'ID'],
+        ['ST02', 'M', (4, 9), 'AN'],
+    ],
+    'BEG': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['BEG01', 'M', (2, 2), 'ID'],
+        ['BEG02', 'M', (2, 2), 'ID'],
+        ['BEG03', 'M', (1, 22), 'AN'],
+        ['BEG04', 'C', (1, 30), 'AN'],
+        ['BEG05', 'M', (8, 8), 'DT'],
+    ],
+    'DTM': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['DTM01', 'M', (3, 3), 'ID'],
+        ['DTM02', 'C', (8, 8), 'DT'],
+    ],
+    'PO1': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['PO101', 'C', (1, 20), 'AN'],
+        ['PO102', 'C', (1, 15), 'R'],
+        ['PO103', 'C', (2, 2), 'ID'],
+        ['PO104', 'C', (1, 17), 'R'],
+        ['PO105', 'C', (2, 2), 'ID'],
+        ['PO106', 'C', (2, 2), 'ID'],
+        ['PO107', 'C', (1, 48), 'AN'],
+    ],
+    'CTT': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['CTT01', 'M', (1, 6), 'N0'],
+    ],
+    'SE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['SE01', 'M', (1, 10), 'N0'],
+        ['SE02', 'M', (4, 9), 'AN'],
+    ],
+}</code></pre>
+<ul>
+<li><code>functionalgroup</code>: the code for GS01; <code>PO</code> is for purchase orders.</li>
+<li>X12 lengths are <code>(minimum, maximum)</code>. X12 formats: <code>AN</code> text, <code>ID</code> a code, <code>DT</code> a date, <code>R</code> a decimal number, <code>N0</code> a whole number.</li>
+<li>SE is under ST in the structure: it closes the message.</li>
+</ul></li>
+<li><b>Write the envelope grammar</b> <code>usersys/grammars/x12/x12.py</code>. Bots uses it for the ISA and GS segments of every outgoing X12 file. Its <code>syntax</code> also gives the defaults for all X12 messages of this environment:
+<pre><code class="language-python">from bots.botsconfig import *
+
+syntax = {
+    'version': '00401',
+    'ISA05': 'ZZ',
+    'ISA07': 'ZZ',
+    'ISA14': '0',
+    'ISA15': 'T',
+}
+
+structure = [
+    {ID: 'ISA', MIN: 1, MAX: 1, LEVEL: [
+        {ID: 'GS', MIN: 1, MAX: 1, LEVEL: [
+            {ID: 'GE', MIN: 1, MAX: 1},
+        ]},
+        {ID: 'IEA', MIN: 1, MAX: 1},
+    ]},
+]
+
+recorddefs = {
+    'ISA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['ISA01', 'M', (2, 2), 'ID'],
+        ['ISA02', 'M', (10, 10), 'AN'],
+        ['ISA03', 'M', (2, 2), 'ID'],
+        ['ISA04', 'M', (10, 10), 'AN'],
+        ['ISA05', 'M', (2, 2), 'ID'],
+        ['ISA06', 'M', (15, 15), 'AN'],
+        ['ISA07', 'M', (2, 2), 'ID'],
+        ['ISA08', 'M', (15, 15), 'AN'],
+        ['ISA09', 'M', (6, 6), 'DT'],
+        ['ISA10', 'M', (4, 4), 'TM'],
+        ['ISA11', 'M', (1, 1), 'AN'],
+        ['ISA12', 'M', (5, 5), 'ID'],
+        ['ISA13', 'M', (9, 9), 'N0'],
+        ['ISA14', 'M', (1, 1), 'ID'],
+        ['ISA15', 'M', (1, 1), 'ID'],
+        ['ISA16', 'C', (1, 1), 'AN'],
+    ],
+    'GS': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GS01', 'M', (2, 2), 'ID'],
+        ['GS02', 'M', (2, 15), 'AN'],
+        ['GS03', 'M', (2, 15), 'AN'],
+        ['GS04', 'M', (8, 8), 'DT'],
+        ['GS05', 'M', (4, 8), 'TM'],
+        ['GS06', 'M', (1, 9), 'N0'],
+        ['GS07', 'M', (1, 2), 'ID'],
+        ['GS08', 'M', (1, 12), 'AN'],
+    ],
+    'GE': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['GE01', 'M', (1, 6), 'N0'],
+        ['GE02', 'M', (1, 9), 'N0'],
+    ],
+    'IEA': [
+        ['BOTSID', 'M', 3, 'AN'],
+        ['IEA01', 'M', (1, 5), 'N0'],
+        ['IEA02', 'M', (9, 9), 'N0'],
+    ],
+}</code></pre>
+<ul>
+<li><code>version</code> <code>00401</code>: the ISA version (ISA12).</li>
+<li><code>ISA05</code>, <code>ISA07</code>: qualifier <code>ZZ</code> (mutually defined) for the IDs of sender and receiver.</li>
+<li><code>ISA14</code> <code>0</code>: do not ask the receiver for an interchange acknowledgement (TA1). The default is <code>1</code>.</li>
+<li><code>ISA15</code> <code>T</code>: this is a test. Set it to <code>P</code> (the default) when you go live.</li>
+</ul></li>
+<li><b>Write the mapping</b> <code>usersys/mappings/csv/orders_erp_to_x12.py</code>. A mapping lives in the folder of the <em>incoming</em> editype. Bots calls its function <code>main</code> once per order, with the incoming order as <code>inn</code> and an empty 850 as <code>out</code>:
+<pre><code class="language-python">def main(inn, out):
+    # Sender and receiver: Bots uses these for the ISA and GS envelope.
+    out.ta_info['frompartner'] = 'MYCOMPANY'
+    out.ta_info['topartner'] = inn.get({'BOTSID': 'HDR', 'PARTNER': None})
+
+    # The order number: shown in the web interface as the document reference.
+    po_number = inn.get({'BOTSID': 'HDR', 'PO_NUMBER': None})
+    out.ta_info['botskey'] = po_number
+
+    # ST: start of the message. ST02 is the control number of this message.
+    st02 = out.ta_info['reference'].zfill(4)
+    out.put({'BOTSID': 'ST', 'ST01': '850', 'ST02': st02})
+
+    # BEG: 00 = original order, SA = stand-alone order.
+    out.put({'BOTSID': 'ST'},
+            {'BOTSID': 'BEG',
+             'BEG01': '00',
+             'BEG02': 'SA',
+             'BEG03': po_number,
+             'BEG05': inn.get({'BOTSID': 'HDR', 'PO_DATE': None})})
+
+    # DTM 002: requested delivery date, only when the ERP gives one.
+    delivery = inn.get({'BOTSID': 'HDR', 'DELIVERY_DATE': None})
+    if delivery:
+        out.put({'BOTSID': 'ST'}, {'BOTSID': 'DTM', 'DTM01': '002', 'DTM02': delivery})
+
+    # PO1: one segment per order line.
+    for lin in inn.getloop({'BOTSID': 'HDR'}, {'BOTSID': 'LIN'}):
+        po1 = out.putloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'})
+        po1.put({'BOTSID': 'PO1',
+                 'PO101': lin.get({'BOTSID': 'LIN', 'LINE_NUMBER': None}),
+                 'PO102': lin.get({'BOTSID': 'LIN', 'QUANTITY': None}),
+                 'PO103': lin.get({'BOTSID': 'LIN', 'UNIT': None}),
+                 'PO104': lin.get({'BOTSID': 'LIN', 'PRICE': None}),
+                 'PO106': 'VN',
+                 'PO107': lin.get({'BOTSID': 'LIN', 'ITEM': None})})
+
+    # CTT: the number of order lines.
+    out.put({'BOTSID': 'ST'},
+            {'BOTSID': 'CTT', 'CTT01': out.getcountoccurrences({'BOTSID': 'ST'}, {'BOTSID': 'PO1'})})
+
+    # SE: number of segments from ST to SE (SE included), and the same control number as ST02.
+    out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': st02})</code></pre>
+<ul>
+<li><code>inn.get(...)</code> reads one value: the path goes from the top record down, and the field you want has the value <code>None</code>. It gives <code>None</code> if the field is empty.</li>
+<li><code>out.put(...)</code> writes values; a record is made when it does not exist yet.</li>
+<li><code>inn.getloop(...)</code> goes through every <code>LIN</code>; <code>out.putloop(...)</code> makes a new <code>PO1</code> each time.</li>
+<li><code>out.ta_info['reference']</code> is a message number from a counter of Bots. <code>out.getcount()</code> counts the segments written so far.</li>
+<li><code>PO106</code> <code>VN</code> says <code>PO107</code> is the vendor's item number.</li>
+</ul>
+All functions are in <a href="#mapping-functions">Mapping functions</a>.</li>
+<li><b>Check the grammars</b> on the command line:
+<pre><code class="language-bash">bots-grammarcheck -c/srv/bots/env/production/config csv orders_erp
+bots-grammarcheck -c/srv/bots/env/production/config x12 850004010
+bots-grammarcheck -c/srv/bots/env/production/config x12 x12</code></pre>
+Each prints <code>OK - no error found in grammar</code>.</li>
+</ol>
+
+<h3 id="tutorial-first-translation--how-to-config">How to set up the partners, channels, translation and route</h3>
+<ol class="steps">
+<li><b>Add the partners.</b> <span class="ui">Configuration</span> → <span class="ui">Partners</span> → <span class="ui">Add</span>: tick <span class="ui">Active</span>, <span class="ui">Partner identification</span> <code>MYCOMPANY</code>, <span class="ui">Name</span> <code>MyCompany</code>, <span class="ui">Save</span>. Do the same for <code>PARTNERB</code> / <code>PartnerB</code>.</li>
+<li><b>Add the incoming channel.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">In</span> → <span class="ui">Add incoming channel</span>: <span class="ui">Idchannel</span> <code>erp_orders_in</code>, <span class="ui">Type</span> <code>file</code>, <span class="ui">Remove</span> ticked, <span class="ui">Path</span> <code>botssys/infile/erp_orders</code>, <span class="ui">Filename</span> <code>*.csv</code>. <span class="ui">Save</span>.</li>
+<li><b>Add the outgoing channel.</b> <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">Out</span> → <span class="ui">Add outgoing channel</span>: <span class="ui">Idchannel</span> <code>partnerb_x12_out</code>, <span class="ui">Type</span> <code>file</code>, <span class="ui">Path</span> <code>botssys/outfile/partnerb</code>, <span class="ui">Filename</span> <code>850_*.x12</code>. <span class="ui">Save</span>.</li>
+<li><b>Add the translation.</b> <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>:
+<ul>
+<li><span class="ui">Active</span>: ticked</li>
+<li><span class="ui">Fromeditype</span>: <code>csv</code>; <span class="ui">Frommessagetype</span>: <code>orders_erp</code></li>
+<li><span class="ui">Mapping Script</span>: <code>orders_erp_to_x12</code> (the file name without <code>.py</code>)</li>
+<li><span class="ui">Toeditype</span>: <code>x12</code>; <span class="ui">Tomessagetype</span>: <code>850004010</code></li>
+</ul>
+<span class="ui">Save</span>.</li>
+<li><b>Add the route.</b> <span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>:
+<ul>
+<li><span class="ui">Active</span>: ticked; <span class="ui">Idroute</span>: <code>orders_out</code>; <span class="ui">Sequence</span>: <code>1</code></li>
+<li><span class="ui">Incoming channel</span>: <code>erp_orders_in (file)</code></li>
+<li><span class="ui">Fromeditype</span>: <code>csv</code>; <span class="ui">Frommessagetype</span>: <code>orders_erp</code></li>
+<li><span class="ui">Translate</span>: <span class="ui">Translate</span></li>
+<li><span class="ui">Outgoing channel</span>: <code>partnerb_x12_out (file)</code></li>
+</ul>
+<span class="ui">Save</span>.</li>
+</ol>
+
+<h3 id="tutorial-first-translation--how-to-run">How to run it and check the result</h3>
+<ol class="steps">
+<li><b>Save the ERP file</b> of step 1 above as <code>botssys/infile/erp_orders/orders_20261015.csv</code>.</li>
+<li><b>Run</b> <span class="ui">Run</span> → <span class="ui">Run (only new)</span>, or <code>bots-engine -c/srv/bots/env/production/config orders_out</code> (a route name on the command line runs only that route). The report says:
+<pre><code class="language-text">    1 files received/processed in run.
+    1 files without errors,
+    1 files send in run.</code></pre></li>
+<li><b>Open the result</b> <code>botssys/outfile/partnerb/850_1.x12</code>. The date and time in ISA09, ISA10, GS04 and GS05 are those of your run:
+<pre><code class="language-text">ISA*00*          *00*          *ZZ*MYCOMPANY      *ZZ*PARTNERB       *261015*2020*U*00401*000000001*0*T*&gt;~
+GS*PO*MYCOMPANY*PARTNERB*20261015*2020*1*X*004010~
+ST*850*0001~
+BEG*00*SA*PO1001**20261015~
+DTM*002*20261022~
+PO1*1*10*EA*4.50**VN*ITEM-100~
+PO1*2*5*EA*12.00**VN*ITEM-200~
+CTT*2~
+SE*7*0001~
+ST*850*0002~
+BEG*00*SA*PO1002**20261015~
+PO1*1*2*BX*30.00**VN*ITEM-300~
+CTT*1~
+SE*5*0002~
+GE*2*1~
+IEA*1*000000001~</code></pre>
+The two orders are merged into one interchange: one ISA/GS, two ST ... SE. ISA13 <code>000000001</code> is the interchange control number from a counter per sender; the next file gets <code>000000002</code>. ISA16 <code>&gt;</code> and the separators <code>*</code> and <code>~</code> are the X12 defaults of Bots. Each segment is on its own line because the X12 default syntax adds a line end after each <code>~</code>.</li>
+<li><b>Check the web interface.</b> <span class="ui">Incoming</span> shows one file, editype <code>csv</code>, messagetype <code>orders_erp</code>, two messages. <span class="ui">Outgoing</span> shows <code>850_1.x12</code>. <span class="ui">Document-in</span> (in the <span class="ui">Incoming</span> menu) shows the two incoming orders; <span class="ui">Document-out</span> (in the <span class="ui">Outgoing</span> menu) shows the two 850 messages with references <code>PO1001</code> and <code>PO1002</code>, the <code>botskey</code> set by the mapping. To give the incoming orders the same reference, also set <code>inn.ta_info['botskey']</code> in the mapping.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>When you change a grammar or mapping, you do not need to restart anything: each run of the engine reads them again. To translate a file again after a fix, mark it for rereceive in <span class="ui">Incoming</span> and run <span class="ui">Run</span> → <span class="ui">Run user-indicated rereceives</span>. See <a href="#web-reports">Reports</a>.</p></div>
+
+<h3 id="tutorial-first-translation--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Grammar file</td><td><code>usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py</code>; the messagetype of a route or translation is this file name without <code>.py</code>.</td><td>—</td><td><code>grammars/csv/orders_erp.py</code></td></tr>
+<tr><td>Envelope grammar</td><td>For X12: <code>usersys/grammars/x12/x12.py</code> (the syntax parameter <code>envelope</code> of x12 is <code>x12</code>).</td><td>—</td><td><code>grammars/x12/x12.py</code></td></tr>
+<tr><td>Mapping file</td><td><code>usersys/mappings/&lt;incoming editype&gt;/&lt;name&gt;.py</code> with a function <code>main(inn, out)</code>.</td><td>—</td><td><code>mappings/csv/orders_erp_to_x12.py</code></td></tr>
+<tr><td>csv syntax <code>field_sep</code></td><td>Field separator of csv.</td><td><code>:</code></td><td><code>,</code> <code>;</code></td></tr>
+<tr><td>csv syntax <code>quote_char</code></td><td>Quote around text values.</td><td><code>'</code></td><td><code>"</code></td></tr>
+<tr><td>csv syntax <code>charset</code></td><td>Character set of the file.</td><td><code>utf-8</code></td><td><code>latin_1</code></td></tr>
+<tr><td>x12 syntax <code>functionalgroup</code></td><td>GS01.</td><td><code>XX</code></td><td><code>PO</code>, <code>IN</code>, <code>SH</code></td></tr>
+<tr><td>x12 syntax <code>version</code></td><td>ISA12.</td><td><code>00403</code></td><td><code>00401</code></td></tr>
+<tr><td>x12 syntax <code>ISA05</code>, <code>ISA07</code></td><td>Qualifiers of sender and receiver.</td><td><code>01</code></td><td><code>ZZ</code>, <code>12</code></td></tr>
+<tr><td>x12 syntax <code>ISA14</code></td><td>Ask for an interchange acknowledgement (TA1).</td><td><code>1</code></td><td><code>0</code></td></tr>
+<tr><td>x12 syntax <code>ISA15</code></td><td>Test or production.</td><td><code>P</code></td><td><code>T</code></td></tr>
+<tr><td>x12 syntax <code>field_sep</code>, <code>record_sep</code>, <code>sfield_sep</code></td><td>Separators: field, segment, component.</td><td><code>*</code>, <code>~</code>, <code>&gt;</code></td><td>—</td></tr>
+<tr><td><code>out.ta_info['frompartner']</code>, <code>['topartner']</code></td><td>Sender and receiver of the outgoing message; required for the X12 and EDIFACT envelope.</td><td>the partners of the incoming message</td><td><code>'MYCOMPANY'</code></td></tr>
+<tr><td><code>out.ta_info['botskey']</code></td><td>Reference shown in the web interface.</td><td>empty</td><td>order number</td></tr>
+<tr><td><code>bots-grammarcheck -c&lt;folder&gt; &lt;editype&gt; &lt;messagetype&gt;</code></td><td>Checks a grammar the way the engine does.</td><td>—</td><td><code>bots-grammarcheck -c… x12 850004010</code></td></tr>
+</table></div>
+
+<h3 id="tutorial-first-translation--troubleshooting">Troubleshooting</h3>
+<p>The error texts below are what Bots shows in <span class="ui">Incoming</span> and in the detail screen of the file.</p>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>TranslationNotFoundError: Translation not found for editype "csv", messagetype "orders_erp", frompartner "", topartner "", alt "".</code></td><td>No active translation rule for this editype and messagetype.</td><td>Check the translation in <span class="ui">Configuration</span> → <span class="ui">Translations</span>: <span class="ui">Active</span>, and the exact spelling of <span class="ui">Frommessagetype</span>.</td></tr>
+<tr><td><code>MessageError: [S50]: Line:2 pos:1 record:"LINE": message has an error in its structure; this record is not allowed here. Scanned in message definition until mandatory record: "HDR-LIN".</code></td><td>The file has a record ID that the grammar does not know or does not expect here (here <code>LINE</code> instead of <code>LIN</code>).</td><td>Fix the ERP export, or add the record to <code>structure</code> and <code>recorddefs</code> of the grammar.</td></tr>
+<tr><td><code>MessageError: [F07] line 1 pos 1: Record "HDR" date field "PO_DATE" not a valid date: "2026-10-15".</code></td><td>A field with format <code>D</code> must be <code>YYYYMMDD</code> (or <code>YYMMDD</code>).</td><td>Let the ERP write dates as <code>20261015</code>, or make the field <code>A</code> and convert the date in the mapping.</td></tr>
+<tr><td><code>MessageError: [F02] line 1 pos 1: Record "HDR" field "PARTNER" is mandatory.</code></td><td>A mandatory field is empty in the file.</td><td>Fix the data, or make the field <code>C</code> in the grammar if it may be empty.</td></tr>
+<tr><td><code>In enveloping "topartner" unknown.</code> (or <code>"frompartner"</code>)</td><td>The mapping did not set the partner, and the incoming message has none.</td><td>Set <code>out.ta_info['frompartner']</code> and <code>out.ta_info['topartner']</code> in the mapping.</td></tr>
+<tr><td><code>No import of module "…/usersys/mappings/csv/orders_erp_to_x12".</code> (or <code>…/grammars/x12/850004010</code>)</td><td>The file is missing, in the wrong folder, or its name differs from the translation or route.</td><td>Check the folder (mappings go under the <em>incoming</em> editype) and the name; the file must end in <code>.py</code>.</td></tr>
+<tr><td><code>Error in import of module "…": …</code> with a Python error such as <code>SyntaxError</code> or <code>IndentationError</code></td><td>The grammar or mapping is not valid Python.</td><td>Fix the line the message names. <code>bots-grammarcheck</code> shows grammar errors before a run.</td></tr>
+<tr><td>The run ends with exit code 2 and the file has status <span class="ui">Error</span>, but other orders in the same file were sent</td><td>Bots translates each message on its own; one bad order does not stop the others.</td><td>Fix the bad order and send it again. To reject the whole file on one error, set the syntax parameter <code>KillWholeFile</code> in the incoming grammar (see <a href="#grammar-syntax">Grammar syntax</a>).</td></tr>
+</table></div>
+</section>
+
+
+<section id="upgrade-from-bots3" data-title="Upgrade from Bots 3" data-group="Start here">
+<h2>Upgrade from Bots 3</h2>
+<p class="lead">How to move a Bots 3 installation (Python 2) to Bots 4.0.0 (Python 3): the tools that do most of the work, what you do by hand, how to test before the switch, and what is different for the users. Everything works on copies: Bots 3 is only read and can keep running until the day you switch.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>One command copies your old setup into a new folder for Bots 4: it converts your scripts to Python 3, copies and upgrades the database, and carries your settings over. It then tells you which lines of your scripts to look at. You fix those, test with copies of real files, and then switch the schedules from the old Bots to the new one.</p></div>
+
+<h3 id="upgrade-from-bots3--how-it-works">How it works</h3>
+<p>One environment of Bots 3 (its <code>config</code>, <code>usersys</code> and <code>botssys</code>, usually inside the folder of the Bots 3 program) becomes one <a href="#environments">environment</a> of Bots 4. The tool <code>bots-portenv</code> does five steps; each step is also a tool of its own:</p>
+<div class="diagram"><svg viewBox="0 0 760 170" width="760" role="img" aria-label="bots-portenv steps: make the environment, convert usersys, copy and upgrade the database, carry the configuration over, check the new usersys">
+<defs><marker id="arrow-upg-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="40" width="130" height="90" rx="10"/><text x="75" y="74" text-anchor="middle" font-weight="600">1. Make</text><text class="small" x="75" y="96" text-anchor="middle">new environment</text>
+<path class="arrow" d="M142,85 L160,85" marker-end="url(#arrow-upg-1)"/>
+<rect class="box mid" x="162" y="40" width="140" height="90" rx="10"/><text x="232" y="74" text-anchor="middle" font-weight="600">2. usersys</text><text class="small" x="232" y="96" text-anchor="middle">bots-portusersys</text><text class="small" x="232" y="114" text-anchor="middle">port-review.txt</text>
+<path class="arrow" d="M304,85 L322,85" marker-end="url(#arrow-upg-1)"/>
+<rect class="box mid" x="324" y="40" width="140" height="90" rx="10"/><text x="394" y="74" text-anchor="middle" font-weight="600">3. Database</text><text class="small" x="394" y="96" text-anchor="middle">copy, then</text><text class="small" x="394" y="114" text-anchor="middle">bots-updatedb</text>
+<path class="arrow" d="M466,85 L484,85" marker-end="url(#arrow-upg-1)"/>
+<rect class="box mid" x="486" y="40" width="130" height="90" rx="10"/><text x="551" y="74" text-anchor="middle" font-weight="600">4. Config</text><text class="small" x="551" y="96" text-anchor="middle">bots-portconfig</text>
+<path class="arrow" d="M618,85 L636,85" marker-end="url(#arrow-upg-1)"/>
+<rect class="box out" x="638" y="40" width="112" height="90" rx="10"/><text x="694" y="74" text-anchor="middle" font-weight="600">5. Check</text><text class="small" x="694" y="96" text-anchor="middle">bots-check-</text><text class="small" x="694" y="114" text-anchor="middle">usersys</text>
+</svg></div>
+<ol>
+<li><b>Make the new environment</b> (<code>config</code>, <code>botssys</code>, <code>usersys</code>). The target folder must not exist, or be empty.</li>
+<li><b>usersys</b> is copied and converted to Python 3 (<code>bots-portusersys</code>): <code>print</code>, <code>except X, e</code>, <code>has_key</code>, <code>xrange</code>, <code>unicode</code>, imports of a file in the same folder, and so on. The conversion does not change what a script means. Lines that are valid Python 3 but may behave differently are listed in <code>port-review.txt</code> in the new environment directory. A file that is not UTF-8 and has no coding line is written as UTF-8.</li>
+<li><b>The SQLite database</b> of Bots 3 is copied into <code>botssys/sqlitedb/botsdb</code> and the copy is upgraded (<code>bots-updatedb</code>). Routes, channels, partners, translations, confirm rules, code lists, users, counters and the history are all there.</li>
+<li><b>The configuration</b> is carried over (<code>bots-portconfig</code>): every option of the old <code>bots.ini</code> that Bots 4 knows gets its value in the new <code>bots.ini</code>; from the old <code>settings.py</code> the mail settings for error reports, managers, time zone, language, session settings and secret key are added to the end of the new <code>settings.py</code>.</li>
+<li><b>The new usersys is checked</b> (<code>bots-checkusersys</code>): every Python file is compiled, every grammar is read with the checks of a translation, every script is imported. The result is on screen and in <code>port-check.json</code>.</li>
+</ol>
+<p>The files that Bots 3 received and sent (<code>botssys/data</code>) are not copied; the history in the database is. Exit code of <code>bots-portenv</code>: <code>0</code> all done, nothing to look at; <code>1</code> done, with things to look at; <code>2</code> not done.</p>
+
+<h3 id="upgrade-from-bots3--how-to-prepare">How to prepare</h3>
+<ol class="steps">
+<li><b>Install Bots 4.0.0</b> in its own virtual environment with the extra <code>bots3</code> (see <a href="#install-windows">Windows</a> or <a href="#install-linux">Linux</a>); add <code>mysql</code> or <code>postgresql</code> if Bots 3 used such a database or your scripts <code>import MySQLdb</code>:
+<pre><code class="language-bash">python3 -m venv /opt/bots4
+/opt/bots4/bin/pip install "/tmp/bots_ediint-4.0.0-py3-none-any.whl[bots3]"</code></pre>
+Do not install it in the Python 2 of Bots 3.</li>
+<li><b>Find the Bots 3 folders.</b> Usually the folder of the Bots 3 program, for example <code>/opt/bots3/bots</code> or <code>C:\Python27\Lib\site-packages\bots</code>, with <code>config</code>, <code>usersys</code> and <code>botssys</code> in it. A second environment next to it has <code>config2</code>, <code>usersys2</code>, <code>botssys2</code>.</li>
+<li><b>Stop Bots 3</b> for a moment, or make sure no engine runs, while the database is copied. Or work from a backup copy of the Bots 3 folders.</li>
+</ol>
+
+<h3 id="upgrade-from-bots3--how-to-portenv">How to make the new environment</h3>
+<ol class="steps">
+<li><b>Run <code>bots-portenv</code></b> with the folder of Bots 3 and a new folder for the environment:
+<pre><code class="language-bash">bots-portenv --bots3=/opt/bots3/bots /srv/bots/env/production</code></pre>
+For the second environment of an installation (<code>config2</code>, <code>usersys2</code>, <code>botssys2</code>):
+<pre><code class="language-bash">bots-portenv --bots3=/opt/bots3/bots --number=2 /srv/bots/env/env2</code></pre>
+Or name the three places yourself:
+<pre><code class="language-bash">bots-portenv --usersys=/opt/bots3/bots/usersys --config=/opt/bots3/bots/config \
+    --database=/opt/bots3/bots/botssys/sqlitedb/botsdb /srv/bots/env/production</code></pre></li>
+<li><b>Read the output.</b> It shows the five steps, for example:
+<pre><code class="language-text">1. new environment: /srv/bots/env/production
+2. usersys: /opt/bots3/bots/usersys
+   212 files, 180 python; 64 changed; 0 could not be converted; 9 lines to look at (/srv/bots/env/production/port-review.txt)
+3. database: /opt/bots3/bots/botssys/sqlitedb/botsdb
+      ...
+      The database is up to date.
+4. configuration: /opt/bots3/bots/config
+   bots.ini: 7 setting(s) changed
+   ...
+5. check of the new usersys
+      ...
+
+Done: /srv/bots/env/production
+Use it with: -c/srv/bots/env/production/config   (or environment variable BOTS_CONFIG_DIR)
+Still to do by hand: ...</code></pre>
+The numbers are those of your installation.</li>
+<li><b>Fix the lines</b> listed in <code>port-review.txt</code> (see the table below) and the errors of step 5.</li>
+<li><b>Set the folders of the file channels.</b> A relative <span class="ui">Path</span> of a file channel was relative to the folder of the Bots 3 program; now it is relative to the new environment directory. Step 3 lists these channels (<code>Channels with a relative path; check if this is the directory you expect</code>). Give them a full path, or make the folders in the new environment. With <code>--bots3-dir-on-server=&lt;folder&gt;</code>, <code>bots-portenv</code> makes these paths full for you, relative to the folder of Bots 3 on the server where it runs.</li>
+<li><b>Check the whole usersys again</b> after your fixes:
+<pre><code class="language-bash">bots-checkusersys -c/srv/bots/env/production/config</code></pre>
+It ends with the number of files that do not compile and of grammars and scripts with an error; exit code <code>0</code> means none.</li>
+</ol>
+
+<h4 id="upgrade-from-bots3--review">What to look at in port-review.txt</h4>
+<div class="table-wrap"><table>
+<tr><th>Listed as</th><th>What changes</th><th>What to do</th></tr>
+<tr><td>division</td><td><code>7/2</code> is <code>3</code> in Python 2 and <code>3.5</code> in Python 3.</td><td>Use <code>//</code> where a whole number is needed (slice, index, <code>range</code>, counter). Otherwise: <code>TypeError: slice indices must be integers</code>.</td></tr>
+<tr><td>loop over a dict</td><td>Python 2 gave the keys in an arbitrary but fixed order; Python 3 in the order they were added.</td><td>If the loop writes records, the order of the output changes. Use a list, or <code>sorted()</code>.</td></tr>
+<tr><td>set</td><td>The order of a loop over a set can differ per run.</td><td><code>sorted(set(...))</code></td></tr>
+<tr><td>pickle / persist</td><td>Values stored by Python 2.</td><td>Bots 4 reads them; check if you store your own classes.</td></tr>
+<tr><td>encode / decode, file opened as binary</td><td>Text is <code>str</code>, data is <code>bytes</code>; values in a mapping are <code>str</code>.</td><td>Check the line.</td></tr>
+<tr><td><code>cmp</code>, <code>keys()[0]</code>, <code>map(...)[0]</code></td><td>Not in Python 3, or not a list.</td><td>Rewrite: <code>key=</code>, <code>list(...)</code>.</td></tr>
+<tr><td><code>'noBOTSID': 1</code></td><td>In Bots 4 a number means "field 1 has the record ID".</td><td>Use <code>True</code> for "records have no record ID".</td></tr>
+<tr><td><code>botslib.readdata</code> / <code>opendata</code></td><td><code>readdata</code>/<code>opendata</code> give <code>str</code>, <code>readdata_bin</code>/<code>opendata_bin</code> give <code>bytes</code>.</td><td>Check which one the script needs.</td></tr>
+</table></div>
+<p>Both <code>//</code> and a list work in Python 2 too, so you can make these fixes in Bots 3 first and keep both installations equal.</p>
+
+<h3 id="upgrade-from-bots3--how-to-test">How to test before the switch</h3>
+<ol class="steps">
+<li><b>Make the channels safe</b> before the first run, so that the copy does not fetch from or send to partners. The easiest way is a test environment made with <code>--local-folders</code>:
+<pre><code class="language-bash">bots-portenv --bots3=/opt/bots3/bots --local-folders /srv/bots/env/test</code></pre>
+Every folder of a file channel is made inside the new environment (<code>&lt;env&gt;/channels/&lt;path as it was&gt;</code>; <code>/home/edi/in</code> becomes <code>&lt;env&gt;/channels/home/edi/in</code>); every other channel (FTP, SFTP, mail, database) gets a test folder <code>&lt;env&gt;/channels/test/&lt;in or out&gt;/&lt;channel&gt;</code>; and <code>bots.ini</code> gets <code>channels_use_testpath = True</code>. A channel without a test folder is not run at all.</li>
+<li><b>Start the web interface</b> of the copy (<code>bots-webserver -c&lt;env&gt;/config</code>), log in with your Bots 3 user, and look at routes, channels and the history.</li>
+<li><b>Put files that were received earlier</b> in the incoming folders, run <code>bots-engine -c&lt;env&gt;/config</code>, and compare the results with what Bots 3 made.</li>
+<li><b>If possible,</b> let the new environment get a copy of the live input for some days and write to folders.</li>
+<li><b>Before going live,</b> remove <code>channels_use_testpath</code> from <code>bots.ini</code> and set the real folders.</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>Do not rely on the acceptance-test mode (<code>runacceptancetest</code>) alone: it only replaces a channel that has an <span class="ui">Acceptance test path</span>. A channel without one connects to the partner. Use <code>--local-folders</code>, or give every channel of the copy a test path or a local folder before the first run.</p></div>
+
+<h3 id="upgrade-from-bots3--how-to-switch">How to switch, per environment</h3>
+<ol class="steps">
+<li><b>Stop</b> the scheduler entries, job queue and directory monitor of Bots 3. Wait until a running engine ends.</li>
+<li><b>Back up</b> the Bots 3 database and usersys.</li>
+<li><b>Run <code>bots-portenv</code> again</b> into a fresh folder, so that the database is current, and do again what you did by hand: the fixes in the mappings (or have them in Bots 3 already) and the folders of the file channels.</li>
+<li><b>Copy</b> <code>botssys/data</code> of Bots 3 to <code>botssys/data</code> of the new environment if you want to view, resend or rereceive old files. The layout is the same.</li>
+<li><b>Start</b> the new web server, job queue and directory monitor, and point the scheduler at the new <code>bots-engine</code>.</li>
+<li><b>Check the first run:</b> the control number of the first interchange per partner, and the report.</li>
+</ol>
+<div class="note info"><span class="label">Note</span><p>To go back: stop the new Bots and start the old scheduler entries; nothing in Bots 3 was changed. Files that Bots 4 received and sent in between are not in the history of Bots 3, and its counters did not move: set the counters of Bots 3 (table <code>uniek</code>) to the values of the new environment before its first run, or a partner gets a control number twice.</p></div>
+
+<h3 id="upgrade-from-bots3--how-to-other-db">How to upgrade when Bots 3 used MySQL or PostgreSQL</h3>
+<ol class="steps">
+<li><b>Run</b> <code>bots-portenv</code> with <code>--no-database</code>. The new environment gets an empty SQLite database.</li>
+<li><b>Make a copy</b> of the Bots 3 database on the database server.</li>
+<li><b>Set</b> <code>DATABASES</code> in the new <code>settings.py</code> to that copy (see <a href="#databases">Databases</a>).</li>
+<li><b>Check</b> what will be done: <code>bots-updatedb -c&lt;env&gt;/config --check</code> shows <code>This database is: made by bots 3.</code> and the changes.</li>
+<li><b>Upgrade</b> the copy: <code>bots-updatedb -c&lt;env&gt;/config --yes-i-have-a-backup</code>. It ends with <code>The database is up to date.</code></li>
+</ol>
+
+<h3 id="upgrade-from-bots3--what-changes">What is different for users</h3>
+<div class="table-wrap"><table>
+<tr><th>Subject</th><th>In Bots 4.0.0</th></tr>
+<tr><td>Commands</td><td>The names of Bots 3 without <code>.py</code>: <code>bots-engine</code>, <code>bots-webserver</code>, <code>bots-jobqueueserver</code>, <code>bots-dirmonitor</code>, <code>bots-job2queue</code>, <code>bots-grammarcheck</code>. <code>-c</code> works as before.</td></tr>
+<tr><td>Web interface</td><td>Other look, same menu items. <span class="ui">Change password</span> is in the <span class="ui">Home</span> menu.</td></tr>
+<tr><td>Rights</td><td>There is a separate right to view. <code>bots-updatedb</code> gives users who could change something also the right to view it, and active users the right to view reports, incoming files and documents.</td></tr>
+<tr><td>Users and passwords</td><td>Stay as they were.</td></tr>
+<tr><td>Certificates</td><td>Bots 3 did not check the certificate of a server. Channels from a Bots 3 database keep connecting as they did (<span class="ui">Verify server certificate</span> is off); new channels check it. Switch it on per channel when the server has a valid certificate.</td></tr>
+<tr><td>Relative channel paths</td><td>Relative to the environment directory, not to the program.</td></tr>
+<tr><td>Error texts</td><td>The error itself, without the Python traceback in front; the traceback is in the log at level DEBUG.</td></tr>
+<tr><td>JSON output</td><td>Same content; no blank after a comma, keys in the order of the grammar.</td></tr>
+<tr><td>Order of output from scripts</td><td>Where a script loops over a dict or a set, see <a href="#upgrade-from-bots3--review">port-review.txt</a>.</td></tr>
+<tr><td>X12 997</td><td>Made in version 004010, as in Bots 3. <code>x12_997_version_as_received = True</code> in <code>bots.ini</code> uses the version of the received group.</td></tr>
+<tr><td>Job queue, directory monitor</td><td>Start a job at once; <code>lauchfrequency</code> has no function any more.</td></tr>
+<tr><td><code>bots-engine</code></td><td>Always ends, also when a thread of a library hangs (<code>[settings] maxsecondsexit</code>).</td></tr>
+<tr><td>Counters</td><td>Interchange and message numbers and file name counters continue where Bots 3 stopped.</td></tr>
+<tr><td>Files in transit</td><td>A file Bots 3 received but did not finish can be processed by Bots 4.</td></tr>
+<tr><td>Local changes in the program of Bots 3</td><td>Are not in Bots 4 unless listed in <code>CHANGELOG.rst</code>.</td></tr>
+</table></div>
+
+<h3 id="upgrade-from-bots3--reference">Reference</h3>
+<h4><code>bots-portenv</code></h4>
+<p><code>bots-portenv --bots3=&lt;folder of Bots 3&gt; [--number=&lt;N&gt;] &lt;new environment folder&gt;</code>, or <code>bots-portenv --usersys=&lt;folder&gt; --config=&lt;folder&gt; --database=&lt;file&gt; &lt;new environment folder&gt;</code>. Without a valid set of arguments it shows its help (exit code 2).</p>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Example</th></tr>
+<tr><td><code>--bots3=&lt;folder&gt;</code></td><td>Folder of the Bots 3 program, with <code>config</code>, <code>usersys</code>, <code>botssys</code> in it.</td><td>—</td><td><code>--bots3=/opt/bots3/bots</code></td></tr>
+<tr><td><code>--number=&lt;N&gt;</code></td><td>Use <code>config&lt;N&gt;</code>, <code>usersys&lt;N&gt;</code>, <code>botssys&lt;N&gt;</code>.</td><td>no number</td><td><code>--number=2</code></td></tr>
+<tr><td><code>--usersys=</code>, <code>--config=</code>, <code>--database=</code></td><td>The three places one by one (database: the SQLite file). Override the ones from <code>--bots3</code>.</td><td>from <code>--bots3</code></td><td><code>--database=/backup/botsdb</code></td></tr>
+<tr><td><code>--no-database</code></td><td>Do not copy or upgrade a database (Bots 3 used MySQL or PostgreSQL).</td><td>off</td><td>—</td></tr>
+<tr><td><code>--bots3-dir-on-server=&lt;folder&gt;</code></td><td>Give file channels with a relative path the full path of the folder Bots 3 used on its server.</td><td>off: relative paths are listed</td><td><code>--bots3-dir-on-server=/home/edi/bots</code></td></tr>
+<tr><td><code>--local-folders</code></td><td>Test environment: all channel folders inside the new environment, test folders for other channels, <code>channels_use_testpath = True</code>. Only with a database.</td><td>off</td><td>—</td></tr>
+<tr><td><code>--processes=&lt;n&gt;</code></td><td>Check usersys with n processes.</td><td><code>1</code></td><td><code>--processes=4</code></td></tr>
+</table></div>
+<h4><code>bots-portusersys</code></h4>
+<p><code>bots-portusersys &lt;source&gt; &lt;destination&gt; [--target=&lt;folder&gt;] [--json=&lt;file&gt;] [--review=&lt;file&gt;]</code>. Converts a usersys, a plugin (zip) or a folder or zip with grammars. The source is never changed. Exit code: <code>0</code> OK; <code>1</code> files that are not valid Python 3; <code>2</code> error in the arguments.</p>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Example</th></tr>
+<tr><td><code>&lt;source&gt;</code></td><td>A folder (a usersys, or a folder with grammars) or a zip file (plugin, grammars).</td><td>—</td><td><code>/opt/bots3/bots/usersys</code></td></tr>
+<tr><td><code>&lt;destination&gt;</code></td><td>Folder that is made (must not exist or be empty); for a zip source this can be a zip file.</td><td>—</td><td><code>/tmp/usersys-py3</code></td></tr>
+<tr><td><code>--target=&lt;folder&gt;</code></td><td>Where the result will be put later, when the source is a part of a usersys and its files import files that are only there.</td><td>—</td><td><code>--target=/srv/bots/env/production/usersys/grammars/edifact</code></td></tr>
+<tr><td><code>--json=&lt;file&gt;</code></td><td>Write all results as JSON.</td><td>—</td><td><code>--json=port.json</code></td></tr>
+<tr><td><code>--review=&lt;file&gt;</code></td><td>File for the lines to review.</td><td><code>&lt;destination&gt;.review.txt</code></td><td>—</td></tr>
+</table></div>
+<h4><code>bots-checkusersys</code></h4>
+<p><code>bots-checkusersys [-c&lt;folder&gt;] [--processes=&lt;number&gt;] [--json=&lt;file&gt;]</code>. Compiles every Python file of the usersys of the environment, reads every grammar, imports every script. Exit code: <code>0</code> no errors; <code>1</code> errors found.</p>
+<h4><code>bots-portconfig</code></h4>
+<p><code>bots-portconfig &lt;config folder of Bots 3&gt; &lt;config folder of the new environment&gt; [--write]</code>. Without <code>--write</code> it only lists what it would do. It carries every known <code>bots.ini</code> option over (not the directories, and not the example directory monitors of the Bots 3 distribution); the new <code>bots.ini</code> keeps its comments and a changed line is marked. Renamed: <code>use_email_address_validation</code> becomes <code>validate_email_address</code>. Reported as without function: <code>[jobqueue] lauchfrequency</code>, <code>[dirmonitor] lauchfrequency</code>, <code>[settings] compatibility_handle_message_errors</code>. From <code>settings.py</code>: <code>MANAGERS</code>, the <code>EMAIL_…</code> settings (as <code>MAILERS</code>), <code>SERVER_EMAIL</code>, <code>EMAIL_SUBJECT_PREFIX</code>, <code>TIME_ZONE</code>, <code>LANGUAGE_CODE</code>, the session settings and <code>SECRET_KEY</code>. The database is not carried over; it is reported if Bots 3 did not use SQLite.</p>
+<h4><code>bots-updatedb</code></h4>
+<p><code>bots-updatedb [-c&lt;folder&gt;] [--check] [--yes-i-have-a-backup] [--createsuperuser]</code>. Brings the database to version 4.0.0: an empty database gets all tables; a Bots 3 database (3.0 to 3.2) is upgraded in place; a database of an earlier Bots 4 gets the pending changes; anything else is refused. It does not run while an engine runs.</p>
+<div class="table-wrap"><table>
+<tr><th>Option</th><th>What it does</th><th>Default</th><th>Example</th></tr>
+<tr><td><code>--check</code></td><td>Only report what the database is and what would be done. Changes nothing.</td><td>off</td><td>—</td></tr>
+<tr><td><code>--yes-i-have-a-backup</code></td><td>Needed to upgrade a Bots 3 database: this cannot be undone, and Bots 3 cannot use the database afterwards.</td><td>off</td><td>—</td></tr>
+<tr><td><code>--createsuperuser</code></td><td>After the update, ask for a name and password and make a superuser.</td><td>off</td><td>—</td></tr>
+</table></div>
+<p>Exit code: <code>0</code> OK (with <code>--check</code>: nothing to do); <code>1</code> with <code>--check</code>: there is something to do; <code>2</code> database not recognised, or no backup confirmed; <code>3</code> other errors.</p>
+<h4>Settings that matter after the upgrade</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[settings] channels_use_testpath</code> <span class="badge green">new in 4.0</span></td><td>Every channel uses its test path; channels to other machines without one are not run.</td><td><code>False</code></td><td><code>True</code> in a test copy</td></tr>
+<tr><td><code>[settings] x12_997_version_as_received</code> <span class="badge green">new in 4.0</span></td><td>Make a 997 in the version of the received group (if the grammar exists) instead of 004010.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>[settings] maxsecondsexit</code> <span class="badge green">new in 4.0</span></td><td>Seconds the engine waits for threads at the end.</td><td><code>30</code></td><td>—</td></tr>
+<tr><td><code>[webserver] about_title</code>, <code>support_url</code>, <code>support_text</code>, <code>logo_image</code>, <code>favicon_image</code>, <code>environment_text</code> <span class="badge green">new in 4.0</span></td><td>Own branding, instead of changing templates of the program as was done in Bots 3.</td><td>Bots</td><td>—</td></tr>
+<tr><td>Channel <span class="ui">Verify server certificate</span> <span class="badge green">new in 4.0</span></td><td>Check the TLS certificate of the server.</td><td>on for new channels, off for channels from Bots 3</td><td>—</td></tr>
+<tr><td>Channel <span class="ui">Database</span> <span class="badge green">new in 4.0</span></td><td>For type <code>db</code>: Bots makes the database connection itself. See <a href="#channel-database">Database channels</a>.</td><td>empty: the script connects, as in Bots 3</td><td>PostgreSQL</td></tr>
+<tr><td><code>[jobqueue] lauchfrequency</code>, <code>[dirmonitor] lauchfrequency</code>, <code>[settings] compatibility_handle_message_errors</code> <span class="badge red">removed</span></td><td>No function in Bots 4.</td><td>—</td><td>—</td></tr>
+</table></div>
+
+<h3 id="upgrade-from-bots3--troubleshooting">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>The new environment directory exists and is not empty: …</code></td><td><code>bots-portenv</code> only writes into a new or empty folder.</td><td>Give a new folder, or empty the old one (for a fresh run on the switch day).</td></tr>
+<tr><td><code>Not found: usersys of bots 3: …</code> (or <code>config</code>, <code>database</code>)</td><td>The folder given with <code>--bots3</code> (and <code>--number</code>) does not hold that folder or file.</td><td>Check the path; name the places with <code>--usersys=</code>, <code>--config=</code>, <code>--database=</code>.</td></tr>
+<tr><td><code>The database "…" is not a SQLite file. Use --no-database and see the migration guide.</code></td><td>Bots 3 used MySQL or PostgreSQL, or the file is not the database.</td><td>Follow <a href="#upgrade-from-bots3--how-to-other-db">How to upgrade when Bots 3 used MySQL or PostgreSQL</a>.</td></tr>
+<tr><td><code>Give --database=&lt;SQLite file of bots 3&gt;, or --no-database.</code></td><td>You named the places one by one but no database.</td><td>Add <code>--database=</code> or <code>--no-database</code>.</td></tr>
+<tr><td><code>python library "fissix" is not installed: files that are python 2 only are not converted</code></td><td>Bots was installed without the extra <code>bots3</code> or <code>port</code>.</td><td><code>pip install "…whl[bots3]"</code> and run <code>bots-portenv</code> again into an empty folder.</td></tr>
+<tr><td><code>Upgrading a bots 3 database can not be undone, and bots 3 can not use the database afterwards. Make a backup of the database and run again with --yes-i-have-a-backup. Nothing is changed.</code></td><td><code>bots-updatedb</code> found a Bots 3 database and you did not confirm a backup.</td><td>Make sure you work on a copy, then add <code>--yes-i-have-a-backup</code>.</td></tr>
+<tr><td><code>This database is: not recognised (table routes has no column zip_incoming: older than bots 3? Use bots 3 to update to bots 3 first.).</code></td><td>The database is from Bots 2 or older, or not a Bots database.</td><td>Upgrade it with Bots 3 first, or check that <code>DATABASES</code> points at the right database.</td></tr>
+<tr><td><code>"…/settings.py" is a settings.py of bots 3; it can not be used with this version of bots.</code></td><td>The old <code>settings.py</code> was copied into the new config folder.</td><td>Use the <code>settings.py</code> that <code>bots-portenv</code> made, or run <code>bots-portconfig &lt;old config&gt; &lt;new config&gt; --write</code> on a fresh copy of <code>bots/install/settings.py</code>.</td></tr>
+<tr><td><code>TypeError: slice indices must be integers or None or have an __index__ method</code> in a mapping</td><td>A division gives a float in Python 3.</td><td>Use <code>//</code> at that line (listed as "division" in <code>port-review.txt</code>).</td></tr>
+<tr><td><code>Error in import of module "…": …</code> for a script, in step 5 or in a run</td><td>A backup copy with dots or blanks in its name, a helper module that was next to the Bots 3 program instead of in usersys, or a library that is not installed in the new Python.</td><td>Leave out the backup copy, copy the helper module into usersys, or install the library in the virtual environment.</td></tr>
+<tr><td><code>Channels with a relative path; check if this is the directory you expect:</code></td><td>File channels with a relative path now point inside the new environment.</td><td>Give each listed channel a full path, or use <code>--bots3-dir-on-server</code>.</td></tr>
+<tr><td>An FTPS, HTTPS or mail channel (pop3s, imap4s, smtps, smtpstarttls) fails with a certificate error after you ticked <span class="ui">Verify server certificate</span></td><td>The server has a self-signed certificate or one from an unknown CA.</td><td>Set <span class="ui">CA certificate file</span> to the certificate of the CA (or of the server), or leave verification off as in Bots 3.</td></tr>
+</table></div>
+</section>

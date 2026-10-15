@@ -1,0 +1,44 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "articles2import.xml",
+   3
+  ],
+  [
+   "demo_database.db",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "demo_databasecommunication/article_1.xml": "fccdab8ccd8c6e3b70463759889789962fb5c1f882b47bb6cf573990bef9f168"
+ },
+ "plugin": "demo_databasecommunication_20120730",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 400,
+  "lastdone": 2,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 2,
+  "processerrors": 0,
+  "send": 2,
+  "status": false
+ },
+ "routes": [
+  [
+   "exportarticlesxml",
+   9999,
+   true,
+   false
+  ],
+  [
+   "importarticlesxml",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

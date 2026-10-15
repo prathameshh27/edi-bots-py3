@@ -1,0 +1,42 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "order01.edi",
+   3
+  ],
+  [
+   "order02.edi",
+   3
+  ],
+  [
+   "order03.edi",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "my_first_plugin/orders1.inh": "8f4498a0c708607cf66d3bcadd9501640faff5204d327fb7cea48b15a3512f07"
+ },
+ "plugin": "my_first_plugin_20121213",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 1450,
+  "lastdone": 3,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 3,
+  "processerrors": 0,
+  "send": 1,
+  "status": false
+ },
+ "routes": [
+  [
+   "myfirstroute",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

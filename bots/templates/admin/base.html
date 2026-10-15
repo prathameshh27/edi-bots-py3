@@ -4,7 +4,7 @@
 {% block title %}Bots {{ title|default:bots_http_path }} - {{ bots_environment_text }}{% endblock %}
 
 {% block extrastyle %}{{ block.super }}
-{% block favicon %}<link rel="icon" type="image/png" href="{% static "img/bots.ico" %}">{% endblock favicon %}
+{% block favicon %}{% if bots_favicon_image %}<link rel="icon" href="{{ bots_favicon_image }}">{% else %}<link rel="icon" type="image/png" href="{% static "img/bots.ico" %}">{% endif %}{% endblock favicon %}
 {% endblock %}
 
 {% block extrahead %}{{ block.super }}

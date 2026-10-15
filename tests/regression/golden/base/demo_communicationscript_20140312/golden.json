@@ -1,0 +1,55 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "testcomscript01.edi",
+   3
+  ],
+  [
+   "testcomscript01.edi",
+   3
+  ],
+  [
+   "testcomscript02.edi",
+   3
+  ],
+  [
+   "testcomscript02.edi",
+   3
+  ]
+ ],
+ "index_version": "3.1.0",
+ "outfiles": {
+  "demo_comscript/allfilesatonceout/1.edi": "48a6b9f39d1da8a63dd1a92c9f3e6c6a7510406ba43469f9219624ea94d12dc0",
+  "demo_comscript/allfilesatonceout/2.edi": "48a6b9f39d1da8a63dd1a92c9f3e6c6a7510406ba43469f9219624ea94d12dc0",
+  "demo_comscript/onefileatatimeout/1.edi": "48a6b9f39d1da8a63dd1a92c9f3e6c6a7510406ba43469f9219624ea94d12dc0",
+  "demo_comscript/onefileatatimeout/2.edi": "48a6b9f39d1da8a63dd1a92c9f3e6c6a7510406ba43469f9219624ea94d12dc0"
+ },
+ "plugin": "demo_communicationscript_20140312",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 1096,
+  "lastdone": 4,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 4,
+  "processerrors": 0,
+  "send": 4,
+  "status": false
+ },
+ "routes": [
+  [
+   "comscript_allfilesonce",
+   9999,
+   true,
+   false
+  ],
+  [
+   "comscript_onefileatatime",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

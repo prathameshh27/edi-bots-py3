@@ -14,7 +14,7 @@ import defusedxml.xmlrpc
 from . import botsglobal
 from . import botsinit
 from .botslib import gettext
-from .jobqueueserver import AUTHORIZED_TASKS
+from . import jobqueueserver
 
 
 # security patch of xmlrpc lib
@@ -31,6 +31,8 @@ JOBQUEUEMESSAGE2TXT = {
     2: _('Error, no task specified.'),
     3: _('Error, invalid task !'),
     4: _('Duplicate, job already in queue, not added.'),
+    5: _('Error, priority is not a number.'),
+    6: _('Error, job not added to queue. The jobqueue-server is stopping or has stopped after errors !'),
 }
 
 
@@ -45,11 +47,12 @@ def send_job_to_jobqueue(task_args, priority=5):
     """
     try:
         remote_server = xmlrpc.client.ServerProxy(
-            f"http://localhost:{botsglobal.ini.getint('jobqueue', 'port', 28082)}"
+            # 127.0.0.1: 'localhost' can be tried as IPv6 first (windows), that takes seconds for each job
+            f"http://127.0.0.1:{botsglobal.ini.getint('jobqueue', 'port', 28082)}"
         )
         return remote_server.addjob(task_args, priority)
 
-    except socket.error as exc:
+    except (socket.error, xmlrpc.client.ProtocolError) as exc:
         print('socket.error', exc)
         # jobqueueserver server not active
         return 1
@@ -139,17 +142,17 @@ def start():
     # Custom AUTHORIZED_TASKS
     if botsglobal.ini.get('jobqueue', 'authorized_tasks', False):
         authorized_tasks = botsglobal.ini.get('jobqueue', 'authorized_tasks').strip()
-        globals()['AUTHORIZED_TASKS'] += list(filter(
+        jobqueueserver.AUTHORIZED_TASKS.extend(filter(
             bool, authorized_tasks.replace(',', ' ').replace(';', ' ').split(' ')))
 
     # Invalid task
-    if task_args[0] not in AUTHORIZED_TASKS:
+    if not jobqueueserver.is_authorized(task_args[0]):
         print(usage)
         print(JOBQUEUEMESSAGE2TXT[3])
         sys.exit(3)
 
     terug = send_job_to_jobqueue(task_args, priority)
-    print(JOBQUEUEMESSAGE2TXT[terug])
+    print(JOBQUEUEMESSAGE2TXT.get(terug, terug))
     sys.exit(terug)
 
 

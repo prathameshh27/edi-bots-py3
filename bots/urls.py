@@ -31,7 +31,7 @@ bots_paths = [
     re_path(r'^srcfiler.*', login_required(views.srcfiler), name='srcfiler'),
     re_path(r'^logfiler.*', login_required(views.logfiler), name='logfiler'),
     # only staff
-    re_path(r'^runengine.+', run_permission(views.runengine), name='runengine'),
+    re_path(r'^runengine.*', run_permission(views.runengine), name='runengine'),
     # only superuser
     re_path(r'^delete.*', superuser_required(views.delete), name='delete'),
     re_path(r'^plugin/index.*', superuser_required(views.plugin_index), name='plugin_index'),
@@ -76,7 +76,7 @@ urlpatterns = auth_paths + [
     # re_path(r'^admin/bots/$', login_required(views.home)),
     re_path(r'^admin/', admin.site.urls),
     # Bots urls
-    re_path('bots/', include((bots_paths, 'bots'), namespace='bots')),
+    re_path(r'^bots/', include((bots_paths, 'bots'), namespace='bots')),
     re_path(r'^.*', views.index),
 ]
 

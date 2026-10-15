@@ -1,0 +1,1454 @@
+<section id="mappings" data-title="Mappings" data-group="Grammars and mappings">
+<h2>Mappings</h2>
+<p class="lead">A mapping script is a small Python file that says which data of an incoming message goes where in the outgoing message. Bots reads and checks the files with the <a href="#grammars">grammars</a>; the mapping does the business logic. You need one mapping for every <a href="#translations">translation</a>.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots has already read the incoming order into a tree of records. Your mapping is a short recipe: "take the order number from here, put it there; for every line, copy the article and the quantity". Bots then writes the result in the right format and checks it.</p></div>
+
+<h3 id="mappings--how">How it works</h3>
+<p>For every message in an incoming file Bots does these steps:</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Incoming file is parsed into the inn tree, the translation is looked up, the mapping fills the out tree, Bots writes the outgoing message">
+<defs><marker id="arrow-mappings-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box in" x="10" y="30" width="170" height="80" rx="10"/><text x="95" y="64" text-anchor="middle" font-weight="600">1. Parse</text><text class="small" x="95" y="86" text-anchor="middle">grammar → inn tree</text>
+<path class="arrow" d="M184,70 L236,70" marker-end="url(#arrow-mappings-1)"/>
+<rect class="box mid" x="240" y="30" width="170" height="80" rx="10"/><text x="325" y="64" text-anchor="middle" font-weight="600">2. Find translation</text><text class="small" x="325" y="86" text-anchor="middle">editype, type, partners, alt</text>
+<path class="arrow" d="M414,70 L466,70" marker-end="url(#arrow-mappings-1)"/>
+<rect class="box mid" x="470" y="30" width="130" height="80" rx="10"/><text x="535" y="64" text-anchor="middle" font-weight="600">3. main()</text><text class="small" x="535" y="86" text-anchor="middle">inn → out</text>
+<path class="arrow" d="M604,70 L636,70" marker-end="url(#arrow-mappings-1)"/>
+<rect class="box out" x="640" y="30" width="110" height="80" rx="10"/><text x="695" y="64" text-anchor="middle" font-weight="600">4. Write</text><text class="small" x="695" y="86" text-anchor="middle">grammar check</text>
+</svg></div>
+<ol>
+<li>Bots parses the incoming file with the incoming grammar. The result is a tree of <b>nodes</b>: one node per record (segment), each with a dict of fields. If the grammar has <code>nextmessage</code> (EDIFACT, X12) or <code>nextmessageblock</code> (csv, fixed), the file is split into messages and each message gets its own tree.</li>
+<li>Bots looks up the translation rule (<span class="ui">Configuration</span> → <span class="ui">Translations</span>) with the editype, messagetype, partners and <code>alt</code> of the message. The rule names the mapping script and the outgoing editype and messagetype.</li>
+<li>Bots imports <code>usersys/mappings/&lt;incoming editype&gt;/&lt;mapping script&gt;.py</code> and calls its function <code>main</code> with two objects: <code>inn</code> (the incoming message) and <code>out</code> (an empty outgoing message).</li>
+<li>When <code>main</code> returns, Bots reads the outgoing grammar (and the partner syntax), checks the <code>out</code> tree against it (mandatory fields, lengths, number formats, record counts), and writes the file. Later the file is merged and enveloped (see <a href="#envelopes">Envelopes</a>).</li>
+</ol>
+<p>Every value in <code>inn</code> and <code>out</code> is a <b>string</b>. A field that is not in the incoming file is not in the tree at all: reading it gives <code>None</code>.</p>
+
+<h4>A minimal mapping</h4>
+<p>File <code>usersys/mappings/x12/orders_x12_to_csv.py</code>, used by a translation from x12 <code>850004010</code> to csv <code>orders_erp</code>:</p>
+<pre><code class="language-python">from bots import transform
+
+
+def main(inn, out):
+    """X12 850 purchase order to the csv of the ERP system."""
+    out.put({'BOTSID': 'HDR',
+             'ordernumber': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None}),
+             'orderdate': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG05': None}),
+             'buyer': inn.ta_info['frompartner']})
+    for po1 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+        line = out.putloop({'BOTSID': 'HDR'}, {'BOTSID': 'LIN'})
+        line.put({'BOTSID': 'LIN',
+                  'linenumber': po1.get({'BOTSID': 'PO1', 'PO101': None}),
+                  'sku': po1.get({'BOTSID': 'PO1', 'PO107': None}),
+                  'quantity': po1.get({'BOTSID': 'PO1', 'PO102': None})})</code></pre>
+
+<h4 id="mappings--mpath">Mpaths: how you point at a field</h4>
+<p>Every read and write uses an <b>mpath</b>: a series of dicts, one per level of the tree, from the root of the message down to the record you want. Each dict has <code>'BOTSID'</code> (the record id, for example the segment tag) and can have fields to match. In the last dict, a field with value <code>None</code> means "give me this field".</p>
+<pre><code class="language-python"># the root record UNH, then the child NAD whose 3035 is 'BY'; return its C082.3039
+inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'NAD', '3035': 'BY', 'C082.3039': None})</code></pre>
+<ul>
+<li>Field names are the ids in the grammar. Sub-fields of a composite are written <code>composite.subfield</code>, for example <code>C082.3039</code>.</li>
+<li>The first dict must match the root record of the message (for EDIFACT <code>UNH</code>, for X12 <code>ST</code>, for csv/fixed the record id of the grammar root).</li>
+<li>Matching values must be strings: <code>'BY'</code>, not <code>1</code>.</li>
+<li>The records and fields are described in <a href="#grammar-records">Grammar records</a>; use the "view grammar" link in the web interface to see them for your message.</li>
+</ul>
+
+<h4 id="mappings--inn-out">The inn and out objects</h4>
+<p><code>inn</code> and <code>out</code> are message objects. You use their methods (<code>get</code>, <code>getloop</code>, <code>put</code>, <code>putloop</code> and others, see <a href="#mapping-functions">Mapping functions</a>) and these attributes:</p>
+<div class="table-wrap"><table>
+<tr><th>Attribute</th><th>On</th><th>What it is</th></tr>
+<tr><td><code>ta_info</code></td><td>inn, out</td><td>A dict with information about the message: partners, editype, messagetype, alt, the syntax of the grammar and more. See the reference below. You can read it and change it.</td></tr>
+<tr><td><code>root</code></td><td>inn, out</td><td>The root node of the tree. For editype <code>db</code> the incoming <code>inn.root</code> is the Python object the database channel delivered, for <code>raw</code> the bytes of the file. For outgoing <code>db</code> and <code>raw</code> you set <code>out.root</code> to the object (db) or the bytes (raw) to write.</td></tr>
+<tr><td><code>envelope_content</code></td><td>inn</td><td>The envelope records of the incoming message, as a list of dicts, outer first: for EDIFACT <code>[UNB]</code>, for X12 <code>[ISA, GS]</code>. <code>None</code> for csv and fixed. The old name <code>inn.envelope</code> works too. <span class="badge orange">changed in 4.0</span></td></tr>
+<tr><td><code>envelope_content</code></td><td>out</td><td>A list of 4 dicts, empty at the start. Fields you put here go into the envelope of the outgoing file: <code>[0]</code> for UNB / ISA / STX, <code>[1]</code> for GS. See <a href="#mapping-recipes--r17">recipe 17</a> and <a href="#envelope-scripts">Envelope scripts</a>.</td></tr>
+<tr><td><code>syntax</code></td><td>inn</td><td>The separators and other syntax values found in the incoming file (EDIFACT, X12, tradacoms, csv).</td></tr>
+<tr><td><code>syntax</code></td><td>out</td><td>A dict, empty at the start. Values you put here override the syntax of the outgoing grammar for this message, for example <code>out.syntax['decimaal'] = ','</code>.</td></tr>
+<tr><td><code>data</code></td><td>out (templatehtml)</td><td>A free container for the old way of templating (grammar without structure): set attributes, the template reads them.</td></tr>
+</table></div>
+
+<h4 id="mappings--return">What main returns</h4>
+<div class="table-wrap"><table>
+<tr><th>main returns</th><th>What Bots does</th></tr>
+<tr><td>nothing (<code>None</code>)</td><td>Writes the outgoing message. This translation is finished.</td></tr>
+<tr><td>a string, for example <code>'ordrsp'</code></td><td>Writes the outgoing message, then sets <code>inn.ta_info['alt']</code> to that string and looks up a translation again (same incoming message, new empty <code>out</code>). This is a <b>chained translation</b>: one incoming message gives two or more outgoing messages. An empty string <code>''</code> also counts as "translate again".</td></tr>
+<tr><td><code>{'type': 'out_as_inn', 'alt': 'x'}</code></td><td>Writes the outgoing message, then uses that <code>out</code> as the <code>inn</code> of the next translation with alt <code>'x'</code>. Used for example to translate in two steps.</td></tr>
+<tr><td><code>{'type': 'no_check_on_infinite_loop', 'alt': 'x'}</code></td><td>As returning <code>'x'</code>, but Bots does not stop after the same alt is returned more than 10 times. Your mapping must end the loop itself.</td></tr>
+</table></div>
+<p>To <b>not</b> write an outgoing message, set <code>out.ta_info['statust'] = transform.DONE</code> before you return. The message is marked as discarded; this is not an error.</p>
+<p>When an alt is returned, the translation rule is looked up with that alt. A rule with exactly that alt wins over a rule with an empty alt; if there is none, the rule with an empty alt is used again (so the same mapping runs again, with <code>inn.ta_info['alt']</code> set).</p>
+
+<h4 id="mappings--errors">How errors in a mapping show</h4>
+<ul>
+<li>Any exception in <code>main</code> stops this message. The message gets status error, with a text like <code>ScriptError: Userscript "…/usersys/mappings/x12/orders_x12_to_csv": "KeyError: 'BEG03'".</code> You see it in <span class="ui">Incoming</span> and in the run report.</li>
+<li>The other messages of the same file are still translated (as in Bots 3). To make one error fail the whole file, set syntax <code>'KillWholeFile': True</code> in the incoming grammar, or raise <code>transform.KillWholeFileException('reason')</code> in the mapping.</li>
+<li>After <code>main</code>, the outgoing message is checked against its grammar. Errors there (for example <code>[F02] … field "BEG03" is mandatory</code>) are shown the same way.</li>
+<li>Only the error itself is shown. With <code>debug = True</code> in <code>bots.ini</code> the full Python traceback is shown too; it is always in the log at level DEBUG. <span class="badge orange">changed in 4.0</span></li>
+</ul>
+
+<h4 id="mappings--other-entry">Other functions Bots calls in a mapping file</h4>
+<ul>
+<li><b>Acknowledgements.</b> If a translation exists for incoming messagetype <code>997</code> (X12) or <code>CONTRL</code> (EDIFACT), Bots uses that mapping to make the acknowledgement: <code>main(inn, out, routedict, ta_fromfile)</code> replaces the built-in mapping, or <code>change(inn, out, routedict, ta_fromfile)</code> runs after the built-in mapping and can change the result. See <a href="#acknowledgements">Acknowledgements</a>.</li>
+<li><b>Finding the translation yourself.</b> If <code>usersys/mappings/translation.py</code> has a function <code>gettranslation(idroute, message)</code>, Bots calls it when no translation rule is found. It must return a tuple <code>(mapping script, outgoing editype, outgoing messagetype)</code>, or <code>(None, None, None)</code>.</li>
+</ul>
+
+<h3 id="mappings--howto-write">How to write and connect a mapping</h3>
+<ol class="steps">
+<li><b>Find the grammars.</b> Note the incoming editype and messagetype (for example x12 <code>850004010</code>) and the outgoing ones (csv <code>orders_erp</code>). Both grammars must exist in <code>usersys/grammars/</code>.</li>
+<li><b>Create the file.</b> Make <code>usersys/mappings/x12/orders_x12_to_csv.py</code>. The folder is the <b>incoming</b> editype. The file name is the name of the mapping; use letters, digits and <code>_</code> only (a dot in the name means a sub-folder).</li>
+<li><b>Write main.</b> Define <code>def main(inn, out):</code> and fill <code>out</code> with <code>put</code> and <code>putloop</code>, as in the example above.</li>
+<li><b>Add the translation rule.</b> Go to <span class="ui">Configuration</span> → <span class="ui">Translations</span> → <span class="ui">Add</span>. Fill <span class="ui">Fromeditype</span> <code>x12</code>, <span class="ui">Frommessagetype</span> <code>850004010</code>, <span class="ui">Mapping Script</span> <code>orders_x12_to_csv</code>, <span class="ui">Toeditype</span> <code>csv</code>, <span class="ui">Tomessagetype</span> <code>orders_erp</code>. Tick <span class="ui">Active</span> and save. Leave <span class="ui">Alternative translation</span> and the partners empty unless you need different mappings per partner.</li>
+<li><b>Check the script.</b> Run <code>bots-checkusersys -c&lt;config directory&gt;</code>. It imports every script and reports syntax errors.</li>
+<li><b>Run a test file.</b> Put a test file in the folder of the incoming channel and run the route. In <span class="ui">Incoming</span> the file should show status OK; in <span class="ui">Outgoing</span> you see the result and can open it.</li>
+</ol>
+
+<h3 id="mappings--howto-debug">How to debug a mapping</h3>
+<ol class="steps">
+<li><b>Look at the source as Bots sees it.</b> In <span class="ui">Configuration</span> → <span class="ui">Translations</span> the name in column <span class="ui">Mapping Script</span> is a link that opens the source of the file in usersys; the message types link to their grammar. You need the right to change translations to see these links.</li>
+<li><b>Log values.</b> Write to the Bots log, not to the screen:
+<pre><code class="language-python">from bots import botsglobal
+
+def main(inn, out):
+    po = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+    botsglobal.logger.info('Order %s from %s', po, inn.ta_info['frompartner'])</code></pre>
+<code>print()</code> output only shows on the console of <code>bots-engine</code> when you run it by hand; it is not in the log.</li>
+<li><b>Show the whole tree.</b> Add <code>inn.root.display()</code> (or <code>out.root.display()</code>) in <code>main</code>. Every record is written to the log at level INFO. <code>inn.root.displayqueries()</code> shows the QUERIES values per node.</li>
+<li><b>Check your mpaths against the grammar.</b> Set <code>get_checklevel = 2</code> in <code>bots.ini</code> during development: every mpath of <code>get</code>, <code>getloop</code> and <code>sort</code> is checked against the grammar, and a wrong record or field name gives <code>Parameter mpath is not valid according to grammar</code> instead of a silent <code>None</code>.</li>
+<li><b>See every record that is read.</b> In <code>bots.ini</code> section <code>[settings]</code> set <code>readrecorddebug = True</code>, <code>log_level = DEBUG</code> and <code>log_file_level = DEBUG</code>. The fields of every incoming record are written to the engine log. Switch it off again; it makes large logs.
+<div class="note warn"><span class="label">Watch out</span><p>The setting <code>mappingdebug = True</code> sends a trace of every <code>get</code>, <code>getloop</code>, <code>put</code>, <code>change</code> and <code>delete</code> to a separate Python logger named <code>engine.map</code>. In 4.0.0 that logger is not connected to the engine log file, so the trace does not appear there. Log the values you need yourself with <code>botsglobal.logger.info()</code>.</p></div></li>
+<li><b>Read the log.</b> <span class="ui">SysTasks</span> → <span class="ui">Logs</span> → <span class="ui">Engine logs</span> shows the engine log in the browser.</li>
+</ol>
+
+<h3 id="mappings--py3">Python 3 notes for Bots 3 users</h3>
+<p>Bots 4.0 runs on Python 3. <code>bots-portusersys</code> (or <code>bots-portenv</code>) converts mappings of Bots 3 mechanically and lists lines to review in <code>port-review.txt</code>; see <a href="#upgrade-from-bots3">Upgrade from Bots 3</a>. Points to check by hand:</p>
+<div class="table-wrap"><table>
+<tr><th>Bots 3 (Python 2)</th><th>Bots 4.0 (Python 3)</th></tr>
+<tr><td><code>print 'x'</code></td><td><code>print('x')</code>; better: <code>botsglobal.logger.info(…)</code></td></tr>
+<tr><td><code>7/2</code> is <code>3</code></td><td><code>7/2</code> is <code>3.5</code>. Use <code>//</code> for a whole number (slices, <code>range</code>, counters).</td></tr>
+<tr><td>Looping over a dict gave a fixed but arbitrary order</td><td>A dict keeps the order in which keys were added; a set can differ per run. If a loop writes records, the output order can change: loop over a sorted list.</td></tr>
+<tr><td><code>unicode</code>, <code>str</code> as bytes</td><td>Every value in <code>inn</code>/<code>out</code> is <code>str</code>. <code>out.root</code> of editype <code>raw</code> must be <code>bytes</code>.</td></tr>
+<tr><td><code>except Exception, e</code>, <code>d.has_key(k)</code>, <code>xrange</code></td><td><code>except Exception as e</code>, <code>k in d</code>, <code>range</code> (converted automatically).</td></tr>
+<tr><td><code>import mymodule</code> for a file next to the mapping</td><td><code>from . import mymodule</code> (converted automatically).</td></tr>
+<tr><td><code>inn.envelope</code></td><td>Still works; the new name is <code>inn.envelope_content</code>.</td></tr>
+<tr><td>Values stored with <code>persist_add</code> by Bots 3</td><td>Read correctly by <code>persist_lookup</code>, also texts with non-ASCII characters and dates.</td></tr>
+<tr><td><code>err.msg</code> of a Bots exception</td><td>Still works.</td></tr>
+</table></div>
+<p><code>from bots import transform</code>, <code>import bots.transform as transform</code>, <code>from bots.botsconfig import *</code> and <code>import bots.usersys…</code> work as in Bots 3. The constants of <code>botsconfig</code> are also available as <code>transform.DONE</code>, <code>transform.TRANSLATED</code> and so on.</p>
+
+<h3 id="mappings--reference">Reference</h3>
+<h4>The function main</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>main(inn, out)</code></td><td>Called once per incoming message (and again per chained translation). Bots passes the arguments by name, so they must be called <code>inn</code> and <code>out</code>; you can add <code>**kwargs</code>.</td><td>required</td><td><code>def main(inn, out):</code></td></tr>
+<tr><td>return value</td><td>Controls chained translations, see "What main returns".</td><td><code>None</code></td><td><code>return 'ordrsp'</code></td></tr>
+<tr><td><code>gettranslation(idroute, message)</code> <span class="badge gray">advanced</span></td><td>In <code>usersys/mappings/translation.py</code>: finds a translation when the translation table has none.</td><td>not used</td><td><code>return ('orders_x12_to_csv', 'csv', 'orders_erp')</code></td></tr>
+<tr><td><code>main(inn, out, routedict, ta_fromfile)</code> / <code>change(…)</code> <span class="badge gray">advanced</span></td><td>In a mapping used for 997 or CONTRL: replaces or changes the built-in acknowledgement.</td><td>built-in</td><td>see <a href="#acknowledgements">Acknowledgements</a></td></tr>
+</table></div>
+
+<h4>inn.ta_info: what you can read</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>frompartner</code>, <code>topartner</code></td><td>Partner ids of the message: from the route, or found by the QUERIES of the grammar (for example ISA06/ISA08, UNB sender/receiver).</td><td><code>''</code></td><td><code>'PARTNERA'</code></td></tr>
+<tr><td><code>editype</code>, <code>messagetype</code></td><td>Of the incoming message. The messagetype can be refined by QUERIES (for example <code>850004010</code>).</td><td>from route</td><td><code>'x12'</code>, <code>'850004010'</code></td></tr>
+<tr><td><code>alt</code></td><td>The alt of this translation: from the route, or the value a previous <code>main</code> returned.</td><td><code>''</code></td><td><code>'ordrsp'</code></td></tr>
+<tr><td><code>botskey</code></td><td>Document key found by the QUERIES of the grammar (for example the order number).</td><td>not set</td><td><code>'PO-4711'</code></td></tr>
+<tr><td><code>reference</code></td><td>Reference found by QUERIES (for example the message reference).</td><td>not set</td><td><code>'000000123'</code></td></tr>
+<tr><td><code>testindicator</code></td><td>Test indicator of the file (from QUERIES, for example ISA15 or UNB 0035).</td><td><code>''</code></td><td><code>'1'</code>, <code>'T'</code></td></tr>
+<tr><td><code>charset</code></td><td>Character set used to read the file.</td><td>from grammar</td><td><code>'UNOA'</code>, <code>'utf-8'</code></td></tr>
+<tr><td><code>fromchannel</code>, <code>idroute</code>, <code>command</code></td><td>Channel the file came in through, route, and type of run.</td><td></td><td><code>'partnera_sftp_in'</code>, <code>'orders_in'</code>, <code>'new'</code></td></tr>
+<tr><td><code>frommail</code>, <code>tomail</code></td><td>Mail addresses for files received by mail.</td><td><code>''</code></td><td><code>'orders@partnera.example'</code></td></tr>
+<tr><td><code>filename</code></td><td>Internal file name in <code>botssys/data</code> (a number), not the name the partner used.</td><td></td><td><code>'1234'</code></td></tr>
+<tr><td><code>total_number_of_messages</code>, <code>message_number</code></td><td>Number of messages in the file/interchange and the number of this one (from 1).</td><td></td><td><code>3</code>, <code>1</code></td></tr>
+<tr><td><code>bots_accessenvelope</code> <span class="badge gray">advanced</span></td><td>The root node of the whole parsed file, so you can read the envelope or other messages.</td><td></td><td><code>inn.ta_info['bots_accessenvelope'].get({'BOTSID': 'ISA', 'ISA13': None})</code></td></tr>
+<tr><td><code>idta</code>, <code>idta_fromfile</code> <span class="badge gray">advanced</span></td><td>Database ids of this message and of the incoming file.</td><td></td><td><code>5678</code></td></tr>
+<tr><td><code>divtext</code></td><td>Name of the mapping script now running.</td><td></td><td><code>'orders_x12_to_csv'</code></td></tr>
+<tr><td>syntax values</td><td>Every syntax parameter of the incoming grammar (separators, <code>decimaal</code>, <code>KillWholeFile</code>, …) is in <code>ta_info</code> too.</td><td>from grammar</td><td><code>inn.ta_info['field_sep']</code></td></tr>
+</table></div>
+
+<h4>out.ta_info: what you can set</h4>
+<p>Values you set in <code>out.ta_info</code> win over the grammar and partner syntax, and the fields that exist in the database are stored with the outgoing message.</p>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>frompartner</code>, <code>topartner</code></td><td>Partners of the outgoing message: used for enveloping, the partner syntax, the partner-dependent outgoing channel of the route, and mail addresses.</td><td>same as inn</td><td><code>out.ta_info['topartner'] = 'PARTNERB'</code></td></tr>
+<tr><td><code>botskey</code></td><td>Document key; shown as reference in the reports, usable in the outgoing file name as <code>{botskey}</code>. After <code>main</code> Bots copies it to <code>reference</code>.</td><td>not set</td><td><code>'INV-2026-0042'</code></td></tr>
+<tr><td><code>reference</code></td><td>Reference of the message. Bots fills it with a new number of the counter <code>messagecounter</code>; use it for UNH 0062 or ST02.</td><td>new number</td><td><code>out.ta_info['reference']</code></td></tr>
+<tr><td><code>testindicator</code></td><td>Test indicator for the envelope.</td><td>same as inn</td><td><code>'1'</code></td></tr>
+<tr><td><code>messagetype</code></td><td>Outgoing messagetype; changing it in the mapping selects another grammar of the same editype.</td><td>from translation</td><td><code>'INVOICD96AUNEAN008'</code></td></tr>
+<tr><td><code>statust</code></td><td>Set to <code>transform.DONE</code> to write no output for this message.</td><td>OK</td><td><code>transform.DONE</code></td></tr>
+<tr><td><code>merge</code></td><td>Merge this message with others into one file (<code>True</code>), or one file per message (<code>False</code>).</td><td>from grammar</td><td><code>False</code></td></tr>
+<tr><td><code>envelope</code></td><td>Envelope to use; empty: no envelope.</td><td>from grammar</td><td><code>'edifact'</code>, <code>'x12'</code>, <code>'csvheader'</code>, <code>''</code></td></tr>
+<tr><td><code>rsrv3</code> <span class="badge gray">advanced</span></td><td>Enveloping criterion: messages with a different value are not merged into one file.</td><td><code>''</code></td><td><code>out.ta_info['rsrv3'] = deliverydate</code></td></tr>
+<tr><td><code>frommail</code>, <code>tomail</code>, <code>cc</code></td><td>Mail addresses for a mail channel. When empty, the channel looks them up for the partner.</td><td><code>''</code></td><td><code>'orders@partnera.example'</code></td></tr>
+<tr><td><code>charset</code>, <code>contenttype</code></td><td>Character set of the output; MIME content type for mail and http.</td><td>from grammar</td><td><code>'utf-8'</code>, <code>'application/xml'</code></td></tr>
+<tr><td>other syntax values</td><td>Any syntax parameter of the outgoing grammar (for example <code>decimaal</code>, <code>add_crlfafterrecord_sep</code>, <code>indented</code>).</td><td>from grammar</td><td><code>out.ta_info['indented'] = True</code></td></tr>
+</table></div>
+
+<h4>bots.ini settings for mappings</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>[settings] get_checklevel</code></td><td>How strictly mpaths are checked: 0 no checks (fastest), 1 types and BOTSID, 2 also against the grammar.</td><td><code>1</code></td><td><code>2</code> during development</td></tr>
+<tr><td><code>[settings] readrecorddebug</code></td><td>Logs every record that is read, at level DEBUG.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>[settings] mappingdebug</code></td><td>Trace of every get/put to the logger <code>engine.map</code> (in 4.0.0 not connected to the engine log file, see above).</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>[settings] debug</code></td><td>Error texts include the Python traceback.</td><td><code>False</code></td><td><code>True</code></td></tr>
+<tr><td><code>[settings] maxfilesizeincoming</code></td><td>Larger incoming files are not translated.</td><td><code>5000000</code></td><td>bytes</td></tr>
+<tr><td><code>[settings] max_number_errors</code></td><td>Maximum number of errors reported for one file.</td><td><code>10</code></td><td><code>20</code></td></tr>
+<tr><td><code>[settings] maxdayspersist</code></td><td>Days that values stored with <code>persist_*</code> are kept.</td><td><code>30</code></td><td><code>365</code></td></tr>
+</table></div>
+
+<h3 id="mappings--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Translation not found for editype "x12", messagetype "850004010", frompartner "PARTNERA", topartner "MYCOMPANY", alt "".</code></td><td>No active translation rule matches. Often the messagetype found by QUERIES differs from what you entered.</td><td>Copy the exact values from the error into a rule in <span class="ui">Configuration</span> → <span class="ui">Translations</span>. Check <span class="ui">Active</span>. Leave partners empty unless they are needed.</td></tr>
+<tr><td><code>No import of module "…/usersys/mappings/x12/orders_x12_to_csv": …</code></td><td>The file is not where Bots looks: wrong editype folder, wrong name, or the name in the rule differs.</td><td>The folder is the <b>incoming</b> editype. The <span class="ui">Mapping Script</span> is the file name without <code>.py</code>.</td></tr>
+<tr><td><code>Error in import of module "…": invalid syntax …</code></td><td>Python syntax error in the mapping (often Python 2 code).</td><td>Run <code>bots-checkusersys</code>, fix the line it names.</td></tr>
+<tr><td><code>get(…): "root" of incoming message is empty; either split messages or use inn.getloop</code></td><td>The incoming grammar has no <code>nextmessage</code>, so the message has no single root record.</td><td>Add <code>nextmessage</code> (or <code>nextmessageblock</code>) to the grammar, or use <code>inn.getloop(…)</code> over the records.</td></tr>
+<tr><td><code>put(…): "root" of outgoing message is empty; use out.putloop</code></td><td>You started <code>out</code> with <code>putloop</code> (several messages) and then used <code>out.put</code>.</td><td>Put through the node <code>putloop</code> returned, or start with <code>out.put</code> of the root record.</td></tr>
+<tr><td><code>Error in root put "{'BOTSID': 'LIN', …}".</code></td><td>The first dict of the mpath is not the root record of the out tree.</td><td>Start every mpath with the root record, for example <code>{'BOTSID': 'HDR'}</code>.</td></tr>
+<tr><td><code>Values must be strings (or none) in last section: get(…)</code></td><td>A match value in the mpath is a number or another type.</td><td>Write <code>'21'</code>, not <code>21</code>.</td></tr>
+<tr><td>Output field is empty, no error</td><td>The mpath does not match (wrong record id, wrong level, wrong qualifier), so <code>get</code> returned <code>None</code> and <code>put</code> did nothing.</td><td>Set <code>get_checklevel = 2</code> (wrong names then give an error), log the values with <code>botsglobal.logger.info()</code>, run again and read the log.</td></tr>
+<tr><td><code>[F02]: Record "ST-BEG" field "BEG03" is mandatory.</code></td><td>The outgoing grammar requires the field and the mapping did not fill it.</td><td>Fill it in the mapping, with a default value if the input may lack it.</td></tr>
+<tr><td><code>Mappingscript returns same alt value over and over again (infinite loop?). Alt: "…".</code></td><td><code>main</code> returns the same alt in every run.</td><td>Return <code>None</code> when the chain is finished, or return <code>{'type': 'no_check_on_infinite_loop', 'alt': …}</code> and end the loop yourself.</td></tr>
+<tr><td><code>Mappingscript returned dict with an unknown "type": …</code></td><td>A returned dict has a <code>type</code> other than <code>out_as_inn</code> or <code>no_check_on_infinite_loop</code>.</td><td>Use one of the two types.</td></tr>
+<tr><td><code>No outgoing message</code></td><td>The mapping put nothing in <code>out</code> (or did not set <code>out.root</code> for db/raw).</td><td>Fill <code>out</code>, or set <code>out.ta_info['statust'] = transform.DONE</code> on purpose.</td></tr>
+<tr><td><code>File size of … is too big; option "maxfilesizeincoming" in bots.ini is 5000000.</code></td><td>The incoming file is larger than the limit.</td><td>Raise <code>maxfilesizeincoming</code> in <code>bots.ini</code>.</td></tr>
+<tr><td><code>TypeError: unsupported operand type(s) for +: 'decimal.Decimal' and 'float'</code></td><td>Mixing <code>getdecimal()</code> results with floats.</td><td>Use <code>decimal.Decimal('1.21')</code> for constants.</td></tr>
+</table></div>
+</section>
+
+<section id="mapping-functions" data-title="Mapping functions" data-group="Grammars and mappings">
+<h2>Mapping functions</h2>
+<p class="lead">This page lists every function you can use in a mapping script: the methods of the <code>inn</code> and <code>out</code> messages and of their nodes, and the helper functions in the module <code>transform</code>. For each one you find the signature, what it returns, an example and the usual mistakes.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>There are two kinds of tools. The first kind reads and writes the message tree: "get this field", "loop over these lines", "put this value there". The second kind does common jobs: convert a code with a code list, make a unique number, change a date format, remember a value until the next run.</p></div>
+
+<h3 id="mapping-functions--how">How it works</h3>
+<ol>
+<li><b>Message methods</b> are called on <code>inn</code> or <code>out</code>: <code>inn.get(…)</code>, <code>out.put(…)</code>. They search from the root record of the message.</li>
+<li><b>Node methods</b> are called on a node that <code>getloop</code> or <code>putloop</code> gave you: <code>po1.get(…)</code>, <code>line.put(…)</code>. They search from that node. The mpath then starts with the record of that node, not with the root of the message.</li>
+<li><b>Transform functions</b> are called as <code>transform.ccode(…)</code> after <code>from bots import transform</code>.</li>
+</ol>
+<p>All tree functions take an <b>mpath</b>: dicts from the start record down, each with <code>'BOTSID'</code>. See <a href="#mappings--mpath">Mpaths</a>.</p>
+<pre><code class="language-python">for lin in inn.getloop({'BOTSID': 'UNH'}, {'BOTSID': 'LIN'}):           # message method, from UNH
+    article = lin.get({'BOTSID': 'LIN', 'C212.7140': None})               # node method, from this LIN
+    qty = lin.get({'BOTSID': 'LIN'}, {'BOTSID': 'QTY', 'C186.6063': '21', 'C186.6060': None})</code></pre>
+
+<h3 id="mapping-functions--howto">How to choose the right function</h3>
+<ol class="steps">
+<li><b>One value:</b> use <code>get</code>. For numbers you calculate with, use <code>getdecimal</code>. To treat <code>0</code> as "no value", use <code>getnozero</code>.</li>
+<li><b>Repeating records:</b> loop with <code>getloop</code>; inside the loop use the node's <code>get</code>.</li>
+<li><b>One output record:</b> <code>put</code>. <b>Repeating output records:</b> <code>putloop</code>, then <code>put</code> on the node it returns.</li>
+<li><b>Totals and counts:</b> <code>getcountsum</code>, <code>getcountoccurrences</code>, <code>getcount</code>.</li>
+<li><b>Codes:</b> <code>transform.ccode</code> with a <a href="#code-lists">code list</a>; partner data: <code>transform.partnerlookup</code>.</li>
+<li><b>Numbers that must be unique:</b> <code>transform.unique</code>. <b>Memory between runs:</b> <code>transform.persist_*</code>.</li>
+</ol>
+
+<h3 id="mapping-functions--reference">Reference</h3>
+<h4>Overview: message and node methods</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>get(*mpath)</code></td><td>Value of one field, or <code>None</code>.</td><td>—</td><td><code>inn.get({'BOTSID':'ST'},{'BOTSID':'BEG','BEG03':None})</code></td></tr>
+<tr><td><code>getnozero(*mpath)</code></td><td>As get; <code>None</code> if the value is 0 or not a number.</td><td>—</td><td><code>'12.50'</code> or <code>None</code></td></tr>
+<tr><td><code>getdecimal(*mpath)</code></td><td>As get, as <code>Decimal</code>; 0 if missing or not a number.</td><td>—</td><td><code>Decimal('12.50')</code></td></tr>
+<tr><td><code>getrecord(*mpath)</code></td><td>The whole record (dict of all fields).</td><td>—</td><td><code>{'BOTSID':'BEG','BEG03':'4711',…}</code></td></tr>
+<tr><td><code>getloop(*mpath)</code></td><td>Each matching node, one by one.</td><td>—</td><td><code>for n in inn.getloop(…):</code></td></tr>
+<tr><td><code>getloop_including_mpath(*mpath)</code> <span class="badge gray">advanced</span></td><td>As getloop, with the records of the levels above.</td><td>—</td><td><code>[record, node]</code></td></tr>
+<tr><td><code>getcount()</code></td><td>Number of records in the tree.</td><td>—</td><td><code>out.getcount()</code></td></tr>
+<tr><td><code>getcountoccurrences(*mpath)</code></td><td>Number of matching records.</td><td>—</td><td><code>3</code></td></tr>
+<tr><td><code>getcountsum(*mpath)</code></td><td>Sum of a numeric field over all matches, as string.</td><td>—</td><td><code>'42.000'</code></td></tr>
+<tr><td><code>put(*mpath, strip=True)</code></td><td>Writes fields; makes records that do not exist.</td><td><code>strip=True</code></td><td><code>out.put({'BOTSID':'HDR','ordernumber':po})</code></td></tr>
+<tr><td><code>putraw(*mpath)</code> <span class="badge gray">advanced</span></td><td>As put, but values are not converted or stripped.</td><td>—</td><td>lists, fixed-length values</td></tr>
+<tr><td><code>putloop(*mpath)</code></td><td>Always makes a new last record; returns its node.</td><td>—</td><td><code>line = out.putloop({'BOTSID':'HDR'},{'BOTSID':'LIN'})</code></td></tr>
+<tr><td><code>change(where, change)</code></td><td>Changes or removes fields of the first matching record.</td><td>—</td><td><code>inn.change(where=(…), change={'3035':'SU'})</code></td></tr>
+<tr><td><code>delete(*mpath)</code></td><td>Removes the first matching record (and its children).</td><td>—</td><td><code>True</code>/<code>False</code></td></tr>
+<tr><td><code>sort(*mpath, **options)</code></td><td>Sorts records by a field.</td><td><code>reverse=False</code></td><td><code>inn.sort(…, sort_decimal=True)</code></td></tr>
+<tr><td><code>enhancedget(mpaths)</code> <span class="badge gray">advanced</span></td><td>Get with an mpath given as dict, tuple, list, function or string.</td><td>—</td><td>used by QUERIES</td></tr>
+<tr><td><code>display()</code>, <code>displayqueries()</code></td><td>Write the tree / the QUERIES to the log (node methods: <code>inn.root.display()</code>).</td><td>—</td><td>debugging</td></tr>
+<tr><td><code>copynode()</code> <span class="badge gray">advanced</span></td><td>Returns an independent copy of a node and its children.</td><td>—</td><td><code>out.root = inn.root.copynode()</code></td></tr>
+<tr><td><code>record</code>, <code>children</code> <span class="badge gray">advanced</span></td><td>Attributes of a node: the dict of fields, and the list of child nodes.</td><td>—</td><td><code>node.record['BOTSID']</code></td></tr>
+</table></div>
+
+<h4>Overview: transform functions</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>ccode(ccodeid, leftcode, field='rightcode', safe=False)</code></td><td>Converts a code with a code list.</td><td>error if not found</td><td><code>transform.ccode('unit_x12_to_edifact', 'EA')</code></td></tr>
+<tr><td><code>reverse_ccode(ccodeid, rightcode, field='leftcode', safe=False)</code></td><td>Code list lookup the other way round.</td><td>error if not found</td><td></td></tr>
+<tr><td><code>getcodeset(ccodeid, leftcode, field='rightcode')</code></td><td>All values for one code, as a list.</td><td><code>[]</code></td><td></td></tr>
+<tr><td><code>safe_ccode</code>, <code>safe_reverse_ccode</code>, <code>codetconversion</code>, <code>safecodetconversion</code>, <code>rcodetconversion</code>, <code>safercodetconversion</code></td><td>Old names, kept for Bots 2/3 mappings.</td><td>—</td><td>use <code>ccode(…, safe=True)</code></td></tr>
+<tr><td><code>partnerlookup(value, field, search_field='idpartner', safe=False)</code></td><td>Reads a field of a partner.</td><td>error if not found</td><td><code>transform.partnerlookup('PARTNERA', 'attr1')</code></td></tr>
+<tr><td><code>persist_add</code>, <code>persist_update</code>, <code>persist_add_update</code>, <code>persist_delete</code>, <code>persist_lookup</code></td><td>Store and read values in the database between runs.</td><td>kept 30 days</td><td><code>transform.persist_lookup('lastorder', 'PARTNERA')</code></td></tr>
+<tr><td><code>unique(domein, updatewith=None)</code></td><td>Next number of a counter, as string.</td><td>starts at 1</td><td><code>transform.unique('invoicenumber')</code></td></tr>
+<tr><td><code>unique_runcounter(domein, updatewith=None)</code></td><td>Counter that starts again in every run.</td><td>starts at 1</td><td></td></tr>
+<tr><td><code>checkunique(domein, receivednumber)</code></td><td>Checks that a received sequence number is the next one.</td><td>—</td><td><code>True</code>/<code>False</code></td></tr>
+<tr><td><code>inn2out(inn, out)</code></td><td>Copies the whole incoming tree to out.</td><td>—</td><td></td></tr>
+<tr><td><code>useoneof(*args)</code></td><td>First argument that is not empty.</td><td><code>None</code></td><td></td></tr>
+<tr><td><code>dateformat(date)</code></td><td>EDIFACT date format code (102, 203, 718) for a date.</td><td>—</td><td><code>'102'</code></td></tr>
+<tr><td><code>datemask(value, frommask, tomask)</code></td><td>Rearranges a date.</td><td>—</td><td><code>'20261231'</code></td></tr>
+<tr><td><code>strftime(format)</code></td><td>Current date/time as text (frozen in acceptance tests).</td><td>—</td><td><code>transform.strftime('%Y%m%d')</code></td></tr>
+<tr><td><code>truncate(maxpos, value)</code></td><td>Cuts a text to a length.</td><td>—</td><td></td></tr>
+<tr><td><code>concat(*args, sep='')</code></td><td>Joins the non-empty texts.</td><td><code>None</code> if all empty</td><td></td></tr>
+<tr><td><code>dropdiacritics(content, charset='ascii')</code></td><td>Replaces characters with accents by the plain character.</td><td><code>'ascii'</code></td><td><code>'Muller'</code></td></tr>
+<tr><td><code>chunk(sequence, size)</code></td><td>Cuts a text or list into parts of a size.</td><td>—</td><td></td></tr>
+<tr><td><code>calceancheckdigit(ean)</code>, <code>checkean(ean)</code>, <code>addeancheckdigit(ean)</code></td><td>GTIN/GLN (EAN) check digit.</td><td>—</td><td><code>'5412345000013'</code></td></tr>
+<tr><td><code>sendbotsemail(partner, subject, reporttext)</code></td><td>Sends a plain mail to a partner.</td><td>—</td><td></td></tr>
+<tr><td><code>addinfo</code>, <code>updateinfo</code>, <code>changestatustinfo</code>, <code>changeq</code>, <code>run</code>, <code>mergemessages</code> <span class="badge gray">advanced</span></td><td>For route scripts, see <a href="#route-scripts">Route scripts</a>.</td><td>—</td><td></td></tr>
+<tr><td>exceptions</td><td><code>BotsError</code>, <code>KillWholeFileException</code>, <code>ParsePassthroughException</code>, <code>CodeConversionError</code>, <code>PersistError</code>, <code>EanError</code>, <code>BotsImportError</code>, <code>FileTooLargeError</code>, <code>TranslationNotFoundError</code>: to raise or catch.</td><td>—</td><td><code>raise transform.BotsError(…)</code></td></tr>
+<tr><td>constants</td><td>Every constant of <code>botsconfig</code>: <code>OK</code>, <code>DONE</code>, <code>ERROR</code>, <code>FILEIN</code>, <code>TRANSLATED</code>, <code>MERGED</code>, <code>FILEOUT</code>, …</td><td>—</td><td><code>transform.DONE</code></td></tr>
+</table></div>
+<div class="note info"><span class="label">Note</span><p>To mail the administrators from a script, use <code>botslib.sendbotserrorreport(subject, text)</code>. <code>transform.translate</code> is the translation step of the engine itself; do not call it from a mapping.</p></div>
+
+<h4 id="mapping-functions--get">get</h4>
+<p><b>Signature:</b> <code>inn.get(mpath1, mpath2, …)</code> or <code>node.get(…)</code>. <b>Returns:</b> the value (a string) of the one field marked <code>None</code> in the last dict; <code>1</code> if the last dict has no <code>None</code> and the record exists (a "does it exist" test); <code>None</code> if nothing matches. When several records match, the first one is used.</p>
+<pre><code class="language-python">po = inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'BGM', 'C106.1004': None})
+buyer = inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'NAD', '3035': 'BY', 'C082.3039': None})
+if inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'FTX', '4451': 'DEL'}):
+    pass   # an FTX with qualifier DEL exists</code></pre>
+<p><b>Common mistakes:</b> two <code>None</code> values in the last dict (<code>Max one "None" in last section</code>); a match value that is not a string; forgetting the root record as first dict; reading a field of a child record without the level in between (<code>QTY</code> is under <code>LIN</code>, so the mpath needs <code>{'BOTSID':'LIN'}</code> before <code>{'BOTSID':'QTY',…}</code>).</p>
+
+<h4 id="mapping-functions--getnozero">getnozero</h4>
+<p><b>Signature:</b> <code>getnozero(*mpath)</code>. <b>Returns:</b> the value as <code>get</code> does, but <code>None</code> if the value is zero or not a number. Useful for fixed files where empty number fields contain zeros.</p>
+<pre><code class="language-python">discount = inn.getnozero({'BOTSID': 'HDR'}, {'BOTSID': 'LIN', 'discount': None})
+if discount:
+    lin.put({'BOTSID': 'LIN'}, {'BOTSID': 'ALC', '5463': 'A'})</code></pre>
+
+<h4 id="mapping-functions--getdecimal">getdecimal</h4>
+<p><b>Signature:</b> <code>getdecimal(*mpath)</code>. <b>Returns:</b> a <code>decimal.Decimal</code>. A missing or non-numeric value gives <code>Decimal('0')</code>. A minus sign at the end (<code>12.5-</code>, usual in IDocs) is moved to the front.</p>
+<pre><code class="language-python">qty = po1.getdecimal({'BOTSID': 'PO1', 'PO102': None})
+price = po1.getdecimal({'BOTSID': 'PO1', 'PO104': None})
+line.put({'BOTSID': 'LIN', 'amount': qty * price})</code></pre>
+<p><b>Common mistakes:</b> it hides errors: a typo in the mpath gives 0, not an error. Mixing with <code>float</code> raises <code>TypeError</code>; use <code>Decimal('1.21')</code>.</p>
+
+<h4 id="mapping-functions--getrecord">getrecord</h4>
+<p><b>Signature:</b> <code>getrecord(*mpath)</code>. All values in the mpath must be strings (no <code>None</code>). <b>Returns:</b> the dict of the record itself (changes to it change the tree), or <code>None</code>.</p>
+<pre><code class="language-python">beg = inn.getrecord({'BOTSID': 'ST'}, {'BOTSID': 'BEG'})
+if beg:
+    botsglobal.logger.info('BEG has fields %s', sorted(beg))</code></pre>
+
+<h4 id="mapping-functions--getloop">getloop</h4>
+<p><b>Signature:</b> <code>getloop(*mpath)</code>. <b>Returns:</b> a generator; each step gives a node that matches the whole mpath. Values in the mpath must be strings; <code>None</code> is not allowed here.</p>
+<pre><code class="language-python">for nad in inn.getloop({'BOTSID': 'UNH'}, {'BOTSID': 'NAD'}):
+    qualifier = nad.get({'BOTSID': 'NAD', '3035': None})
+    gln = nad.get({'BOTSID': 'NAD', 'C082.3039': None})</code></pre>
+<p>For a file that is not split into messages (no root record), <code>inn.getloop</code> searches each top record. <b>Common mistakes:</b> inside the loop, the mpath of the node starts with the node's own record (<code>{'BOTSID':'NAD'}</code>), not with <code>UNH</code>. A generator can be used once; use <code>list(inn.getloop(…))</code> to loop twice.</p>
+
+<h4 id="mapping-functions--getloop_including_mpath">getloop_including_mpath</h4>
+<p><b>Signature:</b> <code>getloop_including_mpath(*mpath)</code>. <b>Returns:</b> for each match a list: the records (dicts) of the levels above, then the node. Bots uses it to split files into messages; you need it when the loop must also know data of the parent.</p>
+<pre><code class="language-python">for *parents, lin in inn.getloop_including_mpath({'BOTSID': 'UNH'}, {'BOTSID': 'LIN'}):
+    unh_reference = parents[0]['0062']</code></pre>
+
+<h4 id="mapping-functions--getcount">getcount</h4>
+<p><b>Signature:</b> <code>getcount()</code> (no mpath). <b>Returns:</b> the number of records in the tree (of the message, or below and including the node). Used for segment counts in trailers.</p>
+<pre><code class="language-python"># UNT counts all segments from UNH to UNT; UNT itself is not in the tree yet: + 1
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'UNT', '0074': out.getcount() + 1, '0062': out.ta_info['reference']})</code></pre>
+
+<h4 id="mapping-functions--getcountoccurrences">getcountoccurrences</h4>
+<p><b>Signature:</b> <code>getcountoccurrences(*mpath)</code>. <b>Returns:</b> how many records match (an integer).</p>
+<pre><code class="language-python">nr_lines = inn.getcountoccurrences({'BOTSID': 'ST'}, {'BOTSID': 'PO1'})
+out.put({'BOTSID': 'ST'}, {'BOTSID': 'CTT', 'CTT01': nr_lines})</code></pre>
+
+<h4 id="mapping-functions--getcountsum">getcountsum</h4>
+<p><b>Signature:</b> <code>getcountsum(*mpath)</code>, with the field to add up marked <code>None</code> in the last dict. <b>Returns:</b> the sum as a string (for example <code>'42.000'</code>). Non-numeric values count as 0.</p>
+<pre><code class="language-python">total_qty = inn.getcountsum({'BOTSID': 'ST'}, {'BOTSID': 'PO1', 'PO102': None})</code></pre>
+<p><b>Common mistake:</b> the function changes the dicts you pass (it removes the <code>None</code> field); do not reuse the same dict objects after the call.</p>
+
+<h4 id="mapping-functions--put">put</h4>
+<p><b>Signature:</b> <code>out.put(mpath1, mpath2, …, strip=True)</code> or <code>node.put(…)</code>. <b>Returns:</b> <code>True</code> if written, <code>False</code> if a value was <code>None</code> or an empty list (then nothing is written).</p>
+<p>For each level: if a record with the same values in the fields both have already exists, it is used and the new fields are added to it; otherwise a new record is added. Values are converted with <code>str()</code> and stripped of spaces at both ends (<code>strip=False</code> keeps the spaces). A list as value is a repeating field (a list of dicts: a repeating composite).</p>
+<pre><code class="language-python">out.put({'BOTSID': 'UNH', '0062': out.ta_info['reference'], 'S009.0065': 'INVOIC',
+         'S009.0052': 'D', 'S009.0054': '96A', 'S009.0051': 'UN', 'S009.0057': 'EAN008'})
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'BGM', 'C002.1001': '380', '1004': invoicenumber})
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'NAD', '3035': 'SU', 'C082.3039': '5412345000013', 'C082.3055': '9'})</code></pre>
+<p><b>Common mistakes:</b> using <code>put</code> for repeating records: a second <code>put</code> of the same record id makes a new record only when a field both have differs (here <code>3035</code>); otherwise it adds to the first record. For lines use <code>putloop</code>. A <code>None</code> anywhere in the mpath means nothing is written, also not the other fields: use that on purpose for optional values, but do not put mandatory and optional fields in one call.</p>
+
+<h4 id="mapping-functions--putraw">putraw</h4>
+<p><b>Signature:</b> <code>putraw(*mpath)</code>. As <code>put</code>, but values are stored as given: no <code>str()</code>, no stripping (for example a boolean or number for json). <span class="badge green">new in 4.0</span></p>
+
+<h4 id="mapping-functions--putloop">putloop</h4>
+<p><b>Signature:</b> <code>putloop(*mpath)</code>. <b>Returns:</b> the node of a new record at the end of the mpath (the levels above are reused or made). Then use <code>put</code> on that node, starting with its own record. Returns <code>False</code> if a value in the mpath is <code>None</code>.</p>
+<pre><code class="language-python">for po1 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+    lin = out.putloop({'BOTSID': 'UNH'}, {'BOTSID': 'LIN'})
+    lin.put({'BOTSID': 'LIN', '1082': po1.get({'BOTSID': 'PO1', 'PO101': None})})
+    lin.put({'BOTSID': 'LIN'}, {'BOTSID': 'QTY', 'C186.6063': '21',
+                                'C186.6060': po1.get({'BOTSID': 'PO1', 'PO102': None})})</code></pre>
+<p><b>Several messages in one output.</b> If <code>putloop</code> is the first thing you do on an empty <code>out</code>, with one dict only, each call makes a new top record: each one is written as a separate message (or record) in the same file. Example: a csv file with one line per order line and no header record:</p>
+<pre><code class="language-python">for po1 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+    row = out.putloop({'BOTSID': 'LIN'})
+    row.put({'BOTSID': 'LIN', 'sku': po1.get({'BOTSID': 'PO1', 'PO107': None})})</code></pre>
+
+<h4 id="mapping-functions--change">change</h4>
+<p><b>Signature:</b> <code>change(where, change)</code>. <code>where</code> is a <b>tuple</b> of dicts (an mpath, values as strings), <code>change</code> a dict of fields. <b>Returns:</b> <code>True</code> if a record was found and changed. Only the first match is changed. A value <code>None</code> removes the field. <code>BOTSID</code> cannot be changed.</p>
+<pre><code class="language-python">inn.change(where=({'BOTSID': 'UNH'}, {'BOTSID': 'NAD', '3035': 'BY'}),
+           change={'C082.3039': '5412345000013', 'C082.3055': None})</code></pre>
+<p><b>Common mistake:</b> passing the mpath as separate arguments (<code>change({'BOTSID':'UNH'}, {…})</code>) instead of a tuple.</p>
+
+<h4 id="mapping-functions--delete">delete</h4>
+<p><b>Signature:</b> <code>delete(*mpath)</code>, at least two dicts (the root cannot be deleted). <b>Returns:</b> <code>True</code> if a record was removed. The record and all records below it are removed. Only the first match.</p>
+<pre><code class="language-python">while inn.delete({'BOTSID': 'UNH'}, {'BOTSID': 'FTX', '4451': 'ZZZ'}):
+    pass   # remove all FTX+ZZZ</code></pre>
+
+<h4 id="mapping-functions--sort">sort</h4>
+<p><b>Signature:</b> <code>sort(*mpath, **options)</code>. The last dict names the field to sort on (exactly one <code>None</code>); the dicts before it name the record whose children are sorted. Options:</p>
+<ul>
+<li><code>sortfrom=(…)</code> and <code>compare=(…)</code>: give the two parts separately; <code>compare</code> can be more than one level, to sort on a field of a child record. <span class="badge green">new in 4.0</span></li>
+<li><code>reverse=True</code>: largest first.</li>
+<li><code>sort_decimal=True</code>: compare as numbers (<code>'10'</code> after <code>'9'</code>).</li>
+<li><code>sort_if_none='…'</code>: the value to use for records without the field; by default they come first (as in Bots 3).</li>
+</ul>
+<pre><code class="language-python">inn.sort({'BOTSID': 'UNH'}, {'BOTSID': 'LIN', '1082': None}, sort_decimal=True)
+inn.sort(sortfrom=({'BOTSID': 'UNH'},),
+         compare=({'BOTSID': 'LIN'}, {'BOTSID': 'PIA', 'C212.7143': 'SA', 'C212.7140': None}))</code></pre>
+
+<h4 id="mapping-functions--enhancedget">enhancedget</h4>
+<p><b>Signature:</b> <code>enhancedget(mpaths)</code>. The argument is a dict (one level), a tuple of dicts (an mpath), a list (each member is fetched and the results are joined), a function (called as <code>function(thisnode=node)</code>), or a string (returned as it is). Bots uses it for QUERIES, SUBTRANSLATION and <code>nextmessageblock</code> in grammars; in a mapping it is rarely needed.</p>
+
+<h4 id="mapping-functions--display">display, displayqueries, copynode</h4>
+<p><code>inn.root.display()</code> writes every record of the tree to the log (level INFO), indented by level. <code>inn.root.displayqueries()</code> writes the QUERIES values per node. <code>node.copynode()</code> returns an independent copy of the node and everything below it.</p>
+
+<h4 id="mapping-functions--ccode">ccode, reverse_ccode, getcodeset</h4>
+<p><b>Signature:</b> <code>transform.ccode(ccodeid, leftcode, field='rightcode', safe=False)</code>. Looks in the code list (<span class="ui">Configuration</span> → <span class="ui">User Codes list</span>) of type <code>ccodeid</code> for the entry with <code>leftcode</code>, and returns its <code>field</code>: <code>rightcode</code>, <code>attr1</code> … <code>attr8</code>. If not found: <code>safe=False</code> raises <code>CodeConversionError</code>, <code>safe=True</code> returns <code>leftcode</code> unchanged, <code>safe=None</code> returns <code>None</code>.</p>
+<p><code>reverse_ccode(ccodeid, rightcode, field='leftcode', safe=False)</code> searches on <code>rightcode</code>. <code>getcodeset(ccodeid, leftcode, field='rightcode')</code> returns a list of all matching values (in the order they were entered).</p>
+<pre><code class="language-python">unit = transform.ccode('unit_x12_to_edifact', po1.get({'BOTSID': 'PO1', 'PO103': None}))   # 'EA' -> 'PCE'
+desc = transform.ccode('unit_x12_to_edifact', 'EA', field='attr1', safe=True)
+x12unit = transform.reverse_ccode('unit_x12_to_edifact', 'PCE')                              # 'PCE' -> 'EA'</code></pre>
+<p><b>Common mistakes:</b> the code type must exist under <span class="ui">User Code types</span>; codes are compared exactly (case and spaces matter); passing <code>None</code> as code raises <code>Value "None" not in code-conversion</code>.</p>
+
+<h4 id="mapping-functions--partnerlookup">partnerlookup</h4>
+<p><b>Signature:</b> <code>transform.partnerlookup(value, field, search_field='idpartner', safe=False)</code>. Finds the partner whose <code>search_field</code> equals <code>value</code> and returns its <code>field</code>: any field of the partner, such as <code>name</code>, <code>mail</code>, <code>attr1</code> … <code>attr5</code>, <code>address1</code>, <code>city</code>, <code>countrycode</code>. A partner whose field is empty counts as not found. <code>safe</code> as for <code>ccode</code>. The Bots 3 name of the third argument, <code>field_where_value_is_searched</code>, also works.</p>
+<pre><code class="language-python">erp_customer = transform.partnerlookup(inn.ta_info['frompartner'], 'attr1')
+partner_id = transform.partnerlookup('5412345000099', 'idpartner', search_field='attr2', safe=None)</code></pre>
+<p><b>Common mistake:</b> searching on a field other than <code>idpartner</code> that is not unique: the first partner found is used.</p>
+
+<h4 id="mapping-functions--persist">persist_add, persist_update, persist_add_update, persist_delete, persist_lookup</h4>
+<p>Store a value under a <b>domain</b> (max 70 characters) and a <b>key</b> (max 64 characters) in the database, to use it in a later message or run. The value can be any Python value that can be pickled (string, number, list, dict, date). Values are removed by the daily cleanup after <code>maxdayspersist</code> days (default 30) since they were last written.</p>
+<div class="table-wrap"><table>
+<tr><th>Function</th><th>Does</th><th>Returns / errors</th></tr>
+<tr><td><code>persist_add(domein, botskey, value)</code></td><td>Adds a new entry.</td><td><code>PersistError</code> if the key already exists.</td></tr>
+<tr><td><code>persist_update(domein, botskey, value)</code></td><td>Replaces the value and its time stamp.</td><td>Does nothing if the key does not exist.</td></tr>
+<tr><td><code>persist_add_update(domein, botskey, value)</code></td><td>Adds, or replaces if it exists.</td><td>—</td></tr>
+<tr><td><code>persist_delete(domein, botskey)</code></td><td>Removes the entry.</td><td>—</td></tr>
+<tr><td><code>persist_lookup(domein, botskey)</code></td><td>Reads the value.</td><td><code>None</code> if not there.</td></tr>
+</table></div>
+<pre><code class="language-python">po = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+if transform.persist_lookup('orders_seen', po):
+    raise transform.BotsError('Order %(po)s was received before.', {'po': po})
+transform.persist_add('orders_seen', po, transform.strftime('%Y-%m-%d'))</code></pre>
+
+<h4 id="mapping-functions--unique">unique, unique_runcounter, checkunique</h4>
+<p><code>transform.unique(domein, updatewith=None)</code> returns the next number of the counter <code>domein</code> (max 128 characters) as a <b>string</b>. A new counter starts at 1. With <code>updatewith=n</code> it returns the current number and sets the counter to <code>n</code>. Two engines can never get the same number. Counters are listed and can be changed in <span class="ui">SysTasks</span> → <span class="ui">View/edit counters</span> (see <a href="#counters">Counters</a>). In an acceptance test run, <code>unique</code> uses a counter per run.</p>
+<p><code>transform.unique_runcounter(domein, updatewith=None)</code> is a counter in memory that starts again at 1 in each run.</p>
+<p><code>transform.checkunique(domein, receivednumber)</code> returns <code>True</code> if <code>receivednumber</code> is the next number of the counter (and moves the counter), else <code>False</code> (and leaves it). <code>receivednumber</code> must be an <b>integer</b>.</p>
+<pre><code class="language-python">invoicenumber = 'INV' + transform.unique('invoicenumber_' + out.ta_info['topartner']).zfill(6)
+seq = int(inn.get({'BOTSID': 'HDR', 'sequence': None}))
+if not transform.checkunique('erp_sequence', seq):
+    raise transform.BotsError('Sequence number %(seq)s is out of order.', {'seq': seq})</code></pre>
+
+<h4 id="mapping-functions--inn2out">inn2out</h4>
+<p><code>transform.inn2out(inn, out)</code> sets <code>out.root</code> to a copy of the incoming tree. Use it when input and output have the same or almost the same structure; change the copy afterwards with <code>out.change</code>, <code>out.delete</code> and <code>out.put</code>.</p>
+<pre><code class="language-python">def main(inn, out):
+    transform.inn2out(inn, out)
+    out.change(where=({'BOTSID': 'UNH'}, {'BOTSID': 'NAD', '3035': 'BY'}),
+               change={'C082.3039': '5412345000013'})</code></pre>
+
+<h4 id="mapping-functions--text">useoneof, truncate, concat, dropdiacritics, chunk</h4>
+<ul>
+<li><code>useoneof(*args)</code>: the first argument that is not empty, else <code>None</code>. <code>transform.useoneof(buyer_article, vendor_article, 'UNKNOWN')</code></li>
+<li><code>truncate(maxpos, value)</code>: <code>value[:maxpos]</code>; <code>None</code> stays <code>None</code>. Mind the order: length first.</li>
+<li><code>concat(*args, sep='')</code>: joins the non-empty arguments with <code>sep</code>; <code>None</code> if nothing is left. <code>transform.concat(street, number, sep=' ')</code></li>
+<li><code>dropdiacritics(content, charset='ascii')</code>: every character that does not fit in <code>charset</code> is replaced by the character without accent, or dropped. One character in gives at most one character out, so lengths do not grow.</li>
+<li><code>chunk(sequence, size)</code>: a generator of parts: <code>list(transform.chunk('a long free text', 5))</code> gives <code>['a lon', 'g fre', 'e tex', 't']</code>. Useful for FTX lines of fixed length.</li>
+</ul>
+
+<h4 id="mapping-functions--dates">dateformat, datemask, strftime</h4>
+<ul>
+<li><code>dateformat(date)</code>: <code>'102'</code> for 8 characters (CCYYMMDD), <code>'203'</code> for 12 (CCYYMMDDHHMM), <code>'718'</code> for 16 (a period of two dates); <code>None</code> for an empty date; any other length raises <code>No valid edifact date format for "…"</code>.</li>
+<li><code>datemask(value, frommask, tomask)</code>: each character of <code>frommask</code> labels the character at the same position in <code>value</code>; <code>tomask</code> is built from these labels, other characters are copied. <code>transform.datemask('12/31/2026', 'MM/DD/CCYY', 'CCYYMMDD')</code> gives <code>'20261231'</code>. An empty value is returned unchanged.</li>
+<li><code>strftime(format)</code>: the current date and time, as Python's <code>strftime</code>. In an acceptance test run it always gives 2013-01-23 01:23:45, so test output does not change.</li>
+</ul>
+<pre><code class="language-python">orderdate = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG05': None})      # '20261231'
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'DTM', 'C507.2005': '137', 'C507.2380': orderdate,
+                            'C507.2379': transform.dateformat(orderdate)})</code></pre>
+
+<h4 id="mapping-functions--ean">calceancheckdigit, checkean, addeancheckdigit</h4>
+<p><code>calceancheckdigit(ean)</code> returns the check digit (a string) for a GTIN/GLN without its check digit. <code>checkean(ean)</code> returns <code>True</code> if the last digit is right. <code>addeancheckdigit(ean)</code> returns the code with the check digit added. The code must be a string of digits, else <code>EanError</code> (<code>GTIN "…" should be string with only numericals.</code>).</p>
+<pre><code class="language-python">transform.addeancheckdigit('541234500001')   # '5412345000013'
+transform.checkean('5412345000013')          # True</code></pre>
+
+<h4 id="mapping-functions--sendbotsemail">sendbotsemail</h4>
+<p><code>transform.sendbotsemail(partner, subject, reporttext)</code> sends a plain text mail to the mail and CC addresses of the partner, with the mail server of <code>settings.py</code> (<code>EMAIL_HOST</code>, …) and <code>SERVER_EMAIL</code> as sender. <b>Returns:</b> the result of Django's <code>send_mail</code> (1 when sent), <code>False</code> on an error (logged as warning), <code>None</code> if the partner is unknown or has no mail address. It does not raise, so the translation continues.</p>
+
+<h4 id="mapping-functions--errors">Exceptions you can raise</h4>
+<ul>
+<li><code>transform.BotsError(text, dict)</code>: a clear error for this message. The text uses <code>%(name)s</code> placeholders filled from the dict.</li>
+<li><code>transform.KillWholeFileException(text)</code>: this message and all other messages of the file fail; nothing of the file is output.</li>
+<li><code>transform.ParsePassthroughException(text)</code>: stop translating; the incoming file is passed on unchanged, as in a "parse and passthrough" route.</li>
+</ul>
+
+<h3 id="mapping-functions--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Parameter mpath must be tuple: …</code> or <code>Must be dicts in tuple: get(…)</code></td><td>An mpath part is not a dict, or <code>change</code> got a dict instead of a tuple as <code>where</code>.</td><td>Give each level as a dict; for <code>change</code> write <code>where=({…}, {…})</code>.</td></tr>
+<tr><td><code>"BOTSID" is required in mpath: …</code> / <code>Last section without "BOTSID": get(…)</code></td><td>A dict without <code>'BOTSID'</code>.</td><td>Add <code>'BOTSID': '&lt;record id&gt;'</code> to each dict.</td></tr>
+<tr><td><code>Max one "None" in last section: get(…)</code></td><td>Two fields asked in one get.</td><td>Use two <code>get</code> calls.</td></tr>
+<tr><td><code>Values must be strings in mpath: getrecord(…)</code></td><td><code>getloop</code>, <code>getrecord</code> or the upper levels of <code>get</code> contain <code>None</code> or a number. (The text says <code>getrecord</code> for all of them.)</td><td>Only the last dict of <code>get</code> may contain <code>None</code>; write numbers as strings.</td></tr>
+<tr><td><code>Parameter mpath is not valid according to grammar: …</code></td><td>With <code>get_checklevel = 2</code>: a record or field name is not in the grammar, or a level is missing.</td><td>Open the grammar (link in <span class="ui">Translations</span>) and correct the name or add the missing level.</td></tr>
+<tr><td><code>Must be one and only one "None" in last section: get(…)</code></td><td><code>sort</code> without (or with two) fields to sort on.</td><td>Mark exactly one field with <code>None</code>.</td></tr>
+<tr><td><code>Only one dict: not allowed. Use different solution: delete(…)</code></td><td><code>delete</code> with the root record only.</td><td>Delete a child, or set <code>out.ta_info['statust'] = transform.DONE</code> to skip the message.</td></tr>
+<tr><td><code>Parameter "change" must be dict: …</code> / <code>Keys in "change" must be strings: …</code></td><td>Wrong second argument of <code>change</code>.</td><td>Pass a dict with field names as keys.</td></tr>
+<tr><td><code>Value "EA" not in code-conversion, user table "unit_x12_to_edifact".</code></td><td>The code is not in the code list.</td><td>Add it under <span class="ui">User Codes list</span>, or use <code>safe=True</code> / <code>safe=None</code>.</td></tr>
+<tr><td><code>No result found for partner lookup where idpartner="PARTNERX"; either record does not exist or field "attr1" has no value.</code></td><td>Partner unknown or the field is empty.</td><td>Fill the field in <span class="ui">Partners</span>, or use <code>safe</code>.</td></tr>
+<tr><td><code>Failed to add for domein "…", botskey "…", value "…".</code></td><td><code>persist_add</code> on a key that exists.</td><td>Use <code>persist_add_update</code>.</td></tr>
+<tr><td><code>Error in function datamask("…", "…", "…").</code></td><td>The value is shorter than the masks need.</td><td>Check the incoming value; test <code>len(value)</code> first.</td></tr>
+<tr><td><code>Repeating field: must be a list: put(…)</code></td><td>A single value put in a field the grammar defines as repeating.</td><td>Put a list: <code>{'C108.4440': [line1, line2]}</code>.</td></tr>
+<tr><td><code>TypeError: can only concatenate str (not "int") to str</code></td><td><code>transform.unique()</code> returns a string, <code>botslib.unique()</code> an integer; or a field value used as number.</td><td>Convert explicitly with <code>int()</code> or <code>str()</code>.</td></tr>
+</table></div>
+</section>
+
+<section id="mapping-recipes" data-title="Mapping recipes" data-group="Grammars and mappings">
+<h2>Mapping recipes</h2>
+<p class="lead">Ready-to-use pieces of mapping code for the jobs that come back in almost every mapping. Copy a recipe into your <code>main</code> function and change the record and field names to those of your grammars.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>These are worked examples. Each one solves one small problem, such as "add up the line amounts" or "send nothing for test orders". Combine them to build a complete mapping.</p></div>
+
+<h3 id="mapping-recipes--how">How it works</h3>
+<p>All recipes assume these imports at the top of the mapping file and the grammars used in this manual: X12 <code>850004010</code> (root <code>ST</code>, lines <code>PO1</code>), EDIFACT <code>ORDERSD96AUNEAN008</code> / <code>INVOICD96AUNEAN008</code> (root <code>UNH</code>), and a csv grammar <code>orders_erp</code> with a header record <code>HDR</code> and line records <code>LIN</code> below it.</p>
+<pre><code class="language-python">import decimal
+from bots import botsglobal
+from bots import transform</code></pre>
+<p>Field names in the examples are those of the standard grammars; check them in your own grammar with the "view grammar" link in <span class="ui">Configuration</span> → <span class="ui">Translations</span>.</p>
+
+<h3 id="mapping-recipes--howto">How to use a recipe</h3>
+<ol class="steps">
+<li><b>Pick the recipe</b> from the list in the reference below.</li>
+<li><b>Copy it</b> into the <code>main(inn, out)</code> of your mapping, below the part that writes the header.</li>
+<li><b>Rename</b> records and fields to those of your incoming and outgoing grammars.</li>
+<li><b>Set up what the recipe needs</b>: a code list, a partner field, a second translation rule (each recipe says so).</li>
+<li><b>Test</b> with a real file and check the result in <span class="ui">Outgoing</span>.</li>
+</ol>
+
+<h3 id="mapping-recipes--reference">Reference</h3>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><a href="#mapping-recipes--r1">1. Copy header fields</a></td><td>Header data to the output</td><td>—</td><td><code>get</code>, <code>put</code></td></tr>
+<tr><td><a href="#mapping-recipes--r2">2. Loop over lines</a></td><td>One output line per input line</td><td>—</td><td><code>getloop</code>, <code>putloop</code></td></tr>
+<tr><td><a href="#mapping-recipes--r3">3. Sum totals</a></td><td>Totals from the lines</td><td>—</td><td><code>getdecimal</code>, <code>getcountsum</code></td></tr>
+<tr><td><a href="#mapping-recipes--r4">4. Count segments and lines</a></td><td>UNT, SE, CNT, CTT</td><td>—</td><td><code>getcount</code></td></tr>
+<tr><td><a href="#mapping-recipes--r5">5. Convert dates</a></td><td>Date formats</td><td>—</td><td><code>datemask</code>, <code>dateformat</code></td></tr>
+<tr><td><a href="#mapping-recipes--r6">6. Convert codes with a code list</a></td><td>Units, qualifiers, article numbers</td><td>—</td><td><code>ccode</code></td></tr>
+<tr><td><a href="#mapping-recipes--r7">7. Default values</a></td><td>Value if the input has none</td><td>—</td><td><code>useoneof</code>, <code>or</code></td></tr>
+<tr><td><a href="#mapping-recipes--r8">8. One input, several output messages</a></td><td>Split into files</td><td>—</td><td>return alt</td></tr>
+<tr><td><a href="#mapping-recipes--r9">9. Combine messages in one file</a></td><td>Merging and envelope groups</td><td>—</td><td><code>merge</code>, <code>rsrv3</code></td></tr>
+<tr><td><a href="#mapping-recipes--r10">10. Conditional output</a></td><td>Send nothing in some cases</td><td>—</td><td><code>statust = DONE</code></td></tr>
+<tr><td><a href="#mapping-recipes--r11">11. Partner-specific logic</a></td><td>Different rules per partner</td><td>—</td><td><code>ta_info</code>, <code>partnerlookup</code></td></tr>
+<tr><td><a href="#mapping-recipes--r12">12. Remember a value between runs</a></td><td>Duplicate check, last number</td><td>—</td><td><code>persist_*</code></td></tr>
+<tr><td><a href="#mapping-recipes--r13">13. Numbers and decimals</a></td><td>Rounding, signs, formats</td><td>—</td><td><code>Decimal</code></td></tr>
+<tr><td><a href="#mapping-recipes--r14">14. Write an acknowledgement</a></td><td>Order response next to the order</td><td>—</td><td>chained translation</td></tr>
+<tr><td><a href="#mapping-recipes--r15">15. Raise a clear error</a></td><td>Stop with a readable message</td><td>—</td><td><code>BotsError</code></td></tr>
+<tr><td><a href="#mapping-recipes--r16">16. Document key and file name</a></td><td>Order number in reports and file names</td><td>—</td><td><code>botskey</code></td></tr>
+<tr><td><a href="#mapping-recipes--r17">17. Set envelope fields</a></td><td>UNB/ISA values from the mapping</td><td>—</td><td><code>out.envelope_content</code></td></tr>
+<tr><td><a href="#mapping-recipes--r18">18. Read the incoming envelope</a></td><td>Interchange data in the mapping</td><td>—</td><td><code>inn.envelope_content</code></td></tr>
+<tr><td><a href="#mapping-recipes--r19">19. Unique numbers</a></td><td>Invoice and message numbers</td><td>—</td><td><code>unique</code></td></tr>
+<tr><td><a href="#mapping-recipes--r20">20. Mail a warning to a partner</a></td><td>Tell a partner about a problem</td><td>—</td><td><code>sendbotsemail</code></td></tr>
+</table></div>
+
+<h4 id="mapping-recipes--r1">1. Copy header fields</h4>
+<pre><code class="language-python">def main(inn, out):
+    po = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+    out.put({'BOTSID': 'HDR',
+             'ordernumber': po,
+             'orderdate': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG05': None}),
+             'buyer': inn.ta_info['frompartner']})
+    # optional fields: one put each
+    out.put({'BOTSID': 'HDR', 'shipto': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'N1', 'N101': 'ST', 'N104': None})})
+    out.put({'BOTSID': 'HDR', 'remark': inn.get({'BOTSID': 'ST'}, {'BOTSID': 'MSG', 'MSG01': None})})</code></pre>
+<p>A <code>None</code> value anywhere in a <code>put</code> skips the whole <code>put</code>. So put the fields that are always there together, and each optional field in a <code>put</code> of its own: a missing optional field is then left out, and the rest is written.</p>
+
+<h4 id="mapping-recipes--r2">2. Loop over lines</h4>
+<pre><code class="language-python">for po1 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+    lin = out.putloop({'BOTSID': 'HDR'}, {'BOTSID': 'LIN'})
+    lin.put({'BOTSID': 'LIN',
+             'linenumber': po1.get({'BOTSID': 'PO1', 'PO101': None}),
+             'quantity': po1.get({'BOTSID': 'PO1', 'PO102': None}),
+             'sku': po1.get({'BOTSID': 'PO1', 'PO107': None})})
+    # data of a child record of the line (PID description under PO1)
+    lin.put({'BOTSID': 'LIN', 'description': po1.get({'BOTSID': 'PO1'}, {'BOTSID': 'PID', 'PID05': None})})</code></pre>
+<p>Number the output lines yourself with <code>enumerate</code>: <code>for number, po1 in enumerate(inn.getloop(…), start=1):</code>.</p>
+
+<h4 id="mapping-recipes--r3">3. Sum totals</h4>
+<pre><code class="language-python">total = decimal.Decimal('0')
+for po1 in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+    qty = po1.getdecimal({'BOTSID': 'PO1', 'PO102': None})
+    price = po1.getdecimal({'BOTSID': 'PO1', 'PO104': None})
+    total += qty * price
+out.put({'BOTSID': 'HDR', 'totalamount': total.quantize(decimal.Decimal('0.01'))})
+
+# the sum of one field, without a loop:
+out.put({'BOTSID': 'HDR', 'totalquantity': inn.getcountsum({'BOTSID': 'ST'}, {'BOTSID': 'PO1', 'PO102': None})})</code></pre>
+
+<h4 id="mapping-recipes--r4">4. Count segments and lines</h4>
+<pre><code class="language-python"># EDIFACT: number of LIN in CNT, then UNT as last segment
+nr_lin = out.getcountoccurrences({'BOTSID': 'UNH'}, {'BOTSID': 'LIN'})
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'CNT', 'C270.6069': '2', 'C270.6066': nr_lin})
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'UNT', '0074': out.getcount() + 1, '0062': out.ta_info['reference']})
+
+# X12: CTT and SE
+out.put({'BOTSID': 'ST'}, {'BOTSID': 'CTT', 'CTT01': out.getcountoccurrences({'BOTSID': 'ST'}, {'BOTSID': 'IT1'})})
+out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1, 'SE02': out.ta_info['reference']})</code></pre>
+<p>Put the trailer <b>last</b>: <code>getcount()</code> counts what is in the tree at that moment. The <code>+ 1</code> counts the trailer itself.</p>
+
+<h4 id="mapping-recipes--r5">5. Convert dates</h4>
+<pre><code class="language-python"># csv '31.12.2026' to EDIFACT CCYYMMDD with format code
+erpdate = inn.get({'BOTSID': 'HDR', 'deliverydate': None})
+date = transform.datemask(erpdate, 'DD.MM.CCYY', 'CCYYMMDD')
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'DTM', 'C507.2005': '2', 'C507.2380': date,
+                            'C507.2379': transform.dateformat(date)})
+
+# EDIFACT DTM 102 to X12 6-position date (YYMMDD)
+date = inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'DTM', 'C507.2005': '137', 'C507.2380': None})
+out.put({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG05': date})                   # 004010: 8 positions
+yymmdd = transform.datemask(date, 'CCYYMMDD', 'YYMMDD') if date else None   # older versions: 6 positions
+
+# today
+out.put({'BOTSID': 'HDR', 'created': transform.strftime('%Y-%m-%d')})</code></pre>
+<p>For calculations with dates use Python's <code>datetime</code>: <code>datetime.datetime.strptime(date, '%Y%m%d') + datetime.timedelta(days=14)</code>.</p>
+
+<h4 id="mapping-recipes--r6">6. Convert codes with a code list</h4>
+<p>Set up: <span class="ui">Configuration</span> → <span class="ui">User Code types</span> → <span class="ui">Add</span> type <code>unit_x12_to_edifact</code>; then in <span class="ui">User Codes list</span> add entries, for example left code <code>EA</code>, right code <code>PCE</code>; left <code>CA</code>, right <code>CT</code>. See <a href="#code-lists">Code lists</a>.</p>
+<pre><code class="language-python">x12unit = po1.get({'BOTSID': 'PO1', 'PO103': None})
+unit = transform.ccode('unit_x12_to_edifact', x12unit, safe=True) if x12unit else None
+lin.put({'BOTSID': 'LIN'}, {'BOTSID': 'QTY', 'C186.6063': '21',
+                            'C186.6060': po1.get({'BOTSID': 'PO1', 'PO102': None}),
+                            'C186.6411': unit})
+# another column of the same entry
+text = transform.ccode('unit_x12_to_edifact', x12unit, field='attr1', safe=None)</code></pre>
+<p>Without <code>safe</code>, an unknown code stops the message with <code>Value "…" not in code-conversion</code>: that is the right choice when a wrong code must not reach the partner.</p>
+
+<h4 id="mapping-recipes--r7">7. Default values</h4>
+<pre><code class="language-python">currency = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'CUR', 'CUR02': None}) or 'EUR'
+article = transform.useoneof(
+    po1.get({'BOTSID': 'PO1', 'PO107': None}),          # buyer article
+    po1.get({'BOTSID': 'PO1', 'PO109': None}),          # vendor article
+    'UNKNOWN')
+lin.put({'BOTSID': 'LIN', 'sku': article, 'currency': currency})</code></pre>
+
+<h4 id="mapping-recipes--r8">8. One input, several output messages</h4>
+<p><b>Same file, several messages:</b> start <code>out</code> with <code>putloop</code> of one record (see <a href="#mapping-functions--putloop">putloop</a>); each top record is written as its own message in the same file.</p>
+<p><b>Several files:</b> return an alt. Each time <code>main</code> returns a string, Bots writes the current <code>out</code> and runs the translation again for the same incoming message, with <code>inn.ta_info['alt']</code> set to that string and a new empty <code>out</code>. If no translation rule has that exact alt, the rule with an empty alt (this same mapping) is used. Example: one csv file per ship-to address of an order.</p>
+<pre><code class="language-python">def main(inn, out):
+    shiptos = sorted(set(sdq for sdq in
+                     (n.get({'BOTSID': 'SDQ', 'SDQ03': None})
+                      for n in inn.getloop({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}, {'BOTSID': 'SDQ'}))
+                     if sdq))
+    alt = inn.ta_info['alt']
+    index = int(alt.split('_')[1]) if alt.startswith('shipto_') else 0
+    write_order_for(inn, out, shiptos[index])          # your own function that fills out
+    if index + 1 &lt; len(shiptos):
+        return 'shipto_%s' % (index + 1)                # next file
+    return None                                          # done</code></pre>
+<p>Each returned value differs, so Bots does not see an endless loop. If you must return the same value again and again, return <code>{'type': 'no_check_on_infinite_loop', 'alt': value}</code> and make sure the chain ends.</p>
+<p><b>Several messages in the input:</b> that is done by the incoming grammar (<code>nextmessage</code> or <code>nextmessageblock</code>): <code>main</code> is then called once per message.</p>
+
+<h4 id="mapping-recipes--r9">9. Combine messages in one file</h4>
+<p>Combining is done after the mapping, by <b>merging</b>: all translated messages of a route-part with the same editype, messagetype, partners, test indicator, charset, envelope and <code>rsrv3</code> are put in one file and one envelope. It is switched on with syntax <code>'merge': True</code> in the outgoing grammar (the default for EDIFACT, X12, csv and fixed) or per message in the mapping:</p>
+<pre><code class="language-python">out.ta_info['merge'] = True                      # merge with similar messages
+out.ta_info['rsrv3'] = inn.get({'BOTSID': 'HDR', 'deliverydate': None}) or ''   # but one file per delivery date</code></pre>
+<p>Messages for which the mapping set different envelope values (recipe 17) are not merged into one interchange either. <span class="badge orange">changed in 4.0</span></p>
+
+<h4 id="mapping-recipes--r10">10. Conditional output</h4>
+<pre><code class="language-python">def main(inn, out):
+    purpose = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG01': None})
+    if purpose == '01':                                  # cancellation: not for the ERP
+        out.ta_info['statust'] = transform.DONE           # no output, not an error
+        return
+    ...
+    # optional segment only when there is data
+    note = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'MSG', 'MSG01': None})
+    if note:
+        out.put({'BOTSID': 'HDR', 'remark': transform.truncate(70, note)})</code></pre>
+
+<h4 id="mapping-recipes--r11">11. Partner-specific logic</h4>
+<p>For small differences, test the partner in the mapping. For large differences, make a second mapping and a translation rule with the partner filled in (a rule with a partner wins over a rule without).</p>
+<pre><code class="language-python">partner = inn.ta_info['frompartner']
+if partner == 'PARTNERA':
+    sku = po1.get({'BOTSID': 'PO1', 'PO107': None})
+else:
+    sku = po1.get({'BOTSID': 'PO1', 'PO109': None})
+
+# data kept per partner in the partner screen (attr1 = customer number in the ERP)
+customer = transform.partnerlookup(partner, 'attr1')
+out.put({'BOTSID': 'HDR', 'customer': customer})
+
+# a partner group: is PARTNERA in group Retailers? Use a code list or an attr field;
+# the translation rule itself can also be set for the group "Retailers".</code></pre>
+
+<h4 id="mapping-recipes--r12">12. Remember a value between runs</h4>
+<pre><code class="language-python">po = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+domain = 'orders_' + inn.ta_info['frompartner']
+if transform.persist_lookup(domain, po) is not None:
+    raise transform.BotsError('Duplicate order %(po)s from %(partner)s.',
+                              {'po': po, 'partner': inn.ta_info['frompartner']})
+transform.persist_add(domain, po, {'received': transform.strftime('%Y-%m-%d %H:%M')})
+
+# keep the last price list date per partner
+transform.persist_add_update('pricelist', 'PARTNERB', '20261001')
+last = transform.persist_lookup('pricelist', 'PARTNERB')</code></pre>
+<p>Values are removed after <code>maxdayspersist</code> days (bots.ini, default 30). Raise it if you check duplicates over a longer time.</p>
+
+<h4 id="mapping-recipes--r13">13. Numbers and decimals</h4>
+<pre><code class="language-python">TWO = decimal.Decimal('0.01')
+qty = po1.getdecimal({'BOTSID': 'PO1', 'PO102': None})
+price = po1.getdecimal({'BOTSID': 'PO1', 'PO104': None})
+amount = (qty * price).quantize(TWO, rounding=decimal.ROUND_HALF_UP)
+vat = (amount * decimal.Decimal('0.21')).quantize(TWO, rounding=decimal.ROUND_HALF_UP)
+lin.put({'BOTSID': 'LIN', 'amount': amount, 'vat': vat})
+
+# integer quantity from '12.000'
+lin.put({'BOTSID': 'LIN', 'quantity': int(qty)})
+# negative amount for a credit note
+lin.put({'BOTSID': 'LIN', 'amount': -amount})</code></pre>
+<p>Write numbers with a dot as decimal sign and no thousands separator. The outgoing grammar formats them (decimal sign, number of decimals, leading zeros for fixed records) from the field format and the syntax <code>decimaal</code>; see <a href="#grammar-records">Grammar records</a>. Fields with implied decimals (for example X12 format <code>N2</code>, an amount in cents) also get the value in the normal form (<code>12.50</code>); the grammar writes <code>1250</code>.</p>
+
+<h4 id="mapping-recipes--r14">14. Write an acknowledgement</h4>
+<p><b>Technical acknowledgements</b> (X12 997, EDIFACT CONTRL) are made by Bots itself from a <a href="#confirm-rules">confirm rule</a>; see <a href="#acknowledgements">Acknowledgements</a>. <b>A business acknowledgement</b>, such as an order response, is a second outgoing message from the same incoming order: a chained translation.</p>
+<ol class="steps">
+<li><b>Return an alt</b> at the end of the order mapping:
+<pre><code class="language-python">def main(inn, out):
+    ...                     # order to the ERP
+    return 'ordrsp'</code></pre></li>
+<li><b>Add a second translation rule</b> with the same from-editype and from-messagetype, <span class="ui">Alternative translation</span> <code>ordrsp</code>, mapping <code>orders_to_ordrsp</code>, to-messagetype <code>ORDRSPD96AUNEAN005</code>.</li>
+<li><b>Write the response mapping</b> <code>usersys/mappings/edifact/orders_to_ordrsp.py</code>:
+<pre><code class="language-python">def main(inn, out):
+    out.ta_info['frompartner'] = inn.ta_info['topartner']        # swap: we answer
+    out.ta_info['topartner'] = inn.ta_info['frompartner']
+    out.put({'BOTSID': 'UNH', '0062': out.ta_info['reference'], 'S009.0065': 'ORDRSP',
+             'S009.0052': 'D', 'S009.0054': '96A', 'S009.0051': 'UN', 'S009.0057': 'EAN005'})
+    out.put({'BOTSID': 'UNH'}, {'BOTSID': 'BGM', 'C002.1001': '231', '1004': transform.unique('ordrsp'),
+                                '1225': '29'})                   # 29 = accepted without amendment
+    out.put({'BOTSID': 'UNH'}, {'BOTSID': 'RFF', 'C506.1153': 'ON',
+            'C506.1154': inn.get({'BOTSID': 'UNH'}, {'BOTSID': 'BGM', 'C106.1004': None})})
+    out.put({'BOTSID': 'UNH'}, {'BOTSID': 'UNT', '0074': out.getcount() + 1, '0062': out.ta_info['reference']})</code></pre></li>
+<li><b>Route the response.</b> The route needs an outgoing channel for ORDRSP (for example a second route-part with to-messagetype <code>ORDRSPD96AUNEAN005</code>, or partner-dependent outgoing channels).</li>
+</ol>
+
+<h4 id="mapping-recipes--r15">15. Raise a clear error</h4>
+<pre><code class="language-python">po = inn.get({'BOTSID': 'ST'}, {'BOTSID': 'BEG', 'BEG03': None})
+if not inn.getcountoccurrences({'BOTSID': 'ST'}, {'BOTSID': 'PO1'}):
+    raise transform.BotsError('Order %(po)s has no lines.', {'po': po})
+
+# one bad message must fail the whole file (no output at all for this file)
+if inn.ta_info['testindicator'] == 'T' and inn.ta_info['frompartner'] == 'PARTNERA':
+    raise transform.KillWholeFileException('Test file from PARTNERA in production.')</code></pre>
+<p>The message shows in <span class="ui">Incoming</span> with status error and your text. Placeholders <code>%(name)s</code> are filled from the dict; a missing key gives an empty text, not a crash.</p>
+
+<h4 id="mapping-recipes--r16">16. Document key and file name</h4>
+<pre><code class="language-python">invoicenumber = inn.get({'BOTSID': 'HDR', 'invoicenumber': None})
+out.ta_info['botskey'] = invoicenumber</code></pre>
+<p>The key is shown as reference in <span class="ui">Outgoing</span> and can be used in the file name of the outgoing channel: <span class="ui">Filename</span> <code>invoice_{botskey}.edi</code>. Use <code>{botskey}</code> only for messages that are not merged (one message per file). For incoming messages the grammar QUERIES can fill <code>botskey</code>; you can also set <code>inn.ta_info['botskey']</code> in the mapping.</p>
+
+<h4 id="mapping-recipes--r17">17. Set envelope fields</h4>
+<pre><code class="language-python"># EDIFACT: UNB values for this message (index 0 = UNB)
+out.envelope_content[0]['S002.0004'] = '5412345000013'      # sender
+out.envelope_content[0]['S002.0007'] = '14'
+out.envelope_content[0]['0026'] = 'INVOIC'                  # application reference
+out.envelope_content[0]['0035'] = '1'                       # test
+# X12: index 0 = ISA, index 1 = GS
+out.envelope_content[0]['ISA15'] = 'T'
+out.envelope_content[1]['GS02'] = 'MYCOMPANY'</code></pre>
+<p>These values win over the partner and grammar syntax. Keep them short: they are stored with the message (column of 256 characters). For permanent per-partner values use a partner syntax file or an envelope script; see <a href="#envelope-scripts">Envelope scripts</a>.</p>
+
+<h4 id="mapping-recipes--r18">18. Read the incoming envelope</h4>
+<pre><code class="language-python">unb = inn.envelope_content[0]                       # dict of the UNB record
+interchange_ref = unb.get('0020')
+sender = unb.get('S002.0004')
+# X12: [ISA, GS]
+isa_control = inn.envelope_content[0].get('ISA13')
+gs_sender = inn.envelope_content[1].get('GS02')
+# the complete parsed file (all messages):
+fileroot = inn.ta_info['bots_accessenvelope']</code></pre>
+
+<h4 id="mapping-recipes--r19">19. Unique numbers</h4>
+<pre><code class="language-python">invoicenumber = 'INV%06d' % int(transform.unique('invoicenumber'))     # INV000001, INV000002, ...
+out.put({'BOTSID': 'UNH'}, {'BOTSID': 'BGM', 'C002.1001': '380', '1004': invoicenumber})
+# message reference: Bots already drew one
+out.put({'BOTSID': 'UNH', '0062': out.ta_info['reference']})</code></pre>
+<p>Interchange control numbers (UNB 0020, ISA13) are made by the envelope; you do not need a counter for them.</p>
+
+<h4 id="mapping-recipes--r20">20. Mail a warning to a partner</h4>
+<pre><code class="language-python">if not po1.get({'BOTSID': 'PO1', 'PO104': None}):
+    transform.sendbotsemail(inn.ta_info['frompartner'],
+                            'Order %s: line without price' % po,
+                            'Line %s of order %s has no price; we used our list price.'
+                            % (po1.get({'BOTSID': 'PO1', 'PO101': None}), po))</code></pre>
+<p>The partner needs a mail address in <span class="ui">Partners</span>, and <code>settings.py</code> needs the mail server (see <a href="#settings-py">settings.py</a>).</p>
+
+<h3 id="mapping-recipes--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>Header field missing in the output, no error</td><td>Another field in the same <code>put</code> was <code>None</code>, so the whole <code>put</code> was skipped.</td><td>Put optional fields in a <code>put</code> of their own (recipe 1).</td></tr>
+<tr><td>Only one output line, although the input has many</td><td>Lines written with <code>put</code> instead of <code>putloop</code>: each <code>put</code> reused the same record.</td><td>Use <code>putloop</code> (recipe 2).</td></tr>
+<tr><td><code>[S03] … Record "UNH-UNT" occurs 0 times, min is 1.</code></td><td>Trailer not written.</td><td>Add the trailer as last step (recipe 4).</td></tr>
+<tr><td>UNT/SE count one too low or too high</td><td>Trailer written before the last segment, or <code>+ 1</code> forgotten.</td><td>Write the trailer last, with <code>out.getcount() + 1</code>.</td></tr>
+<tr><td><code>Mappingscript returns same alt value over and over again (infinite loop?).</code></td><td>Splitting recipe returns the same alt every time.</td><td>Put a counter in the alt (recipe 8) and return <code>None</code> at the end.</td></tr>
+<tr><td>Response (ORDRSP) not made</td><td>No translation rule with the returned alt, so the order mapping ran again; or no outgoing channel for the response.</td><td>Add the rule with <span class="ui">Alternative translation</span> set (recipe 14) and a route-part for the response.</td></tr>
+<tr><td>Messages for different dates end in one file</td><td>Merging groups by partner and type, not by content.</td><td>Set <code>out.ta_info['rsrv3']</code> (recipe 9) or <code>merge = False</code>.</td></tr>
+<tr><td><code>[F28]: Record "UNH-LIN-QTY" field "C186.6060" too big: "…".</code> after a calculation</td><td>Too many decimals or digits for the grammar field.</td><td>Round with <code>quantize</code> (recipe 13).</td></tr>
+<tr><td>Duplicate check misses old orders</td><td>Persist values older than <code>maxdayspersist</code> are deleted.</td><td>Raise <code>maxdayspersist</code> in <code>bots.ini</code>.</td></tr>
+<tr><td>No mail sent, warning <code>Error sending email: …</code> in the log</td><td>Mail server not set or refused.</td><td>Set <code>EMAIL_HOST</code> and friends in <code>settings.py</code>; test with <span class="ui">SysTasks</span> → <span class="ui">Send test report</span>.</td></tr>
+</table></div>
+</section>
+
+<section id="user-scripts" data-title="User scripts" data-group="Envelopes, acknowledgements, scripts">
+<h2>User scripts</h2>
+<p class="lead">User scripts are Python files in the folder <code>usersys</code> of your environment. Bots calls functions in them at fixed moments, so you can change what Bots does without changing Bots itself. This page gives the overview: which kinds exist, where each goes, and the rules they all follow.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Bots has "hooks": fixed points where it looks for a Python file with a certain name. If the file is there and has a function with a certain name, Bots runs it. A mapping is one kind of hook; others let you change how files are sent, received, enveloped, or what a route does.</p></div>
+
+<h3 id="user-scripts--how">How it works</h3>
+<ol>
+<li>At start, Bots imports the <code>usersys</code> folder of the environment (set in <code>bots.ini</code>, <code>[directories] usersys</code>; see <a href="#environments">Environments</a>) as a Python package.</li>
+<li>At each hook, Bots builds a module name from the kind of script and the name of the thing it works on, for example <code>routescripts.orders_in</code> for route <code>orders_in</code>, and imports it with <code>botslib.botsimport</code>.</li>
+<li>If the file does not exist, Bots goes on without it; this is not an error. Bots remembers this for the rest of the run and does not look again. If the file exists but has an error (a syntax error, or an import that fails inside it), the step fails with <code>Error in import of module "…"</code>.</li>
+<li>If the module has the function Bots is looking for, Bots calls it with <b>keyword arguments</b> (<code>botslib.runscript</code>). The names of the parameters of your function must be exactly the names Bots passes; or end your function with <code>**kwargs</code>. A function that is missing is skipped.</li>
+<li>An exception in your function is turned into <code>ScriptError: Userscript "…": "…"</code>. Where that error ends up depends on the hook (a message, a file, or a process error of the run); each page says so.</li>
+</ol>
+<p>A module is imported once per run of the engine. Variables at module level keep their value during the run, but not between runs; use the database (<code>transform.persist_*</code>, <code>transform.unique</code>) for that.</p>
+
+<h3 id="user-scripts--howto">How to add a user script</h3>
+<ol class="steps">
+<li><b>Find the folder and file name</b> in the reference table below. The file name is the id of the channel, route, envelope or partner, exactly as in the configuration (case matters on Linux), plus <code>.py</code>.</li>
+<li><b>Write the function</b> with the exact name and parameter names of the hook.</li>
+<li><b>Check it.</b> Run <code>bots-checkusersys -c&lt;config directory&gt;</code>: it compiles every Python file in usersys and imports every script, and lists errors.</li>
+<li><b>Check that Bots sees it.</b> In <span class="ui">Configuration</span> → <span class="ui">Routes</span> and <span class="ui">Configuration</span> → <span class="ui">Channels</span> the column <span class="ui">User script</span> shows a <span class="ui">View</span> link when a route script or communication script exists; it opens the source.</li>
+<li><b>Run and look at the result</b> in the reports; errors of scripts that are not tied to a file show under <span class="ui">All runs</span> → <span class="ui">Process Errors</span>.</li>
+</ol>
+
+<h3 id="user-scripts--reference">Reference</h3>
+<h4>Kinds of user scripts</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>usersys/mappings/&lt;editype&gt;/&lt;name&gt;.py</code></td><td>Mapping: <code>main(inn, out)</code>. See <a href="#mappings">Mappings</a>.</td><td>—</td><td><code>mappings/x12/orders_x12_to_csv.py</code></td></tr>
+<tr><td><code>usersys/mappings/translation.py</code> <span class="badge gray">advanced</span></td><td><code>gettranslation(idroute, message)</code> finds a translation when the table has none.</td><td>not used</td><td></td></tr>
+<tr><td><code>usersys/grammars/&lt;editype&gt;/&lt;messagetype&gt;.py</code></td><td>Grammar: <code>syntax</code>, <code>structure</code>, <code>recorddefs</code>. Can contain functions that the grammar calls (see below). See <a href="#grammars">Grammars</a>.</td><td>—</td><td><code>grammars/x12/850004010.py</code></td></tr>
+<tr><td><code>usersys/grammars/templatehtml/templates/</code></td><td>Templates for editype <code>templatehtml</code>.</td><td>—</td><td><code>invoice.html</code></td></tr>
+<tr><td><code>usersys/partners/&lt;editype&gt;/&lt;partner id&gt;.py</code></td><td>Partner syntax: a dict <code>syntax</code> that overrides the syntax of outgoing messages and envelopes for that partner (as from- or to-partner).</td><td>—</td><td><code>partners/edifact/PARTNERA.py</code></td></tr>
+<tr><td><code>usersys/envelopescripts/&lt;editype&gt;/&lt;envelope&gt;.py</code></td><td>Changes or replaces the envelope. See <a href="#envelope-scripts">Envelope scripts</a>.</td><td>—</td><td><code>envelopescripts/edifact/edifact.py</code></td></tr>
+<tr><td><code>usersys/communicationscripts/&lt;channel id&gt;.py</code></td><td>Changes how a channel sends or receives, or is the channel (types <code>communicationscript</code> and <code>db</code>). See <a href="#communication-scripts">Communication scripts</a>.</td><td>—</td><td><code>communicationscripts/partnera_sftp_out.py</code></td></tr>
+<tr><td><code>usersys/routescripts/&lt;route id&gt;.py</code></td><td>Runs at points in a route, or replaces the route. See <a href="#route-scripts">Route scripts</a>.</td><td>—</td><td><code>routescripts/orders_in.py</code></td></tr>
+<tr><td><code>usersys/routescripts/botsengine.py</code></td><td>Runs before and after a whole engine run, and after cleanup.</td><td>—</td><td></td></tr>
+<tr><td><code>usersys/routescripts/bots_acceptancetest.py</code></td><td>Runs before and after an acceptance test run. See <a href="#acceptance-testing">Acceptance testing</a>.</td><td>—</td><td></td></tr>
+<tr><td><code>usersys/charsets/&lt;name&gt;.py</code> <span class="badge gray">advanced</span></td><td>A character set (Python codec) with a function <code>getregentry()</code>. Bots ships <code>unoa.py</code> and <code>unob.py</code> (the EDIFACT character sets UNOA, UNOB).</td><td>—</td><td><code>charsets/unoa.py</code></td></tr>
+<tr><td>other <code>.py</code> files</td><td>Your own helper modules, for code shared by several scripts. Import them relatively (<code>from . import helpers</code>) or as <code>from bots.usersys import helpers</code>.</td><td>—</td><td><code>usersys/mappings/x12/helpers.py</code></td></tr>
+</table></div>
+
+<h4>Functions a grammar can contain</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>syntax <code>'preprocess_lex'</code> <span class="badge gray">advanced</span></td><td>A function called with <code>lex=</code> (the list of lexed records) and <code>ta_info=</code> after the incoming file is split into records and fields, before parsing. It can change the records.</td><td><code>False</code></td><td><code>'preprocess_lex': fix_records</code></td></tr>
+<tr><td>syntax <code>'preprocess_nodes'</code> <span class="badge gray">advanced</span></td><td>A function called with <code>thisnode=</code> (the parsed incoming file object; its tree is in <code>.root</code>) before the file is split into messages.</td><td><code>False</code></td><td><code>'preprocess_nodes': fix_tree</code></td></tr>
+<tr><td><code>getmessagetype(editype, messagetype)</code> <span class="badge gray">advanced</span></td><td>When a SUBTRANSLATION gives a messagetype for which no grammar exists, Bots calls this function of the envelope grammar; return the name of a grammar that does exist.</td><td>not used</td><td><code>return '850004010'</code></td></tr>
+<tr><td>function in QUERIES / <code>nextmessageblock</code> <span class="badge gray">advanced</span></td><td>Instead of an mpath, a function <code>f(thisnode)</code> that returns the value.</td><td>—</td><td>see <a href="#mapping-functions--enhancedget">enhancedget</a></td></tr>
+</table></div>
+
+<h4>What scripts may and may not do</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Use the transform functions</td><td>Allowed everywhere: <code>from bots import transform</code>.</td><td>—</td><td><code>transform.unique('x')</code></td></tr>
+<tr><td>Log</td><td>Use <code>botsglobal.logger</code> (<code>from bots import botsglobal</code>). <code>print</code> only reaches the console.</td><td>—</td><td><code>botsglobal.logger.info('…')</code></td></tr>
+<tr><td>Read Bots settings</td><td><code>botsglobal.ini.get('section', 'option', default)</code> reads <code>bots.ini</code>; you can put your own section there.</td><td>—</td><td><code>botsglobal.ini.get('mycompany', 'erp_dir', '')</code></td></tr>
+<tr><td>Query the Bots database</td><td><code>botslib.query(sql, dict)</code> and <code>botslib.changeq(sql, dict)</code>, with <code>%(name)s</code> parameters. Keep to reading, or to the table <code>ta</code> through <code>transform.addinfo</code>/<code>updateinfo</code>.</td><td>—</td><td>see <a href="#route-scripts">Route scripts</a></td></tr>
+<tr><td>Commit or close the Bots database</td><td><b>Not allowed.</b> Bots manages its own connection and transactions.</td><td>—</td><td></td></tr>
+<tr><td>Long waits, input from the keyboard</td><td><b>Not allowed.</b> The engine runs without a user; a script that waits blocks the whole run (and the next scheduled run, because of the database lock).</td><td>—</td><td></td></tr>
+<tr><td>Write in <code>botssys/data</code> by hand</td><td>Avoid. Use the file functions of <code>botslib</code> (<code>opendata</code>, <code>readdata</code>) and transactions, as the preprocessing functions do; see <a href="#preprocessing">Preprocessing</a>.</td><td>—</td><td></td></tr>
+<tr><td>Raise an exception</td><td>Allowed: it is the way to report an error. Use <code>transform.BotsError('text %(x)s', {'x': value})</code> for a clear text.</td><td>—</td><td></td></tr>
+<tr><td>Python version</td><td>Python 3.10 or newer. Scripts from Bots 3 must be converted (<code>bots-portusersys</code>).</td><td>—</td><td>see <a href="#upgrade-from-bots3">Upgrade from Bots 3</a></td></tr>
+</table></div>
+
+<h3 id="user-scripts--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>Script is ignored, no error</td><td>File name differs from the id (case, spaces, a dash instead of an underscore), wrong folder, or function name or parameter names are wrong.</td><td>Compare the name with the id in the configuration. Check the <span class="ui">View</span> link in the <span class="ui">User script</span> column. Check the function name against the hook list.</td></tr>
+<tr><td><code>Error in import of module "…/usersys/routescripts/orders_in": …</code></td><td>Syntax error, Python 2 code, or an <code>import</code> in the script that fails.</td><td>Run <code>bots-checkusersys</code>; fix the line; install the missing library in the Python of Bots.</td></tr>
+<tr><td><code>ScriptError: Userscript "…": "TypeError: postincommunication() got an unexpected keyword argument 'routedict'".</code></td><td>The parameter names of the function do not match what Bots passes.</td><td>Use the exact names (<code>def postincommunication(routedict):</code>) or add <code>**kwargs</code>.</td></tr>
+<tr><td><code>ScriptError: Userscript "…": "…"</code> (any other text)</td><td>An exception inside your function.</td><td>Read the text after the colon; set <code>debug = True</code> in <code>bots.ini</code> for the full traceback, or read the log at level DEBUG.</td></tr>
+<tr><td><code>ModuleNotFoundError: No module named 'helpers'</code></td><td>A helper module next to the script imported without the dot (Python 2 style).</td><td><code>from . import helpers</code>.</td></tr>
+<tr><td>Change in a script has no effect</td><td>A job queue or directory monitor started the engine with the old file, or you edited a copy in another environment.</td><td>Check <code>[directories] usersys</code> in the <code>bots.ini</code> of the environment you run; run again.</td></tr>
+<tr><td>Next scheduled run says the database is locked</td><td>A script hung or waited for input; the engine was killed.</td><td>Remove the waiting code; the next run does a crash recovery automatically.</td></tr>
+</table></div>
+</section>
+
+<section id="communication-scripts" data-title="Communication scripts" data-group="Envelopes, acknowledgements, scripts">
+<h2>Communication scripts</h2>
+<p class="lead">A communication script changes how one <a href="#channels">channel</a> sends or receives files: the outgoing file name, the subject of a mail, the SSH key of an SFTP server, or the whole way of communicating. For channel types <code>communicationscript</code> and <code>db</code> the script <b>is</b> the communication.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>The channel screen covers the usual cases. When a partner wants something special, such as a file name built from the order number, or a key file that is stored somewhere else, you write a few lines of Python with the name of the channel. Bots then asks your script at that moment.</p></div>
+
+<h3 id="communication-scripts--how">How it works</h3>
+<p>When a channel runs, Bots imports <code>usersys/communicationscripts/&lt;channel id&gt;.py</code> if it exists. Then:</p>
+<ol>
+<li>If the script contains a <b>class</b> with the name of the channel type (for example <code>sftp</code>), Bots uses that class for the channel instead of its own. You subclass the class of Bots and change only the methods you need. (The old name <code>UserCommunicationClass</code> is still accepted.)</li>
+<li>Otherwise Bots uses its own class, and calls the <b>functions</b> of the script at fixed moments (the hooks below), if they exist.</li>
+</ol>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Outgoing channel: connect, for each file make the file name, send, then disconnect and archive">
+<defs><marker id="arrow-comscripts-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box mid" x="10" y="30" width="160" height="80" rx="10"/><text x="90" y="64" text-anchor="middle" font-weight="600">connect</text><text class="small" x="90" y="86" text-anchor="middle">hostkey, privatekey</text>
+<path class="arrow" d="M174,70 L216,70" marker-end="url(#arrow-comscripts-1)"/>
+<rect class="box out" x="220" y="30" width="190" height="80" rx="10"/><text x="315" y="64" text-anchor="middle" font-weight="600">per file: name, send</text><text class="small" x="315" y="86" text-anchor="middle">filename, subject, headers</text>
+<path class="arrow" d="M414,70 L456,70" marker-end="url(#arrow-comscripts-1)"/>
+<rect class="box mid" x="460" y="30" width="130" height="80" rx="10"/><text x="525" y="64" text-anchor="middle" font-weight="600">disconnect</text><text class="small" x="525" y="86" text-anchor="middle">close session</text>
+<path class="arrow" d="M594,70 L626,70" marker-end="url(#arrow-comscripts-1)"/>
+<rect class="box mid" x="630" y="30" width="120" height="80" rx="10"/><text x="690" y="64" text-anchor="middle" font-weight="600">archive</text><text class="small" x="690" y="86" text-anchor="middle">archivepath, name</text>
+</svg></div>
+<p>Every function is called with <b>keyword arguments</b>; use the parameter names shown in the reference. <code>channeldict</code> is a dict with all fields of the channel: <code>idchannel</code>, <code>inorout</code>, <code>type</code>, <code>host</code>, <code>port</code>, <code>username</code>, <code>secret</code>, <code>path</code>, <code>filename</code>, <code>parameters</code>, <code>archivepath</code>, <code>keyfile</code>, <code>certfile</code>, <code>cafile</code>, <code>verify_cert</code>, <code>remove</code>, <code>testpath</code>, <code>charset</code>, <code>debug</code> and the others. <code>ta</code> is the database record of the file (its fields as attributes: <code>ta.idta</code>, <code>ta.frompartner</code>, <code>ta.topartner</code>, <code>ta.botskey</code>, <code>ta.editype</code>, <code>ta.messagetype</code>, <code>ta.filename</code>, …).</p>
+<p>An error in a hook during sending marks that file as failed (it can be resent); an error during receiving or connecting shows as a process error of the run.</p>
+
+<h3 id="communication-scripts--howto-filename">How to build the outgoing file name in a script</h3>
+<p>Often the <span class="ui">Filename</span> field of the channel is enough: <code>{botskey}_{unique}.edi</code>, <code>{topartner}/{infile:name}.txt</code>, <code>{datetime:%Y%m%d}_{unique}.xml</code> (see <a href="#channel-file">File channels</a>). Use a script when you need more.</p>
+<ol class="steps">
+<li><b>Create the file</b> <code>usersys/communicationscripts/partnera_sftp_out.py</code> (the id of the outgoing channel).</li>
+<li><b>Add the function:</b>
+<pre><code class="language-python">def filename(channeldict, filename, ta):
+    """filename: the name made from the Filename field of the channel; ta: the file to send."""
+    if ta.messagetype.startswith('INVOIC'):
+        return 'INV_%s_%s.edi' % (ta.topartner, ta.botskey or ta.idta)
+    return filename</code></pre></li>
+<li><b>Run the route</b> and check the name in <span class="ui">Outgoing</span>: the column with the external file name.</li>
+</ol>
+
+<h3 id="communication-scripts--howto-sftp">How to give an SFTP channel its host key and private key</h3>
+<ol class="steps">
+<li><b>Create</b> <code>usersys/communicationscripts/partnera_sftp_out.py</code>.</li>
+<li><b>Add the hooks:</b>
+<pre><code class="language-python">import base64
+import paramiko
+
+
+def hostkey(channeldict):
+    """The public key of sftp.example.net, so Bots refuses another server."""
+    return paramiko.RSAKey(data=base64.b64decode('AAAAB3NzaC1yc2EAAAADAQABAAABAQ...'))
+
+
+def privatekey(channeldict):
+    """(key file, key type, passphrase); key type may be None: Bots tries all types."""
+    return ('/srv/edi/keys/partnera_id_ed25519', 'ED25519', 'secret-example')</code></pre></li>
+<li><b>Run the channel.</b> A wrong host key stops the connection with an SSH error; a wrong passphrase gives <code>sftp: can not read private key …</code>.</li>
+</ol>
+<p>Without a script you can also fill <span class="ui">Private key file</span> in the channel; the <span class="ui">Password</span> is then the passphrase of the key. The host key is only checked when a <code>hostkey</code> hook supplies it.</p>
+
+<h3 id="communication-scripts--howto-script">How to write a channel of type communicationscript</h3>
+<p>Use this type to call your own program, or to fetch or deliver files in a way Bots does not know.</p>
+<ol class="steps">
+<li><b>Make the channel</b> in <span class="ui">Configuration</span> → <span class="ui">Channels</span> → <span class="ui">Add</span> with <span class="ui">Type</span> <code>communicationscript</code>, and fill <span class="ui">Path</span> and <span class="ui">Filename</span> (for example <code>C:\edi\in</code> and <code>*.xml</code>).</li>
+<li><b>Write <code>connect</code></b> (required): for an incoming channel it puts the files in <span class="ui">Path</span>, or opens a connection. For example:
+<pre><code class="language-python">import subprocess
+
+
+def connect(channeldict):
+    subprocess.run(['/srv/edi/bin/export_orders', channeldict['path']], check=True, timeout=300)</code></pre></li>
+<li><b>Choose how files are passed:</b> without a function <code>main</code>, Bots takes every file in <span class="ui">Path</span> that matches <span class="ui">Filename</span> after <code>connect</code>. With a generator <code>main(channeldict)</code> that <code>yield</code>s full file names, Bots takes those files one by one.</li>
+<li><b>For an outgoing channel</b>, Bots writes each file to <span class="ui">Path</span> with the name from <span class="ui">Filename</span>, then calls <code>main(channeldict, filename, ta)</code> for it if it exists; otherwise do the work for all files in <code>disconnect(channeldict)</code>.</li>
+<li><b>Tick <span class="ui">Remove</span></b> if Bots must delete the files afterwards.</li>
+</ol>
+
+<h3 id="communication-scripts--howto-db">How to write a database channel script</h3>
+<p>For channel type <code>db</code>, set the <span class="ui">Database</span> field of the channel (MySQL/MariaDB, PostgreSQL, SQLite, SQL Server) with host, port, username, password and the database in <span class="ui">Path</span>; Bots then makes the connection, and the script only needs <code>incommunicate</code> or <code>outcommunicate</code>. See <a href="#channel-database">Database channels</a>. <span class="badge green">new in 4.0</span></p>
+<pre><code class="language-python"># usersys/communicationscripts/erp_db_in.py
+def incommunicate(channeldict, dbconnection):
+    cursor = dbconnection.cursor()
+    cursor.execute("SELECT * FROM orders WHERE status = %(status)s", {'status': 'ready'})
+    rows = cursor.fetchall()
+    cursor.execute("UPDATE orders SET status = 'sent' WHERE status = 'ready'")
+    return [rows]            # one message with all rows; a list with one item per message</code></pre>
+<p>Bots commits when the function ends without error and rolls back when it raises; do not commit yourself. What <code>incommunicate</code> returns becomes the incoming data: <code>None</code> or empty: nothing; a list or tuple: one incoming file per element; anything else: one file. The mapping (editype <code>db</code>) gets it as <code>inn.root</code>. For outgoing, the mapping sets <code>out.root</code> and <code>outcommunicate(channeldict, dbconnection, db_object)</code> gets that object. A Bots 3 script with its own <code>connect(channeldict)</code> (returning the connection) and <code>disconnect(channeldict, dbconnection)</code> keeps working.</p>
+
+<h3 id="communication-scripts--reference">Reference</h3>
+<h4>Hooks for every channel type</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>class <code>&lt;type&gt;</code></td><td>A class with the name of the channel type replaces the class of Bots. Subclass it: <code>class ftp(communication.ftp):</code> after <code>from bots import communication</code>.</td><td>Bots class</td><td>see the example below</td></tr>
+<tr><td>class <code>UserCommunicationClass</code> <span class="badge gray">advanced</span></td><td>Old name for the same; used when there is no class with the type name.</td><td>—</td><td></td></tr>
+<tr><td><code>archivepath(channeldict)</code></td><td>Returns the folder to archive to, instead of <span class="ui">Archive path</span>/<code>YYYYMMDD</code>. Only called when <span class="ui">Archive path</span> is filled.</td><td>archive path + date</td><td><code>return '/srv/edi/archive/partnera/' + time.strftime('%Y%m')</code></td></tr>
+<tr><td><code>archivename(channeldict, idta, filename)</code></td><td>Returns the name of the file in the archive. <code>filename</code> is the full path of the file being archived.</td><td>internal or external name</td><td><code>return 'order_%s.edi' % idta</code></td></tr>
+<tr><td><code>filename(channeldict, filename, ta)</code></td><td>Returns the outgoing file name. <code>filename</code> is the name made from the <span class="ui">Filename</span> field. Used by file, ftp, ftps, ftpis, sftp, communicationscript (outgoing), the attachment name of mail, and http(s) outgoing.</td><td>from Filename field</td><td>see "How to build the outgoing file name"</td></tr>
+</table></div>
+
+<h4>Mail channels (smtp, smtps, smtpstarttls; pop3, pop3s, pop3apop, imap4, imap4s; mimefile)</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>frommail(channeldict, ta)</code></td><td>Returns the <code>From</code> address of an outgoing mail.</td><td>address set by the mapping, else of the from-partner</td><td><code>return 'edi@mycompany.example'</code></td></tr>
+<tr><td><code>tomail(channeldict, ta)</code></td><td>Returns the <code>To</code> address, or a tuple <code>(to, cc)</code>.</td><td>address set by the mapping, else of the to-partner</td><td><code>return ('orders@partnera.example', 'edi@mycompany.example')</code></td></tr>
+<tr><td><code>getmailaddressforreceiver(channeldict, ta)</code> <span class="badge gray">advanced</span></td><td>Old name of <code>tomail</code>; used when <code>tomail</code> is not there.</td><td>—</td><td></td></tr>
+<tr><td><code>subject(channeldict, ta, subjectstring, content)</code></td><td>Returns the subject. <code>subjectstring</code> is the default (the internal number of the file); <code>content</code> the file as bytes.</td><td>file number</td><td><code>return 'Invoice %s' % ta.botskey</code></td></tr>
+<tr><td><code>headers(message, channeldict, ta, content)</code></td><td>Returns a dict of headers to add, or a complete <code>email.message.Message</code> to send instead.</td><td>no extra headers</td><td><code>return {'X-Partner-Ref': ta.botskey}</code></td></tr>
+<tr><td><code>accept_incoming_attachment(channeldict, ta, charset, content, contenttype, content_disposition, filename)</code></td><td>Called for each part of a received mail that passed the built-in filter. Return <code>False</code> to skip the part. A Bots 3 version without the last two parameters still works. <span class="badge orange">changed in 4.0</span></td><td>accept</td><td><code>return filename.lower().endswith('.edi')</code></td></tr>
+</table></div>
+
+<h4>SFTP</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>hostkey(channeldict)</code></td><td>Returns the public key of the server (a paramiko key object). The connection fails if the server has another key.</td><td>not checked</td><td><code>paramiko.RSAKey(data=…)</code></td></tr>
+<tr><td><code>privatekey(channeldict)</code></td><td>Returns a tuple <code>(key file, key type, passphrase)</code>. Key type <code>'RSA'</code>, <code>'ECDSA'</code>, <code>'ED25519'</code>, <code>'DSA'</code> or <code>None</code>; it is tried first, then the other types. <span class="badge orange">changed in 4.0</span></td><td><span class="ui">Private key file</span> of the channel</td><td><code>('/srv/edi/keys/id_rsa', 'RSA', None)</code></td></tr>
+<tr><td>method <code>set_cwd(self)</code> <span class="badge gray">advanced</span></td><td>In a subclass of <code>sftp</code> (or <code>ftp</code>): how Bots changes to the folder of <span class="ui">Path</span>.</td><td>Bots</td><td></td></tr>
+</table></div>
+
+<h4>Type communicationscript</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>connect(channeldict)</code></td><td><b>Required.</b> Called first. Incoming without <code>main</code>: must leave the files in <span class="ui">Path</span>.</td><td>—</td><td></td></tr>
+<tr><td><code>main(channeldict)</code> (incoming)</td><td>A generator: <code>yield</code> the full path of each received file. Bots copies it in, and deletes it if <span class="ui">Remove</span> is ticked.</td><td>files in Path/Filename</td><td><code>yield '/srv/edi/in/order1.xml'</code></td></tr>
+<tr><td><code>main(channeldict, filename, ta)</code> (outgoing)</td><td>Called after each file is written to <span class="ui">Path</span>; <code>filename</code> is its full path. If <span class="ui">Remove</span> is ticked Bots deletes the file afterwards.</td><td>not called</td><td></td></tr>
+<tr><td><code>disconnect(channeldict)</code></td><td>Called at the end. Without <code>main</code> and with <span class="ui">Remove</span>, Bots then deletes the files matching Path/Filename.</td><td>—</td><td></td></tr>
+</table></div>
+
+<h4>Type db</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>incommunicate(channeldict, dbconnection)</code></td><td>Incoming: returns the data to receive (see above). Required for an incoming db channel.</td><td>—</td><td><code>return [rows]</code></td></tr>
+<tr><td><code>outcommunicate(channeldict, dbconnection, db_object)</code></td><td>Outgoing: writes <code>db_object</code> (what the mapping set as <code>out.root</code>). Required for an outgoing db channel.</td><td>—</td><td></td></tr>
+<tr><td><code>connect(channeldict)</code> <span class="badge gray">advanced</span></td><td>Bots 3 way: returns your own database connection. When present it is used, also if the <span class="ui">Database</span> field is set; <code>disconnect</code> is then required and Bots does not commit.</td><td>Bots connects</td><td></td></tr>
+<tr><td><code>disconnect(channeldict, dbconnection)</code> <span class="badge gray">advanced</span></td><td>Bots 3 way: commit and close your own connection.</td><td>—</td><td></td></tr>
+</table></div>
+
+<h4>http, https (subclass)</h4>
+<p>An http channel has no function hooks other than <code>filename</code>. To change the request, subclass the class and set its attributes:</p>
+<pre><code class="language-python">from bots import communication
+
+
+class https(communication.https):
+    headers = {'Accept': 'application/json'}       # sent with every request
+    params = {'client': 'MYCOMPANY'}                # added to the URL
+    verify = True                                   # check the server certificate (True, False or a CA file)
+    auth = None                                     # requests auth object; default: username/password of the channel
+    cert = None                                     # client certificate; default: certfile/keyfile of the channel</code></pre>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>headers</code></td><td>HTTP headers for every request of this channel.</td><td><code>{}</code></td><td><code>{'Accept': 'application/xml'}</code></td></tr>
+<tr><td><code>params</code></td><td>URL parameters; the channel field <span class="ui">Parameters</span> (<code>key=value&amp;key2=value2</code>) is added to them.</td><td><code>{}</code></td><td><code>{'client': 'MYCOMPANY'}</code></td></tr>
+<tr><td><code>verify</code></td><td>Check the server certificate. Switched off when <span class="ui">Verify server certificate</span> is off.</td><td>http: <code>False</code>; https: <code>True</code></td><td><code>'/srv/edi/ca.pem'</code></td></tr>
+<tr><td><code>ca_cert</code> (old name <code>caCert</code>)</td><td>CA file to verify the server with (https).</td><td><span class="ui">CA certificate file</span> of the channel</td><td></td></tr>
+<tr><td><code>auth</code>, <code>cert</code></td><td>Passed to the <code>requests</code> library.</td><td>from the channel</td><td></td></tr>
+</table></div>
+
+<h4>Example: change a method by subclassing</h4>
+<pre><code class="language-python"># usersys/communicationscripts/partnerc_ftp_out.py
+from bots import communication
+
+
+class ftp(communication.ftp):
+    def connect(self):
+        """The server of PartnerC needs a command after login."""
+        super().connect()
+        self.session.sendcmd('SITE UMASK 002')</code></pre>
+<p>In a subclass, <code>self.channeldict</code>, <code>self.session</code> (the ftp or sftp session after <code>connect</code>), <code>self.userscript</code> and <code>self.idroute</code> are available. Call <code>super()</code> so the normal work is still done.</p>
+
+<h3 id="communication-scripts--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Channel "{…}" is type "communicationscript", but no communicationscript exists.</code></td><td>No script with the channel id, or it has no function <code>connect</code>.</td><td>Create <code>usersys/communicationscripts/&lt;channel id&gt;.py</code> with <code>def connect(channeldict):</code>.</td></tr>
+<tr><td><code>Channel "erp_db_in" is type "db", but no communicationscript exists.</code></td><td>Type db always needs a script.</td><td>Create the script with <code>incommunicate</code> (or <code>outcommunicate</code>).</td></tr>
+<tr><td><code>No function "connect" in imported communicationscript "…", and no database set in channel "erp_db_in".</code></td><td>Neither the <span class="ui">Database</span> field nor a <code>connect</code> function.</td><td>Fill the <span class="ui">Database</span> field of the channel, or add <code>connect</code> and <code>disconnect</code>.</td></tr>
+<tr><td><code>No function "incommunicate" in imported communicationscript "…".</code> (or <code>outcommunicate</code>, <code>disconnect</code>)</td><td>The required function for this direction is missing.</td><td>Add it with the exact name and parameters.</td></tr>
+<tr><td><code>ScriptError: Userscript "…": "TypeError: filename() got an unexpected keyword argument 'ta'".</code></td><td>Parameter names differ from what Bots passes.</td><td>Use <code>def filename(channeldict, filename, ta):</code> or add <code>**kwargs</code>.</td></tr>
+<tr><td><code>sftp: private key "…" is encrypted, but there is no passphrase.</code></td><td><code>privatekey</code> returned no passphrase for an encrypted key.</td><td>Return the passphrase as third element.</td></tr>
+<tr><td><code>sftp: can not read private key "…" (wrong passphrase?): …</code></td><td>Wrong passphrase, wrong file, or a key type paramiko does not know (DSA in paramiko 4).</td><td>Check the file and passphrase; use an RSA, ECDSA or Ed25519 key.</td></tr>
+<tr><td><code>Error in writing mail without mime-encoding (user exit "headers"?).</code></td><td>With MIME encoding "never", the <code>headers</code> hook returned a new message that no longer contains the content of the file.</td><td>Return a dict of headers instead of a new message.</td></tr>
+<tr><td><code>No valid attachment in received email</code></td><td><code>accept_incoming_attachment</code> refused every part, or the mail has no part Bots accepts.</td><td>Log the <code>contenttype</code> and <code>filename</code> in the hook to see what arrives.</td></tr>
+<tr><td>Outgoing files overwrite each other</td><td><code>filename</code> returns the same name for several files.</td><td>Include <code>ta.idta</code> or a unique number in the name.</td></tr>
+<tr><td>Hook not called in a test environment</td><td>With <code>channels_use_testpath</code> or in acceptance tests the channel type becomes <code>file</code> or <code>mimefile</code>; type-specific hooks (sftp keys, smtp) are then not used.</td><td>This is on purpose; test those hooks against a real test server.</td></tr>
+</table></div>
+</section>
+
+<section id="route-scripts" data-title="Route scripts" data-group="Envelopes, acknowledgements, scripts">
+<h2>Route scripts</h2>
+<p class="lead">A route script runs your own Python code at fixed points of a <a href="#routes">route</a>: before or after receiving, translating, merging and sending. It can also replace the route completely. A second kind of script, <code>botsengine.py</code>, runs before and after a whole run of the engine.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>A route is a fixed chain of steps. A route script lets you slip in an extra step, such as "after receiving, mark all files from this folder as coming from PartnerA" or "before sending, copy the files to a backup server". You only write the steps you need.</p></div>
+
+<h3 id="route-scripts--how">How it works</h3>
+<p>For every route-part (every line of the route, in the order of <span class="ui">Sequence</span>) Bots imports <code>usersys/routescripts/&lt;route id&gt;.py</code> if it exists, and calls these functions if they are in it. Each is called as <code>function(routedict=routedict)</code>.</p>
+<div class="diagram"><svg viewBox="0 0 760 150" width="760" role="img" aria-label="Order of the route script hooks: start, receive, translate, merge, send, end">
+<defs><marker id="arrow-routescripts-1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="box mid" x="10" y="30" width="90" height="80" rx="10"/><text x="55" y="74" text-anchor="middle" font-weight="600">start</text>
+<path class="arrow" d="M104,70 L124,70" marker-end="url(#arrow-routescripts-1)"/>
+<rect class="box in" x="128" y="30" width="140" height="80" rx="10"/><text x="198" y="64" text-anchor="middle" font-weight="600">Receive</text><text class="small" x="198" y="86" text-anchor="middle">pre/postincommunication</text>
+<path class="arrow" d="M272,70 L292,70" marker-end="url(#arrow-routescripts-1)"/>
+<rect class="box mid" x="296" y="30" width="140" height="80" rx="10"/><text x="366" y="64" text-anchor="middle" font-weight="600">Translate</text><text class="small" x="366" y="86" text-anchor="middle">pre/posttranslation</text>
+<path class="arrow" d="M440,70 L460,70" marker-end="url(#arrow-routescripts-1)"/>
+<rect class="box mid" x="464" y="30" width="110" height="80" rx="10"/><text x="519" y="64" text-anchor="middle" font-weight="600">Merge</text><text class="small" x="519" y="86" text-anchor="middle">pre/postmerge</text>
+<path class="arrow" d="M578,70 L592,70" marker-end="url(#arrow-routescripts-1)"/>
+<rect class="box out" x="596" y="30" width="100" height="80" rx="10"/><text x="646" y="64" text-anchor="middle" font-weight="600">Send</text><text class="small" x="646" y="86" text-anchor="middle">pre/postout…</text>
+<path class="arrow" d="M700,70 L712,70" marker-end="url(#arrow-routescripts-1)"/>
+<rect class="box mid" x="714" y="30" width="44" height="80" rx="10"/><text x="736" y="74" text-anchor="middle" font-weight="600">end</text>
+</svg></div>
+<ol>
+<li>If the script has <code>main</code>, Bots calls only <code>main</code> for the route-part and does nothing else: the script <b>is</b> the route-part.</li>
+<li>Otherwise <code>start</code> is called, then the normal steps run with the hooks around them. A hook of a step is only called when that step runs: receive hooks only when the route-part has an incoming channel; translate and merge hooks only when <span class="ui">Translate</span> is "Translate" or "Parse &amp; Pass-through"; send hooks only when there is an outgoing channel, it is not deferred, and there are files to send.</li>
+<li>At the end of the route-part <code>end</code> is called.</li>
+</ol>
+<p>The hooks run in every kind of run (<code>new</code>, <code>resend</code>, <code>rereceive</code>, <code>automaticretrycommunication</code>, <code>crashrecovery</code>); <code>routedict['command']</code> tells you which. If a hook raises an error, the rest of that route-part is skipped and the error shows under <span class="ui">All runs</span> → <span class="ui">Process Errors</span>; the next route-part and the next routes still run.</p>
+
+<h3 id="route-scripts--howto-partner">How to set the partner of received files</h3>
+<p>Example: files in <code>C:\edi\in</code> carry no partner id in their content, but each file name starts with the partner id (<code>PARTNERA_order_123.csv</code>).</p>
+<ol class="steps">
+<li><b>Create</b> <code>usersys/routescripts/orders_in.py</code> (the route id).</li>
+<li><b>Add the hook</b> <code>postincommunication</code>; it runs right after the files are received and the route has given them its editype and messagetype:
+<pre><code class="language-python">import os
+from bots import botsglobal, botslib, transform
+
+
+def postincommunication(routedict):
+    for row in botslib.query(
+            """SELECT idta, filename FROM ta
+               WHERE idta > %(rootidta)s AND status = %(status)s AND statust = %(statust)s
+               AND idroute = %(idroute)s AND fromchannel = %(fromchannel)s""",
+            {'rootidta': botsglobal.currentrun.get_minta4query_routepart(),
+             'status': transform.FILEIN, 'statust': transform.OK,
+             'idroute': routedict['idroute'], 'fromchannel': routedict['fromchannel']}):
+        external = botslib.trace_origin(botslib.OldTransaction(row['idta']), {'status': transform.EXTERNIN})
+        name = os.path.basename(external[0].filename) if external else ''
+        partner = name.split('_')[0].upper()
+        botslib.OldTransaction(row['idta']).update(frompartner=partner)</code></pre></li>
+<li><b>Run the route.</b> In <span class="ui">Incoming</span> the column of the from-partner now shows <code>PARTNERA</code>; the translation can select a partner-specific mapping.</li>
+</ol>
+<p>For one fixed value for all files of the route-part, <code>transform.updateinfo</code> is shorter:</p>
+<pre><code class="language-python">def postincommunication(routedict):
+    transform.updateinfo(change={'frompartner': 'PARTNERA'},
+                         where={'status': transform.FILEIN, 'idroute': routedict['idroute'],
+                                'fromchannel': routedict['fromchannel']})</code></pre>
+
+<h3 id="route-scripts--howto-main">How to replace a route-part with a script</h3>
+<ol class="steps">
+<li><b>Make the route</b> in <span class="ui">Configuration</span> → <span class="ui">Routes</span> → <span class="ui">Add</span>; channels and translation may stay empty.</li>
+<li><b>Write <code>main</code></b> in <code>usersys/routescripts/&lt;route id&gt;.py</code>:
+<pre><code class="language-python">from bots import transform
+
+
+def main(routedict):
+    """Fetch from two channels, then let route 'orders_in' do the rest."""
+    for channel in ('partnera_sftp_in', 'local_orders_in'):
+        transform.run(idchannel=channel, command=routedict['command'], idroute=routedict['idroute'])</code></pre></li>
+<li><b>Run the route</b> and check <span class="ui">All runs</span> for the result.</li>
+</ol>
+
+<h3 id="route-scripts--howto-engine">How to run code before and after every run</h3>
+<ol class="steps">
+<li><b>Create</b> <code>usersys/routescripts/botsengine.py</code>.</li>
+<li><b>Add the functions you need</b>, for example:
+<pre><code class="language-python">from bots import botsglobal
+
+
+def pre(commandstorun, routestorun):
+    botsglobal.logger.info('Run starts: %s %s', commandstorun, routestorun)
+
+
+def postnew(routestorun):
+    """After the 'new' part of the run."""
+
+
+def postcleanup(whencleanup):
+    """After the daily cleanup: clean my own folders too."""</code></pre></li>
+<li><b>Run the engine</b>; the functions run in every run, also from the job queue or directory monitor.</li>
+</ol>
+
+<h3 id="route-scripts--reference">Reference</h3>
+<h4>Hooks in usersys/routescripts/&lt;route id&gt;.py</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>main(routedict)</code></td><td>Replaces the whole route-part. No other hook is called.</td><td>not used</td><td></td></tr>
+<tr><td><code>start(routedict)</code></td><td>First thing in the route-part.</td><td>—</td><td></td></tr>
+<tr><td><code>preincommunication(routedict)</code></td><td>Before the incoming channel runs.</td><td>—</td><td>make the folder ready</td></tr>
+<tr><td><code>postincommunication(routedict)</code></td><td>After receiving and after the route set editype, messagetype, partners and alt on the received files; before unzip and mailbag.</td><td>—</td><td>set partners, run preprocessing</td></tr>
+<tr><td><code>pretranslation(routedict)</code></td><td>Before translating.</td><td>—</td><td></td></tr>
+<tr><td><code>posttranslation(routedict)</code></td><td>After translating, before merging.</td><td>—</td><td></td></tr>
+<tr><td><code>premerge(routedict)</code></td><td>Before merging and enveloping.</td><td>—</td><td></td></tr>
+<tr><td><code>postmerge(routedict)</code></td><td>After merging and enveloping.</td><td>—</td><td></td></tr>
+<tr><td><code>preoutcommunication(routedict)</code></td><td>Before the outgoing channel runs (after zipping).</td><td>—</td><td></td></tr>
+<tr><td><code>postoutcommunication(routedict)</code></td><td>After the outgoing channel ran.</td><td>—</td><td>copy files elsewhere</td></tr>
+<tr><td><code>end(routedict)</code></td><td>Last thing in the route-part (not called after an error in the route-part).</td><td>—</td><td></td></tr>
+</table></div>
+
+<h4>routedict</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>idroute</code>, <code>seq</code></td><td>Route id and sequence of this route-part.</td><td></td><td><code>'orders_in'</code>, <code>10</code></td></tr>
+<tr><td><code>fromchannel</code>, <code>tochannel</code></td><td>Incoming and outgoing channel ids (or <code>None</code>).</td><td></td><td><code>'partnera_sftp_in'</code></td></tr>
+<tr><td><code>fromeditype</code>, <code>frommessagetype</code>, <code>alt</code>, <code>frompartner</code>, <code>topartner</code></td><td>Values the route gives to received files.</td><td></td><td><code>'x12'</code>, <code>'850004010'</code></td></tr>
+<tr><td><code>toeditype</code>, <code>tomessagetype</code>, <code>testindicator</code>, <code>frompartner_tochannel_id</code>, <code>topartner_tochannel_id</code></td><td>Filter for which files go to the outgoing channel.</td><td></td><td></td></tr>
+<tr><td><code>translateind</code></td><td>0 nothing, 1 translate, 2 pass-through, 3 parse &amp; passthrough.</td><td></td><td><code>1</code></td></tr>
+<tr><td><code>defer</code></td><td>Outgoing channel is deferred to the end of the run.</td><td></td><td><code>False</code></td></tr>
+<tr><td><code>zip_incoming</code>, <code>zip_outgoing</code></td><td>Zip handling: incoming 1 always unzip, 2 unzip if zip; outgoing 1 always zip.</td><td></td><td><code>None</code></td></tr>
+<tr><td><code>command</code></td><td>Kind of run.</td><td></td><td><code>'new'</code>, <code>'resend'</code>, <code>'rereceive'</code>, <code>'automaticretrycommunication'</code>, <code>'crashrecovery'</code></td></tr>
+</table></div>
+
+<h4>Hooks in usersys/routescripts/botsengine.py</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>pre(commandstorun, routestorun)</code></td><td>Before the run. <code>commandstorun</code> is a list such as <code>['new']</code>; <code>routestorun</code> the routes given on the command line (empty: all).</td><td>—</td><td></td></tr>
+<tr><td><code>pre&lt;command&gt;(routestorun)</code></td><td>Before each kind of run: <code>prenew</code>, <code>preresend</code>, <code>prerereceive</code>, <code>preautomaticretrycommunication</code>, <code>precrashrecovery</code>. <code>routestorun</code> is the list of routes that will run.</td><td>—</td><td><code>def prenew(routestorun):</code></td></tr>
+<tr><td><code>post&lt;command&gt;(routestorun)</code></td><td>After each kind of run: <code>postnew</code>, <code>postresend</code>, …</td><td>—</td><td></td></tr>
+<tr><td><code>post(commandstorun, routestorun)</code></td><td>After all commands, before cleanup.</td><td>—</td><td></td></tr>
+<tr><td><code>postcleanup(whencleanup)</code></td><td>After the full cleanup (normally once a day). <code>whencleanup</code> is the setting of <code>bots.ini</code>.</td><td>—</td><td><code>'daily'</code></td></tr>
+</table></div>
+
+<h4>Hooks in usersys/routescripts/bots_acceptancetest.py</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>pretest(routestorun)</code></td><td>Only with <code>[acceptance] runacceptancetest = True</code>: before the run, for example to empty output folders.</td><td>—</td><td></td></tr>
+<tr><td><code>posttest(routestorun)</code></td><td>After the run, to compare the results with expected files. Errors are printed, not reported.</td><td>—</td><td>see <a href="#acceptance-testing">Acceptance testing</a></td></tr>
+</table></div>
+
+<h4>Functions for route scripts</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>transform.updateinfo(change, where)</code></td><td>Changes fields of the files (database records) that match <code>where</code>, in this run. Empty values in <code>change</code> are ignored. Returns the number changed.</td><td>where: <code>statust</code> OK, this run</td><td><code>change={'topartner': 'PARTNERB'}</code></td></tr>
+<tr><td><code>transform.addinfo(change, where)</code></td><td>Copies each matching record to a new record with the values of <code>change</code> (the old one gets statust DONE): moves files to the next status.</td><td>as updateinfo</td><td><code>change={'status': transform.MERGED}</code></td></tr>
+<tr><td><code>transform.changestatustinfo(change, where)</code></td><td>Sets <code>statust</code> of the matching records to <code>change</code>.</td><td>—</td><td><code>transform.changestatustinfo(transform.DONE, {...})</code></td></tr>
+<tr><td><code>transform.run(idchannel, command, idroute, rootidta=None)</code></td><td>Runs a channel.</td><td>—</td><td>see the example</td></tr>
+<tr><td><code>transform.mergemessages(startstatus, endstatus, idroute, rootidta=None)</code> <span class="badge gray">advanced</span></td><td>Runs merging and enveloping.</td><td>—</td><td></td></tr>
+<tr><td><code>botslib.query(sql, dict)</code>, <code>transform.changeq(sql, dict)</code></td><td>Read from / change the Bots database with <code>%(name)s</code> parameters. Read a value of a row by its column name, eg <code>row['idta']</code>: that works with every database. With SQLite (the default) rows are not dicts, so <code>row.get()</code> does not work.</td><td>—</td><td></td></tr>
+<tr><td><code>botsglobal.currentrun.get_minta4query()</code></td><td>First database id of this run: use <code>idta &gt; value</code> to select only this run's files.</td><td>—</td><td></td></tr>
+<tr><td><code>…get_minta4query_route()</code>, <code>…get_minta4query_routepart()</code></td><td>The same for the current route and route-part.</td><td>—</td><td></td></tr>
+<tr><td><code>preprocess.preprocess(routedict, function, …)</code></td><td>Runs a preprocessing function on the received files. See <a href="#preprocessing">Preprocessing</a>.</td><td>—</td><td></td></tr>
+<tr><td><code>botslib.sendbotserrorreport(subject, text)</code></td><td>Mails the administrators (<code>MANAGERS</code> in <code>settings.py</code>), if <code>sendreportiferror</code> is on.</td><td>—</td><td></td></tr>
+</table></div>
+<p>Useful constants (status of a file): <code>transform.EXTERNIN</code> (received from outside), <code>FILEIN</code> (received, ready to translate), <code>TRANSLATED</code>, <code>MERGED</code>, <code>FILEOUT</code> (ready to send), <code>EXTERNOUT</code> (sent); statust: <code>OK</code>, <code>DONE</code>, <code>ERROR</code>.</p>
+
+<h3 id="route-scripts--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>Route "orders_in" is empty: no routescript, not enough parameters.</code></td><td>The route-part has no channels, no translation and no route script.</td><td>Fill the route-part, or add a route script.</td></tr>
+<tr><td><code>There is no (active) route "orders_in".</code></td><td>The route id on the command line or in the job does not exist or is not active.</td><td>Check the id and <span class="ui">Active</span> in <span class="ui">Routes</span>.</td></tr>
+<tr><td>Hook not called</td><td>The step did not run (no channel, translation off, deferred, no files to send), or the route script has <code>main</code>.</td><td>Check the route-part settings; remove <code>main</code> if you want the normal steps.</td></tr>
+<tr><td>Only my <code>main</code> runs; nothing is received or sent</td><td>A route script with <code>main</code> replaces the route-part completely.</td><td>Rename <code>main</code> to <code>start</code> or another hook.</td></tr>
+<tr><td><code>ScriptError: Userscript "…": "TypeError: start() got an unexpected keyword argument 'routedict'".</code></td><td>Parameter has another name.</td><td><code>def start(routedict):</code>.</td></tr>
+<tr><td>Changes by <code>updateinfo</code> do not happen</td><td>The where-dict does not match (status, channel, route), or the change values are empty (they are ignored).</td><td>Log the return value (number changed); check the status values.</td></tr>
+<tr><td>Hook changes files of earlier runs</td><td>A query without <code>idta &gt; get_minta4query()</code>.</td><td>Always limit queries to the current run.</td></tr>
+<tr><td><code>Error in process: …</code> in the log, route-part stopped</td><td>An error in a hook.</td><td>See <span class="ui">Process Errors</span>; fix the hook.</td></tr>
+</table></div>
+</section>
+
+<section id="envelope-scripts" data-title="Envelope scripts" data-group="Envelopes, acknowledgements, scripts">
+<h2>Envelope scripts</h2>
+<p class="lead">An envelope script changes the envelope that Bots puts around outgoing messages: the UNB/UNZ of EDIFACT, the ISA/GS/GE/IEA of X12, the STX/END of tradacoms, or the header line of a csv file. Use it for partner-specific envelope values that the grammar and partner syntax cannot give, or to write an envelope Bots does not know.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>After translating, Bots puts the messages for one partner together in one file and adds an "envelope": a first and last line with sender, receiver, date and a control number. An envelope script lets you fill in or change those lines yourself.</p></div>
+
+<h3 id="envelope-scripts--how">How it works</h3>
+<ol>
+<li>The outgoing grammar (or the mapping) decides the envelope with syntax <code>envelope</code>: <code>'edifact'</code>, <code>'x12'</code>, <code>'tradacoms'</code>, <code>'templatehtml'</code>, <code>'csvheader'</code>, <code>'json'</code>, or empty for no envelope. See <a href="#envelopes">Envelopes</a>.</li>
+<li>When enveloping, Bots imports <code>usersys/envelopescripts/&lt;editype&gt;/&lt;envelope&gt;.py</code>, for example <code>envelopescripts/edifact/edifact.py</code>. With an empty envelope no script is used.</li>
+<li>If that file has a <b>class</b> with the name of the envelope, Bots uses it instead of its own envelope class.</li>
+<li>Otherwise Bots runs its own envelope and calls two functions of the file if they exist:
+<ul>
+<li><code>ta_infocontent(ta_info)</code>: early, when the values for the envelope are collected. Change values in the dict <code>ta_info</code>.</li>
+<li><code>envelopecontent(ta_info, out)</code>: for EDIFACT, X12 and tradacoms, after the envelope records are built and before they are checked and written. Change the records with <code>out.put</code> or <code>out.change</code>.</li>
+</ul></li>
+</ol>
+<p>Where an envelope value comes from, highest priority first (EDIFACT UNB and X12 ISA/GS):</p>
+<ol>
+<li>A value the mapping set in <code>out.envelope_content</code> (see <a href="#mapping-recipes--r17">recipe 17</a>).</li>
+<li>A value in <code>ta_info</code>: from <code>ta_infocontent</code>, from the partner syntax (<code>usersys/partners/&lt;editype&gt;/&lt;partner&gt;.py</code>), or from the grammar syntax (for example <code>UNB.0029</code>, <code>ISA05</code>).</li>
+<li>The partner ids of the messages (from-partner and to-partner), converted according to syntax <code>IDmode</code>.</li>
+</ol>
+<p>An error in an envelope script marks the merged file as failed (status error in <span class="ui">Outgoing</span>); the messages inside it are not sent.</p>
+
+<h3 id="envelope-scripts--howto">How to set partner-specific UNB values</h3>
+<p>Example: PartnerA wants an application reference in UNB and its own GLN as receiver, while the partner id in Bots stays <code>PARTNERA</code>.</p>
+<ol class="steps">
+<li><b>Create</b> <code>usersys/envelopescripts/edifact/edifact.py</code>.</li>
+<li><b>Add <code>ta_infocontent</code>:</b>
+<pre><code class="language-python">def ta_infocontent(ta_info):
+    if ta_info['topartner'] == 'PARTNERA':
+        ta_info['S003.0010'] = '5400000000003'      # receiver id in UNB
+        ta_info['topartner_qualifier'] = '14'        # receiver qualifier
+        ta_info['UNB.0026'] = ta_info['messagetype'][:6]   # application reference, eg 'INVOIC'</code></pre></li>
+<li><b>Run</b> a route that sends to PartnerA and open the file in <span class="ui">Outgoing</span>: the UNB contains the new values.</li>
+</ol>
+<div class="note tip"><span class="label">Tip</span><p>Values that are always the same for a partner can also go in a partner syntax file without any code: <code>usersys/partners/edifact/PARTNERA.py</code> with <code>syntax = {'UNB.0026': 'INVOIC', 'forceUNA': True}</code>. Use the envelope script when the value depends on something (message type, test indicator).</p></div>
+
+<h3 id="envelope-scripts--howto-content">How to change an envelope record before it is written</h3>
+<ol class="steps">
+<li><b>Create</b> <code>usersys/envelopescripts/x12/x12.py</code>.</li>
+<li><b>Add <code>envelopecontent</code>:</b>
+<pre><code class="language-python">def envelopecontent(ta_info, out):
+    """PartnerB wants ISA14 = 0 (no TA1) and our DUNS in GS02."""
+    if ta_info['topartner'] == 'PARTNERB':
+        out.change(where=({'BOTSID': 'ISA'},), change={'ISA14': '0'})
+        out.change(where=({'BOTSID': 'ISA'}, {'BOTSID': 'GS'}), change={'GS02': '123456789'})</code></pre></li>
+<li><b>Run and check</b> the ISA and GS segments in the outgoing file.</li>
+</ol>
+
+<h3 id="envelope-scripts--reference">Reference</h3>
+<h4>Hooks</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>ta_infocontent(ta_info)</code></td><td>Change the values used for the envelope. Called for every envelope type (also for no-envelope types such as fixed, xml, json, db, raw, as long as the syntax <code>envelope</code> is not empty). For EDIFACT and X12 it runs after the partner ids are converted; if you change <code>frompartner</code>/<code>topartner</code> but not the converted values, they are converted again.</td><td>—</td><td><code>ta_info['UNB.0035'] = '1'</code></td></tr>
+<tr><td><code>envelopecontent(ta_info, out)</code></td><td>Change the envelope records (EDIFACT UNB/UNZ, X12 ISA/GS/GE/IEA, tradacoms STX/END) before they are checked and written. <code>out</code> is an outgoing message object.</td><td>—</td><td><code>out.put({'BOTSID':'UNB','0031':'1'})</code></td></tr>
+<tr><td>class <code>&lt;envelope&gt;</code> <span class="badge gray">advanced</span></td><td>Replaces the envelope class. Subclass a class of <code>bots.envelope</code> (<code>edifact</code>, <code>x12</code>, <code>tradacoms</code>, <code>csv</code>, <code>noenvelope</code>, …) and override <code>run(self)</code>.</td><td>Bots class</td><td>see below</td></tr>
+</table></div>
+
+<h4>ta_info in an envelope script</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>editype</code>, <code>messagetype</code>, <code>envelope</code></td><td>Of the messages in this file.</td><td></td><td><code>'edifact'</code>, <code>'INVOICD96AUNEAN008'</code></td></tr>
+<tr><td><code>frompartner</code>, <code>topartner</code></td><td>Partner ids of the messages.</td><td></td><td><code>'MYCOMPANY'</code>, <code>'PARTNERA'</code></td></tr>
+<tr><td><code>frompartner_outer</code>, <code>frompartner_inner</code>, <code>frompartner_qualifier</code> (same for <code>topartner_</code>)</td><td>EDIFACT/X12: the partner id split by syntax <code>IDmode</code>: outer for UNB/ISA, inner for GS, qualifier for UNB/ISA qualifier. Without <code>IDmode</code> outer and inner are the partner id.</td><td></td><td><code>IDmode = 'ISA_qualifier_GS'</code>: id <code>'MYCOMPANY|ZZ|MYCOMPANY'</code></td></tr>
+<tr><td><code>testindicator</code>, <code>charset</code>, <code>nrmessages</code></td><td>Test indicator, character set, number of messages in the file.</td><td></td><td><code>'0'</code>, <code>'UNOC'</code>, <code>3</code></td></tr>
+<tr><td><code>rsrv3</code></td><td>The enveloping criterion set by the mapping.</td><td><code>''</code></td><td></td></tr>
+<tr><td><code>reference</code></td><td>Set by the envelope to the interchange control number (after <code>ta_infocontent</code>).</td><td>counter</td><td><code>'42'</code></td></tr>
+<tr><td><code>filename</code>, <code>idroute</code></td><td>Internal file name of the result, route id.</td><td></td><td></td></tr>
+<tr><td>syntax values</td><td>All syntax of the envelope grammar, the message grammar and the partner syntax: <code>UNB.S002.0007</code>, <code>UNB.0026</code>, <code>UNB.0035</code>, <code>forceUNA</code>, <code>version</code>, <code>ISA01</code>…<code>ISA15</code>, <code>GS07</code>, <code>functionalgroup</code>, <code>STX.STDS1</code>, <code>STX.APRF</code>, separators, …</td><td>from grammar</td><td>see <a href="#editype-edifact">EDIFACT</a>, <a href="#editype-x12">X12</a></td></tr>
+<tr><td><code>S002.0004</code>, <code>S003.0010</code> (EDIFACT); <code>ISA06</code>, <code>ISA08</code>, <code>GS02</code>, <code>GS03</code> (X12); <code>FROM.01</code>, <code>UNTO.01</code> (tradacoms)</td><td>If you set these in <code>ta_info</code>, they are used for sender and receiver instead of the partner ids.</td><td>not set</td><td><code>ta_info['ISA06'] = 'MYCOMPANY'</code></td></tr>
+</table></div>
+
+<h4>Example: own envelope class</h4>
+<pre><code class="language-python"># usersys/envelopescripts/fixed/erpheader.py   (grammar syntax: 'envelope': 'erpheader')
+from bots import botslib
+from bots.envelope import noenvelope
+
+
+class erpheader(noenvelope):
+    def run(self):
+        """A first line 'HEADER;&lt;number of messages&gt;', then the messages."""
+        with botslib.opendata(self.ta_info['filename'], 'w', self.ta_info['charset']) as tofile:
+            tofile.write('HEADER;%s\r\n' % self.ta_info['nrmessages'])
+            self.writefilelist(tofile)</code></pre>
+<p>Available in the class: <code>self.ta_info</code>, <code>self.ta_list</code> (internal names of the files to envelope), <code>self.envelope_content</code> and <code>self.syntax</code> (values from the mapping), <code>self.routedict</code>, and methods <code>writefilelist(tofile)</code>, <code>filelist2absolutepaths()</code>, <code>check_envelope_partners()</code>, <code>convert_partners()</code>, <code>run_ta_infocontent()</code>, <code>interchange_reference(counter, sender, receiver, partner)</code>.</p>
+
+<h3 id="envelope-scripts--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td>Script is not used</td><td>Wrong folder or name: the folder is the outgoing <b>editype</b>, the file name is the <b>envelope</b> (for EDIFACT <code>edifact.py</code>), not the messagetype. Or the envelope is empty.</td><td>Check the syntax <code>envelope</code> of the outgoing grammar.</td></tr>
+<tr><td><code>Not found envelope "myenv" for editype "idoc".</code></td><td>The envelope name has no script with a class of that name, and Bots has no built-in envelope for the editype (idoc, excel).</td><td>Create <code>envelopescripts/idoc/myenv.py</code> with class <code>myenv</code>, or leave the envelope empty.</td></tr>
+<tr><td>Envelope name has no effect (csv, fixed, xml, json)</td><td>For these editypes an envelope name without a script falls back to the built-in behaviour (no envelope; csv only knows <code>csvheader</code>).</td><td>Check the spelling, or write the script.</td></tr>
+<tr><td><code>In enveloping "topartner" unknown.</code></td><td>EDIFACT, X12 and tradacoms envelopes need both partners.</td><td>Set the partners in the route, the grammar QUERIES, or the mapping (<code>out.ta_info['topartner']</code>).</td></tr>
+<tr><td><code>In enveloping "frompartner" is expected to have format "ISA_qualifier_GS", but is "MYCOMPANY".</code></td><td>Syntax <code>IDmode</code> is set but the partner id is not in the form <code>id|qualifier|id</code>.</td><td>Use partner ids in that form, or remove <code>IDmode</code>.</td></tr>
+<tr><td><code>In enveloping: unknown value "…" for syntax parameter "IDmode".</code></td><td>Typing error in <code>IDmode</code>.</td><td>Use <code>ISA_qualifier_GS</code>, <code>ISA_qualifier</code> or <code>UNB_qualifier</code>.</td></tr>
+<tr><td><code>[F20]: Record "UNB" field "S003.0010" too big (max 35): "…".</code></td><td>A value set in the script is too long for the envelope grammar.</td><td>Shorten the value.</td></tr>
+<tr><td><code>While enveloping in "templatehtml.…": syntax option "envelope-template" not filled; is required.</code></td><td>templatehtml envelope without template.</td><td>Set <code>'envelope-template'</code> in the grammar syntax.</td></tr>
+<tr><td>Change made in <code>ta_infocontent</code> has no effect</td><td>A value from the mapping (<code>out.envelope_content</code>) has higher priority, or the key is not one the envelope reads.</td><td>Use <code>envelopecontent</code> to change the record itself.</td></tr>
+</table></div>
+</section>
+
+<section id="preprocessing" data-title="Preprocessing" data-group="Envelopes, acknowledgements, scripts">
+<h2>Preprocessing</h2>
+<p class="lead">Preprocessing changes received files before they are translated: split a file with several interchanges, unzip, or turn a PDF into csv. Some preprocessing Bots does by itself (mailbag, unzip); other functions you call from a <a href="#route-scripts">route script</a>. You can also write your own.</p>
+
+<div class="note plain"><span class="label">In plain words</span><p>Sometimes a received file is not ready to be read: it is zipped, it holds orders of several partners glued together, or it is a PDF. Preprocessing is the step that unpacks or cleans the file first, so the translation gets something it can read.</p></div>
+
+<h3 id="preprocessing--how">How it works</h3>
+<ol>
+<li>The incoming channel receives the files. They get status "received" (<code>FILEIN</code>) and the route sets their editype and messagetype.</li>
+<li>Bots runs a preprocessing function on every received file of this route-part and incoming channel. The function reads the file and writes one or more new files; each new file gets a new record with status <code>FILEIN</code>. The original record is set to done, so only the new files are translated.</li>
+<li>If the function fails for a file, that file gets status error with the error text, and no new files are kept for it. Other files go on.</li>
+</ol>
+<p>Order in a route-part: receive → <code>postincommunication</code> of the route script → unzip (if set in the route) → mailbag (for EDIFACT, X12, tradacoms and mailbag) → translate. Before sending: zip (if set in the route) → <code>preoutcommunication</code> → send.</p>
+
+<h3 id="preprocessing--howto-mailbag">How to receive files with several interchanges or mixed types</h3>
+<ol class="steps">
+<li><b>Set the route.</b> In <span class="ui">Configuration</span> → <span class="ui">Routes</span>, set <span class="ui">Fromeditype</span> to <code>edifact</code>, <code>x12</code> or <code>tradacoms</code> (mailbag runs automatically and splits the file per interchange), or to <code>mailbag</code> when one channel receives a mix of EDIFACT, X12, tradacoms and xml.</li>
+<li><b>Set the messagetype.</b> With <span class="ui">Frommessagetype</span> <code>edifact</code>/<code>x12</code>/<code>mailbag</code> the exact messagetype is found later from the content. A specific messagetype (for example <code>ORDERSD96AUNEAN008</code>) is kept.</li>
+<li><b>Run.</b> In <span class="ui">Incoming</span> each interchange of the file shows as a separate file with the right editype.</li>
+</ol>
+
+<h3 id="preprocessing--howto-zip">How to unzip received files</h3>
+<ol class="steps">
+<li><b>Open the route</b> and set <span class="ui">Incoming zip-file handling</span> to "Always unzip file" (a file that is not a zip is an error) or "If zip-file: unzip" (other files pass unchanged).</li>
+<li><b>Run.</b> Every file in the zip becomes a received file; folders in the zip are skipped.</li>
+<li><b>For a zip with a password</b>, leave the route field empty and call the function from the route script:
+<pre><code class="language-python"># usersys/routescripts/orders_in.py
+from bots import preprocess
+
+
+def postincommunication(routedict):
+    preprocess.preprocess(routedict=routedict, function=preprocess.botsunzip,
+                          password=b'secret-example', pass_non_zip=True)</code></pre>
+The password must be <b>bytes</b> (<code>b'…'</code>).</li>
+</ol>
+
+<h3 id="preprocessing--howto-pdf">How to read a PDF as csv</h3>
+<ol class="steps">
+<li><b>Install the library:</b> <code>pip install "bots-ediint[pdf]"</code> (installs <code>pdfminer.six</code>).</li>
+<li><b>Make a csv grammar</b> for the result. Each row is: page number, line number, then the text fields of that line, separated by <code>,</code>. Set the route <span class="ui">Fromeditype</span> to <code>csv</code> and <span class="ui">Frommessagetype</span> to that grammar.</li>
+<li><b>Call extractpdf</b> in the route script:
+<pre><code class="language-python">from bots import preprocess
+
+
+def postincommunication(routedict):
+    preprocess.preprocess(routedict=routedict, function=preprocess.extractpdf,
+                          x_group=10, y_group=5, field_sep=';', charset='utf-8')</code></pre></li>
+<li><b>Run</b> and open the result in <span class="ui">Incoming</span> to see how the PDF was split into fields; adjust <code>x_group</code> (how close text must be to count as one field) and <code>y_group</code> (how close lines must be to count as one line).</li>
+</ol>
+<div class="note warn"><span class="label">Watch out</span><p>A PDF that contains only images (a scan) has no text: <code>extractpdf</code> fails with <code>PDF text extraction failed, it may contain just image(s)?</code>. Excel files do not need preprocessing: use editype <code>excel</code> (see <a href="#editype-other">Other editypes</a>).</p></div>
+
+<h3 id="preprocessing--howto-own">How to write your own preprocessing function</h3>
+<ol class="steps">
+<li><b>Write the function</b> in the route script. It gets <code>ta_from</code> (the received file; <code>ta_from.filename</code> is its internal name), <code>endstatus</code>, <code>routedict</code> and your own keyword arguments. It must make a new record for each output file and fill it:
+<pre><code class="language-python">from bots import botslib, preprocess, transform
+
+
+def strip_bom(ta_from, endstatus, **kwargs):
+    """Remove a UTF-8 byte order mark at the start of the file."""
+    content = botslib.readdata_bin(ta_from.filename)
+    if content.startswith(b'\xef\xbb\xbf'):
+        content = content[3:]
+    ta_to = ta_from.copyta(status=endstatus)          # new record, same editype/partners
+    tofilename = str(ta_to.idta)
+    with botslib.opendata_bin(tofilename, 'wb') as tofile:
+        tofile.write(content)
+    ta_to.update(statust=transform.OK, filename=tofilename, filesize=len(content))
+
+
+def postincommunication(routedict):
+    preprocess.preprocess(routedict=routedict, function=strip_bom)</code></pre></li>
+<li><b>Raise an exception</b> for a file that cannot be handled; Bots marks that file as error.</li>
+<li><b>Run</b> and check in <span class="ui">Incoming</span> that each received file has a child file.</li>
+</ol>
+<p>To change the editype or messagetype of the new file, pass them in <code>update</code>: <code>ta_to.update(statust=transform.OK, filename=tofilename, editype='xml', messagetype='orders_xml')</code>.</p>
+
+<h3 id="preprocessing--reference">Reference</h3>
+<h4>Functions in bots.preprocess</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>preprocess(routedict, function, status=FILEIN, rootidta=None, **kwargs)</code></td><td>Calls <code>function(ta_from=…, endstatus=status, routedict=routedict, **kwargs)</code> for each file of this run with that status and statust OK, received in this route by the incoming channel of the route-part. Returns the number of files handled.</td><td>status <code>FILEIN</code>, this run</td><td><code>preprocess.preprocess(routedict, preprocess.botsunzip)</code></td></tr>
+<tr><td><code>postprocess(routedict, function, status=FILEOUT, rootidta=None, **kwargs)</code></td><td>The same for files ready to send through the outgoing channel of the route-part. Call it from <code>preoutcommunication</code>.</td><td>status <code>FILEOUT</code></td><td><code>preprocess.postprocess(routedict, preprocess.botszip)</code></td></tr>
+<tr><td><code>mailbag(ta_from, endstatus, frommessagetype, **kwargs)</code></td><td>Finds each EDIFACT (UNA/UNB…UNZ), X12 (ISA…IEA) and tradacoms (STX…END) interchange in the file and writes each as its own file with the right editype. Handles several UNA or ISA with different separators in one file. With <code>frommessagetype</code> <code>'mailbag'</code>, a file that starts with <code>&lt;</code> is passed on as xml (messagetype <code>mailbag</code>). Runs automatically.</td><td>automatic</td><td></td></tr>
+<tr><td><code>botsunzip(ta_from, endstatus, password=None, pass_non_zip=False, **kwargs)</code></td><td>Each file in the zip becomes a new file; editype and messagetype stay the same. <code>pass_non_zip=True</code> passes files that are not zips unchanged.</td><td>error for non-zip</td><td><code>password=b'secret-example'</code></td></tr>
+<tr><td><code>botszip(ta_from, endstatus, **kwargs)</code></td><td>Puts the file in a zip (one zip per file). Used by <span class="ui">Outgoing zip-file handling</span> "Always zip".</td><td>—</td><td></td></tr>
+<tr><td><code>extractpdf(ta_from, endstatus, **kwargs)</code></td><td>Turns the text of a PDF into csv rows: page, line, fields. Needs <code>pdfminer.six</code>.</td><td>see options</td><td></td></tr>
+</table></div>
+
+<h4>Options of extractpdf</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td><code>x_group</code></td><td>Text pieces closer than this (in PDF points) on a line form one field.</td><td><code>10</code></td><td><code>20</code></td></tr>
+<tr><td><code>y_group</code></td><td>Text closer than this vertically counts as the same line.</td><td><code>5</code></td><td><code>3</code></td></tr>
+<tr><td><code>password</code></td><td>Password of the PDF.</td><td><code>''</code></td><td><code>'secret-example'</code></td></tr>
+<tr><td><code>field_sep</code></td><td>Separator of the csv output.</td><td><code>','</code></td><td><code>';'</code></td></tr>
+<tr><td><code>quotechar</code></td><td>Quote character of the csv output.</td><td><code>'"'</code></td><td></td></tr>
+<tr><td><code>escape</code></td><td>Escape character; empty: quotes are doubled.</td><td><code>'\\'</code></td><td><code>''</code></td></tr>
+<tr><td><code>charset</code></td><td>Character set of the csv output.</td><td><code>'utf-8'</code></td><td><code>'latin-1'</code></td></tr>
+</table></div>
+
+<h4>Settings</h4>
+<div class="table-wrap"><table>
+<tr><th>Name</th><th>What it does</th><th>Default</th><th>Values / example</th></tr>
+<tr><td>Route <span class="ui">Incoming zip-file handling</span></td><td>Unzip received files: "Always unzip file" or "If zip-file: unzip".</td><td>empty (no unzip)</td><td></td></tr>
+<tr><td>Route <span class="ui">Outgoing zip-file handling</span></td><td>"Always zip": each outgoing file of this route-part is zipped before sending.</td><td>empty</td><td></td></tr>
+<tr><td><code>bots.ini [settings] compatibility_mailbag</code> <span class="badge gray">advanced</span></td><td><code>True</code>: mailbag only runs for routes with editype <code>mailbag</code> (as Bots 2.2); <code>False</code>: also for EDIFACT, X12 and tradacoms.</td><td><code>False</code></td><td><code>True</code></td></tr>
+</table></div>
+
+<h3 id="preprocessing--trouble">Troubleshooting</h3>
+<div class="table-wrap"><table class="fix">
+<tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><code>[M51]: Edi file does not start with a valid interchange.</code></td><td>The file is not EDIFACT, X12 or tradacoms (or has junk before UNB/ISA).</td><td>Check the file; for xml use route editype <code>mailbag</code> or <code>xml</code>.</td></tr>
+<tr><td><code>[M50]: Found data not in a valid interchange at position 1234.</code></td><td>After one or more interchanges there is data that is not a new interchange.</td><td>Ask the partner for a correct file; look at the position in the file.</td></tr>
+<tr><td><code>[M52]: Edi file contains only whitespace.</code></td><td>Empty file.</td><td>Nothing to translate; ask the partner not to send empty files.</td></tr>
+<tr><td><code>[M53]: Non-valid ISA header at position …; position … of ISA is "…", expect here element separator "*".</code></td><td>The ISA is not of fixed length (spaces missing).</td><td>The partner must send ISA fields with their full length.</td></tr>
+<tr><td><code>[M54]: Found no valid IEA trailer for the ISA header at position …</code> / <code>[M60]: Found no segment terminator for IEA trailer …</code></td><td>File cut off, or no segment terminator after IEA.</td><td>Ask for the complete file.</td></tr>
+<tr><td><code>[M55]: Non-valid UNA-segment at position …</code> / <code>[M56]: Data element separator used in edifact file differs from value indicated in UNA-segment.</code></td><td>Wrong UNA.</td><td>The partner must correct the UNA.</td></tr>
+<tr><td><code>[M57]: Edifact file with non-standard separators. UNA segment should be used.</code></td><td>Other separators without UNA.</td><td>The partner must send a UNA.</td></tr>
+<tr><td><code>[M58]: Found no valid UNZ trailer for the UNB header at position …</code> / <code>[M59]: Found no valid END trailer for the STX header …</code></td><td>File incomplete, or a wrong segment terminator.</td><td>Ask for the complete file.</td></tr>
+<tr><td><code>File is not a zip-file.</code></td><td>"Always unzip file" for a file that is not a zip.</td><td>Use "If zip-file: unzip".</td></tr>
+<tr><td><code>Dependency failure: preprocessing "extractpdf" requires python library "pdfminer.six".</code></td><td>Library not installed.</td><td><code>pip install "bots-ediint[pdf]"</code> in the Python of Bots.</td></tr>
+<tr><td><code>PDF extraction failed, may not be a PDF file? Error: …</code></td><td>Not a PDF, protected, or a scan.</td><td>Check the file; give <code>password=</code>.</td></tr>
+<tr><td>Preprocessing does nothing</td><td>Called in a route-part without incoming channel (the function only takes files of the incoming channel of the route-part), or called before the files were received.</td><td>Call it from <code>postincommunication</code> of the route-part that has the incoming channel.</td></tr>
+</table></div>
+</section>
+

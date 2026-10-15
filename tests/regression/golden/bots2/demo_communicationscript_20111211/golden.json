@@ -1,0 +1,41 @@
+{
+ "errors": [
+  "TypeError: run() takes at least 3 arguments (2 given)"
+ ],
+ "files": [],
+ "index_version": "2",
+ "outfiles": {},
+ "plugin": "demo_communicationscript_20111211",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 0,
+  "lastdone": 0,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 0,
+  "processerrors": 4,
+  "send": 0,
+  "status": true
+ },
+ "routes": [
+  [
+   "comscript_allfilesonce_windows_only",
+   9999,
+   false,
+   false
+  ],
+  [
+   "demo_comscript_onefileatatime",
+   9999,
+   true,
+   false
+  ],
+  [
+   "myownfilename",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

@@ -761,7 +761,7 @@ class Message:
             )
         return self.root.putloop(*mpaths)
 
-    def sort(self, *mpaths):
+    def sort(self, *mpaths, **kwargs):
         if self.root.record is None:
             raise MappingRootError(
                 _(
@@ -770,4 +770,4 @@ class Message:
                 ),
                 {'mpath': mpaths},
             )
-        self.root.sort(*mpaths)
+        self.root.sort(*mpaths, **kwargs)

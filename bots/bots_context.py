@@ -11,6 +11,9 @@ TEMPLATES = [{
             ...
 """
 
+import base64
+import os
+
 import django
 from django.utils import formats
 
@@ -22,6 +25,28 @@ from . import viewlib
 
 # save vars initialised at startup
 CONTEXT = {}
+
+
+IMAGE_TYPES = {'.png': 'image/png', '.gif': 'image/gif', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+               '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webp': 'image/webp'}
+
+
+def image_data_uri(path):
+    """an image file of bots.ini as data uri for an <img> or <link>; '' if not set, not there or too big.
+    A relative path is relative to the config directory."""
+    if not path:
+        return ''
+    if not os.path.isabs(path):
+        path = os.path.join(botsglobal.ini.get('directories', 'config'), path)
+    kind = IMAGE_TYPES.get(os.path.splitext(path)[1].lower())
+    try:
+        if kind is None or os.path.getsize(path) > 512 * 1024:
+            raise OSError('not an image, or too big')
+        with open(path, 'rb') as image:
+            return 'data:%s;base64,%s' % (kind, base64.b64encode(image.read()).decode('ascii'))
+    except OSError:
+        botsglobal.logger.warning('Image of bots.ini [webserver] not used: "%s".', path)
+        return ''
 
 
 def set_context(request):
@@ -42,6 +67,15 @@ def set_context(request):
         if not CONTEXT["bots_environment_text_style"] and CONTEXT["bots_environment_text_color"]:
             CONTEXT["bots_environment_text_style"] = f"color:{CONTEXT['bots_environment_text_color']}"
         CONTEXT['botslogo'] = botsglobal.ini.get('webserver', 'botslogo', 'bots/botslogo.html')
+        # own name and support address in the about screen
+        CONTEXT['bots_about_title'] = botsglobal.ini.get('webserver', 'about_title', None) or ''
+        CONTEXT['bots_support_url'] = botsglobal.ini.get('webserver', 'support_url', None) or ''
+        if not CONTEXT['bots_support_url'].lower().startswith(('http://', 'https://', 'mailto:')):
+            CONTEXT['bots_support_url'] = ''
+        CONTEXT['bots_support_text'] = botsglobal.ini.get('webserver', 'support_text', None) or _('Support')
+        # own logo and favicon: image files, shown in the page itself (no change to the files of bots)
+        CONTEXT['bots_logo_image'] = image_data_uri(botsglobal.ini.get('webserver', 'logo_image', None))
+        CONTEXT['bots_favicon_image'] = image_data_uri(botsglobal.ini.get('webserver', 'favicon_image', None))
         CONTEXT['botsmenu'] = botsglobal.ini.get('webserver', 'botsmenu', 'bots/menu.html')
         CONTEXT["bots_touchscreen"] = botsglobal.ini.getboolean("webserver", "bots_touchscreen", False)
         CONTEXT['menu_automaticretrycommunication'] = botsglobal.ini.getboolean(
@@ -68,6 +102,14 @@ def set_context(request):
             CONTEXT[key] = formats.get_format_lazy(f"{key}S")[idx].replace(
                 '%', '').replace('M', 'i').replace('S', 's')
 
+    # what follows is per request: in a context of its own (requests are handled at the same time)
+    context = dict(CONTEXT)
+    return request_context(request, context)
+
+
+def request_context(request, CONTEXT):
+    """add the variables that depend on the request, the user or the database."""
+    # pylint: disable=invalid-name
     # in bots.ini can be indicated that all routes (in config->routes, if route is activated)
     # can be run individually via menu
     if botsglobal.ini.get('webserver', 'menu_all_routes', '') == 'notindefaultrun':
@@ -110,7 +152,7 @@ def set_context(request):
         CONTEXT['shortcuts'] = shortcuts = {}
         # Append global and user shortcuts
         for shortcut in models.ccode.objects.filter(
-                ccodeid='shortcut', attr8__in=['', request.user.id],
+                ccodeid='shortcut', attr8__in=['', str(request.user.id)],
                 ).exclude(leftcode='menuname').order_by('attr2', 'leftcode'):
             shortcuts.setdefault(shortcut.attr2, [])
             shortcuts[shortcut.attr2].append(

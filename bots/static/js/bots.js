@@ -95,7 +95,7 @@ function deleteSelection(bt) {
     }
     if (!document.querySelector('[name="fromselect"]')) {
         // Delete action in view, this avoid redirection to selectform
-        document.forms[0].insertAdjacentHTML('beforeend', '<input type="hidden" name="fromselect">');
+        (bt.form || document.getElementById('id_refresh').form).insertAdjacentHTML('beforeend', '<input type="hidden" name="fromselect">');
     }
     return true;
 }

@@ -1,0 +1,94 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "810_1.x12",
+   3
+  ],
+  [
+   "810_2.x12",
+   3
+  ],
+  [
+   "850_1.xml",
+   3
+  ],
+  [
+   "850_2.xml",
+   3
+  ],
+  [
+   "856_1.x12",
+   3
+  ],
+  [
+   "856_2.x12",
+   3
+  ],
+  [
+   "997_1.x12",
+   3
+  ]
+ ],
+ "index_version": "3.1.0rc",
+ "outfiles": {
+  "x12_demo/inbound_810/810_1.xml": "9f0dc6b8e2e98e00de30fe5682b41114975b8db75d9b345c9f7ac23c6056ceb4",
+  "x12_demo/inbound_810/810_2.xml": "987f953c5662355ff63dcc2db28307baddc1a8f2928924c045fcebc94c72e3b5",
+  "x12_demo/inbound_856/856_1.xml": "13e9586fea3fc08ba7c64363d031e561c1aa085026de78fb2a7823575402f77e",
+  "x12_demo/inbound_856/856_2.xml": "442a3aab70bbb73852d81d527908c3ea6777ba2337e98cf926b72b0d04274cbd",
+  "x12_demo/inbound_856/856_3.xml": "8ff9e487b3d8ec031629b12ca99c89e9a8044d82e2d3c10ac26bc7944e68e94e",
+  "x12_demo/orders/850_1.x12": "9bd033ab7085b66ac2388cc0b1748c7e6f23ad828f727f1652ab5373cc609a93",
+  "x12_demo/orders/850_2.x12": "887389462d65b9f3a777daa4dc3e2dbe8eff0174207b881756c3157035cfb121"
+ },
+ "plugin": "x12toxml_retailer_version_850-856-810-997_20130807",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 11745,
+  "lastdone": 7,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 7,
+  "processerrors": 0,
+  "send": 7,
+  "status": false
+ },
+ "routes": [
+  [
+   "inbound",
+   1,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   100,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   1000,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   1010,
+   true,
+   false
+  ],
+  [
+   "inbound",
+   2000,
+   true,
+   false
+  ],
+  [
+   "outbound_orders",
+   1,
+   true,
+   false
+  ]
+ ]
+}

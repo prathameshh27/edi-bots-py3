@@ -12,7 +12,11 @@ __all__ = [
 
 __title__ = 'bots-ediint'
 
-__version__ = metadata.version(__title__)
+try:
+    __version__ = metadata.version(__title__)
+except metadata.PackageNotFoundError:
+    # Running from a source tree (not pip-installed): no distribution metadata available.
+    __version__ = "4.0.0+source"
 __version_info__ = __version__.split(".")
 
 __summary__ = """Bots EDI Translator"""

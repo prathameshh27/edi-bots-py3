@@ -84,14 +84,16 @@ def load_selection(request, form, selection='default'):
         return None
     selection = request.GET.get('selection', selection)
     if selection:
-        selection_file = os.path.join(
-            botsglobal.ini.get('directories', 'users'),
-            str(request.user.id),
-            'selections',
-            form.action.split('/')[-1],
+        # selection is the name of a file in the directory with the selections of this user and screen
+        selection_file = botslib.path_in_directory(
+            os.path.join(
+                botsglobal.ini.get('directories', 'users'),
+                str(request.user.id),
+                'selections',
+                form.action.split('/')[-1]),
             selection,
-        )
-        if os.path.isfile(selection_file):
+        ) if os.path.basename(selection.replace('\\', '/')) == selection else None
+        if selection_file and os.path.isfile(selection_file):
             with open(selection_file, "r", encoding="utf8") as selectionf:
                 return json.load(selectionf)
     return None
@@ -485,6 +487,9 @@ def filterquery_contains(query, cleaned_data, field):
         cleaned_data['reference'] = '123 xx1 xx2 -xx3 ...'
     """
     for val in cleaned_data.pop(field).split(' '):
+        if not val:
+            # 2 spaces
+            continue
         query_filter = query.filter
         if val[0] == '-' and val[1:]:
             val = val[1:]
@@ -532,8 +537,9 @@ def filterquery(query, org_cleaned_data, **kwargs):
         if key in [
                 'acceptance', 'status', 'statust',
                 'idta', 'reportidta', 'retransmit', 'confirmidta']:
-            if value < 0:
+            if value < 0 and not (key == 'confirmidta' and value == -1):
                 # Negative int value is for query.exclude()
+                # (not confirmidta -1: that is the value of a manual confirmation)
                 query = query.exclude(**{key: -cleaned_data.pop(key)})
             continue
         if key in ['refresh', 'selection', 'selection_name', 'popup', 'sortedasc', 'allstatus']:

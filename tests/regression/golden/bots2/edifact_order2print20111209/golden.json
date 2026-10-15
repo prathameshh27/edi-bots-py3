@@ -1,0 +1,34 @@
+{
+ "errors": [
+  "OutMessageError: Unknown editype for outgoing message: template"
+ ],
+ "files": [
+  [
+   "orders96.edi",
+   1
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {},
+ "plugin": "edifact_order2print20111209",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 936,
+  "lastdone": 0,
+  "lasterror": 1,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 1,
+  "processerrors": 0,
+  "send": 0,
+  "status": true
+ },
+ "routes": [
+  [
+   "edifax",
+   9999,
+   true,
+   false
+  ]
+ ]
+}

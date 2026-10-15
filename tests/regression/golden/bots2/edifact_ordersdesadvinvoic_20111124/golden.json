@@ -1,0 +1,75 @@
+{
+ "errors": [],
+ "files": [
+  [
+   "0T0000000004.edi",
+   3
+  ],
+  [
+   "0T0000000015.edi",
+   3
+  ],
+  [
+   "T0000000001.edi",
+   3
+  ],
+  [
+   "T0000000002.edi",
+   3
+  ],
+  [
+   "desadv96.inh",
+   3
+  ],
+  [
+   "invoic96.inh",
+   3
+  ]
+ ],
+ "index_version": "2",
+ "outfiles": {
+  "dutchic/dutchic_aperak1.edi": "bffb2303d1ce53d7dbf70a400a45716ca691aca49cc2ed7e96d183e0eaec1aa2",
+  "dutchic/dutchic_desadv1.edi": "7a54cdd44444a8b3c78dafbf9c215253195d4fd42e0c485c08748e6ab8eb212f",
+  "dutchic/dutchic_invoic1.edi": "5adfb650aba8ba5c2266e660444d5eb6ac43495efad6edd5ffd111eb984b4592",
+  "dutchic/dutchic_orders_1.inh": "8f8218184b0c3bc618a901c3795b8e0e6ea99ab9f9bc471f2a1251d7513d01ef"
+ },
+ "plugin": "edifact_ordersdesadvinvoic_20111124",
+ "reference": "Bots 3.2.0 (github eppye-bots/bots, branch bots32), Python 2.7.18, Django 1.7.11, SQLite, acceptance-test mode",
+ "report": {
+  "filesize": 6638,
+  "lastdone": 6,
+  "lasterror": 0,
+  "lastok": 0,
+  "lastopen": 0,
+  "lastreceived": 6,
+  "processerrors": 0,
+  "send": 4,
+  "status": false
+ },
+ "routes": [
+  [
+   "dutchic_desadv",
+   1,
+   true,
+   false
+  ],
+  [
+   "dutchic_invoic",
+   1,
+   true,
+   false
+  ],
+  [
+   "dutchic_orders",
+   1,
+   true,
+   false
+  ],
+  [
+   "dutchic_orders",
+   2,
+   true,
+   false
+  ]
+ ]
+}

@@ -8,7 +8,7 @@
 <button class="button icon-err" name="2process">{% trans 'Process Errors (same selection)' %}</button>
 <button class="button ico-confirm" name="2confirm">{% trans 'Confirm (same selection)' %}</button>
 {{ block.super }}
-{% if perms.bots.change_mutex %}<button class="button ico-yes" name="rereceiveall">{% trans 'Resend All' %}</button>
+{% if perms.bots.change_mutex %}<button class="button ico-yes" name="resendall">{% trans 'Resend All' %}</button>
 {% include 'bots/botstable/field/text.html' with field=form.errortext %}
 {% else %}
 {% include 'bots/botstable/field/text.html' with field=form.errortext %}

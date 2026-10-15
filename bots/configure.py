@@ -45,22 +45,23 @@ This is "%(name)s" version %(version)s,
         'name': os.path.basename(sys.argv[0]),
         'version': botsglobal.version,
     }
-    locals()['interactive'] = True
+    # (not in locals(): what is written there is lost in python >= 3.13)
+    options = {'interactive': True}
     for arg in sys.argv[1:]:
         if arg.startswith('-c'):
-            locals()['configdir'] = arg[2:]
+            options['configdir'] = arg[2:]
         elif '=' in arg:
-            arg, val = arg.split('=')
+            arg, val = arg.split('=', 1)
             if arg not in ['configdir', 'botsenv', 'botsenv_path']:
                 print(usage)
                 return
-            locals()[arg] = val
+            options[arg] = val
         elif arg in ['-y', '--yes']:
-            locals()['interactive'] = False
+            options['interactive'] = False
         elif arg in ['?', '/?', '-h', '--help']:
             print(usage)
             return
 
-    locals()['configdir'] = botsinit.initbotsenv(**locals())
-    if locals()['configdir']:
-        print(bots_info(**locals()), file=sys.stderr)
+    options['configdir'] = botsinit.initbotsenv(**options)
+    if options['configdir']:
+        print(bots_info(**options), file=sys.stderr)

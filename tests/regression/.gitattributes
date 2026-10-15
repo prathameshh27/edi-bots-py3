@@ -1,0 +1,4 @@
+# reference data: compared byte for byte, line ends are significant
+golden/** -text
+*.zip binary
+data/** binary
