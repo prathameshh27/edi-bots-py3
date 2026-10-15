@@ -3,12 +3,12 @@
 
 {% block content %}
 <br/>
-<h1>Confirm reading index file</h1>
-<p>&nbsp;Please confirm reading the default index file bots/usersys/index.py. This might change your configuration!</p>
+<h1 class="ico-plugin">{% trans 'Confirm reading index file' %}</h1>
 <br/>
-<form action="/plugin/index" method="POST" enctype="multipart/form-data">{% csrf_token %}
+<p>{% trans 'Please confirm reading the default index file bots/usersys/index.py. This might change your configuration !' %}</p>
+<form action="{% url 'bots:plugin' %}/index" method="POST" enctype="multipart/form-data">{% csrf_token %}
     <br/>&nbsp;
-    <input type="submit" name="cancel" value="{% trans 'Cancel' %}" />
-    <input type="submit" name="submit" value="{% trans 'Confirm read' %}" />
+    <button name="cancel" class="button ico-no">{% trans 'Cancel' %}</button>
+    <button name="submit" class="button ico-read" onclick="return confirm('{% trans 'Read configuration index ?' %}');">{% trans 'Confirm read' %}</button>
 </form>
 {% endblock %}

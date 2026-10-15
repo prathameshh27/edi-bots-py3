@@ -1,5 +1,3 @@
-DROP TABLE ta ;
-
 CREATE TABLE ta (
     idta integer PRIMARY KEY AUTO_INCREMENT,
     statust integer DEFAULT 0,
@@ -16,15 +14,14 @@ CREATE TABLE ta (
     editype varchar(35) DEFAULT '',
     messagetype varchar(35) DEFAULT '',
     alt varchar(35) DEFAULT '',
-    divtext varchar(35) DEFAULT '',
+    divtext varchar(128) DEFAULT '',
     merge BOOLEAN DEFAULT 0,
     nrmessages integer DEFAULT 1,
     testindicator varchar(10) DEFAULT '',
-    reference varchar(70) DEFAULT '',
+    reference varchar(256) DEFAULT '',
     frommail varchar(256) DEFAULT '',
     tomail varchar(256) DEFAULT '',
     charset varchar(35) DEFAULT '',
-    statuse integer DEFAULT 0,
     retransmit BOOLEAN DEFAULT 0,
     contenttype varchar(35) DEFAULT 'text/plain',
     errortext TEXT,
@@ -34,14 +31,15 @@ CREATE TABLE ta (
     confirmtype varchar(35) DEFAULT '',
     confirmidta integer DEFAULT 0,
     envelope varchar(35) DEFAULT '',
-    botskey varchar(35) DEFAULT '',
-    cc varchar(512) DEFAULT '', 
-    rsrv1 varchar(35) DEFAULT '',
+    botskey varchar(64) DEFAULT '',
+    cc varchar(512) DEFAULT '',
+    rsrv1 varchar(128) DEFAULT '',
     rsrv2 integer DEFAULT 0,
     rsrv3 varchar(35) DEFAULT '',
     rsrv4 integer DEFAULT 0,
     filesize integer DEFAULT 0,
     numberofresends integer DEFAULT 0,
-    rsrv5 varchar(35) DEFAULT ''
-) ;
-
+    rsrv5 varchar(256) DEFAULT ''
+);
+CREATE INDEX ta_parent ON ta (parent);
+CREATE INDEX ta_reference ON ta (reference);

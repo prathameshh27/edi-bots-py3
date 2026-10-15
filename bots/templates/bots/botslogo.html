@@ -1,3 +1,2 @@
-<div id="logo">
-    <a href="/home/"><img src="/media/images/botslogo.png" /></a>
-</div>
+{% load i18n static %}
+<div id="logo"><a href="{% url 'bots:home' %}" title="{% trans 'Home' %}"><img src="{% static "img/botslogo.png" %}"/></a></div>

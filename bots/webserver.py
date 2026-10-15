@@ -1,33 +1,64 @@
-#!/usr/bin/env python
-from __future__ import print_function
-from __future__ import unicode_literals
-import sys
-if sys.version_info[0] > 2:
-    basestring = unicode = str
+# -*- coding: utf-8 -*-
+"""
+Bots webserver
+"""
+
 import os
-import django
-from django.core.handlers.wsgi import WSGIHandler
-from django.utils.translation import ugettext as _
+import sys
+
 import cherrypy
-from cherrypy import wsgiserver
-from . import botsglobal
-from . import botsinit
+from django.core import management
+from django.core.handlers.wsgi import WSGIHandler
+
+from . import botsglobal, botsinit
+from .botsinit import STARTINFO
+from .botslib import gettext as _
+
+try:
+    from cheroot.server import get_ssl_adapter_class
+    from cheroot.wsgi import Server, PathInfoDispatcher
+
+except ImportError:
+    from cherrypy.wsgiserver import (
+        get_ssl_adapter_class,
+        CherryPyWSGIServer as Server,
+        WSGIPathInfoDispatcher as PathInfoDispatcher
+    )
+
+
+def error_page(status, message, _traceback, _version) -> str:
+    """Return html error page"""
+    return f"""\
+<!DOCTYPE html>
+<html>
+<head>
+<title{status}</title>
+</head>
+<body>
+<h2>{status}</h2>
+<p>{message}</p>
+</body>
+</html>"""
 
 
 def start():
-    #NOTE: bots directory should always be on PYTHONPATH - otherwise it will not start.
-    #***command line arguments**************************
-    usage = '''
-    This is "%(name)s" version %(version)s, part of Bots open source edi translator (http://bots.sourceforge.net).
-    The %(name)s is the web server for bots; the interface (bots-monitor) can be accessed in a 
+    """Start Bots webserver"""
+    usage = """
+    This is "%(name)s" version %(version)s,
+    part of Bots open source edi translator (https://bots-edi.org).
+    The %(name)s is the web server for bots; the interface (bots-monitor) can be accessed in a
     browser, eg 'http://localhost:8080'.
+
     Usage:
-        %(name)s  -c<directory>
+        %(name)s -c<directory>
+
     Options:
         -c<directory>   directory for configuration files (default: config).
-    
-    '''%{'name':os.path.basename(sys.argv[0]),'version':botsglobal.version}
-    configdir = 'config'
+
+    """ % {'name': os.path.basename(sys.argv[0]), 'version': botsglobal.version}
+
+    # ***command line arguments**************************
+    configdir = None
     for arg in sys.argv[1:]:
         if arg.startswith('-c'):
             configdir = arg[2:]
@@ -37,48 +68,95 @@ def start():
         else:
             print(usage)
             sys.exit(0)
-    #***end handling command line arguments**************************
-    botsinit.generalinit(configdir)     #find locating of bots, configfiles, init paths etc.
-    process_name = 'webserver'
-    botsglobal.logger = botsinit.initserverlogging(process_name)    #initialise file-logging for web-server. This logging only contains the logging from bots-webserver, not from cherrypy.
+    # ***end handling command line arguments**************************
 
-    #***init cherrypy as webserver*********************************************
-    #global configuration for cherrypy
-    cherrypy.config.update({'global': {'log.screen': False, 'server.environment': botsglobal.ini.get('webserver','environment','production')}})
-    #cherrypy handling of static files
-    conf = {'/': {'tools.staticdir.on' : True,'tools.staticdir.dir' : 'media' ,'tools.staticdir.root': botsglobal.ini.get('directories','botspath')}}
-    servestaticfiles = cherrypy.tree.mount(None, '/media', conf)    #None: no cherrypy application (as this only serves static files)
-    #cherrypy handling of django
-    servedjango = WSGIHandler()     #was: servedjango = AdminMediaHandler(WSGIHandler())  - django does not need the AdminMediaHandler.
-    #cherrypy uses a dispatcher in order to handle the serving of static files and django.
-    dispatcher = wsgiserver.WSGIPathInfoDispatcher({'/': servedjango, str('/media'): servestaticfiles}) #UNICODEPROBLEM: needs to be binary
-    botswebserver = wsgiserver.CherryPyWSGIServer(bind_addr=('0.0.0.0', botsglobal.ini.getint('webserver','port',8080)), wsgi_app=dispatcher, server_name=botsglobal.ini.get('webserver','name','bots-webserver'))
-    botsglobal.logger.log(25,_('Bots %(process_name)s started.'),
-                                {'process_name':process_name})
-    botsglobal.logger.log(25,_('Bots %(process_name)s configdir: "%(configdir)s".'),
-                                {'process_name':process_name, 'configdir':botsglobal.ini.get('directories','config')})
-    botsglobal.logger.log(25,_('Bots %(process_name)s serving at port: "%(port)s".'),
-                                {'process_name':process_name,'port':botsglobal.ini.getint('webserver','port',8080)})
-    #handle ssl: cherrypy < 3.2 always uses pyOpenssl. cherrypy >= 3.2 uses python buildin ssl (python >= 2.6 has buildin support for ssl).
-    ssl_certificate = botsglobal.ini.get('webserver','ssl_certificate',None)
-    ssl_private_key = botsglobal.ini.get('webserver','ssl_private_key',None)
-    if ssl_certificate and ssl_private_key:
-        if cherrypy.__version__ >= '3.2.0':
-            adapter_class = wsgiserver.get_ssl_adapter_class('builtin')
-            botswebserver.ssl_adapter = adapter_class(ssl_certificate,ssl_private_key)
-        else:
-            #but: pyOpenssl should be there!
-            botswebserver.ssl_certificate = ssl_certificate
-            botswebserver.ssl_private_key = ssl_private_key
-        botsglobal.logger.log(25,_('Bots %(process_name)s uses ssl (https).'),{'process_name':process_name})
+    # find locating of bots, configfiles, init paths etc.
+    botsinit.generalinit(configdir)
+    settings = botsglobal.settings
+
+    # initialise file-logging for web-server.
+    # This logging only contains the logging from bots-webserver, not from cherrypy.
+    botsglobal.logger = botsinit.initserverlogging(__name__)
+    botsglobal.logger.log(STARTINFO, _('Starting ...'))
+
+    # ***init cherrypy as webserver*********************************************
+    # global configuration for cherrypy
+    cherrypy.config.update({
+        'global': {
+            'log.screen': False,
+            'server.environment': botsglobal.ini.get('webserver', 'environment', 'production'),
+        },
+        # error 404
+        'error_page.404': error_page,
+    })
+
+    # cherrypy log
+    for handler in botsglobal.logger.handlers:
+        cherrypy.log.error_log.addHandler(handler)
+        if botsglobal.ini.getboolean('webserver', 'log_cherrypy_access', False):
+            cherrypy.log.access_log.addHandler(handler)
+
+    # /static
+    static_root = settings.STATIC_ROOT.rstrip(os.path.sep)
+    if not os.path.isdir(static_root) and not os.access(os.path.dirname(static_root), os.W_OK):
+        botsglobal.logger.warning(_('Invalid STATIC_ROOT: %s'), settings.STATIC_ROOT)
     else:
-        botsglobal.logger.log(25,_('Bots %(process_name)s uses plain http (no ssl).'),{'process_name':process_name})
+        management.call_command('collectstatic', '--noinput')
 
-    #***start the cherrypy webserver.************************************************
+    # cherrypy handling of static files
+    staticdir = settings.STATIC_ROOT.split(os.sep)
+    conf = {'/': {
+        'tools.staticdir.on': True,
+        'tools.staticdir.dir': staticdir[-1],
+        'tools.staticdir.root': os.sep.join((staticdir[:-1])),
+    }}
+    # None: no cherrypy application (as this only serves static files)
+    servestaticfiles = cherrypy.tree.mount(
+        None,
+        settings.STATIC_URL.rstrip('/'),
+        conf
+    )
+
+    # cherrypy handling of django
+    servedjango = WSGIHandler()
+    # cherrypy uses a dispatcher in order to handle the serving of static files and django.
+    # UNICODEPROBLEM: needs to be binary
+    dispatcher = PathInfoDispatcher({
+        '/': servedjango,
+        str(settings.STATIC_URL.rstrip('/')): servestaticfiles}
+    )
+    botswebserver = Server(
+        bind_addr=('0.0.0.0', botsglobal.ini.getint('webserver', 'port', 8080)),
+        wsgi_app=dispatcher,
+        server_name=botsglobal.ini.get('webserver', 'name', 'bots-webserver')
+    )
+    botsglobal.logger.log(
+        STARTINFO,
+        _('configdir: "%(configdir)s".'),
+        {'configdir': botsglobal.ini.get('directories', 'config')}
+    )
+    ssl_certificate = botsglobal.ini.get('webserver', 'ssl_certificate', None)
+    ssl_private_key = botsglobal.ini.get('webserver', 'ssl_private_key', None)
+    if ssl_certificate and ssl_private_key:
+        adapter_class = get_ssl_adapter_class('builtin')
+        botswebserver.ssl_adapter = adapter_class(ssl_certificate, ssl_private_key)
+        botsglobal.logger.log(STARTINFO, _('using ssl (https).'))
+    else:
+        botsglobal.logger.log(STARTINFO, _('using plain http (no ssl).'))
+    botsglobal.logger.log(
+        STARTINFO, _('Serving at port: "%(port)s".'),
+        {'port': botsglobal.ini.getint('webserver', 'port', 8080)}
+    )
+
+    # start the cherrypy webserver.************************************************
     try:
         botswebserver.start()
-    except KeyboardInterrupt:
-        botswebserver.stop()
+
+    except (KeyboardInterrupt, SystemExit):
+        sys.stderr.write(os.linesep)
+
+    botsglobal.logger.log(STARTINFO, _('Exiting ...'))
+    botswebserver.stop()
 
 
 if __name__ == '__main__':

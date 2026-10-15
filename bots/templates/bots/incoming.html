@@ -1,82 +1,106 @@
-{% extends "admin/base.html" %}
-{% load i18n %}
-{% load botsfilters %}
+{% extends "bots/base.html" %}
+{% load i18n botsfilters %}
 
-{% block content %}
-<form action="{{ form.action }}" method="post">{% csrf_token %}
-    <input onClick="history.back()" type="button" value="{% trans 'Back' %}" />
-    <input type="submit" name="2select" value="{% trans 'Change selection' %}" />
-    <input type="submit" name="2outgoing" value="{% trans 'Outgoing (same selection)' %}" />
-    <input type="submit" name="2process" value="{% trans 'Process Errors (same selection)' %}" />
-    <input type="submit" name="2confirm" value="{% trans 'Confirm (same selection)' %}" />
-    <input type="submit" name="rereceiveall" value="{% trans 'Rereceive All' %}" />
-    {% include "bots/paginator.html" %}
+{% block bodyclass %}{{ block.super }} incoming{% endblock %}
 
-    <table id="botstable">
-        {% for hidden in form.hidden_fields %}
-            {{ hidden }}
-        {% endfor %}
-        <thead>
-            <tr>
-                <th></th>
-                <th><button class="botsheader" type="submit" name="order" value="status" >{% trans 'Status' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="retransmit" >{% trans 'Rereceive' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="ts" >{% trans 'Date/time' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="idroute" >{% trans 'Route' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="fromchannel" >{% trans 'FromChannel' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="infilename" >{% trans 'InFile' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="ineditype" >{% trans 'InEditype' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="inmessagetype" >{% trans 'InMessagetype' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="nrmessages" >{% trans '#mes' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="filesize" >{% trans 'Size' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="tochannel" >{% trans 'ToChannel' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="outfilename" >{% trans 'OutFile' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="outeditype" >{% trans 'OutEditype' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="outmessagetype" >{% trans 'OutMessagetype' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="frompartner" >{% trans 'FromPartner' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="topartner" >{% trans 'ToPartner' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="errortext" >{% trans 'Error' %}</button></th>
-                <th><button class="botsheader" type="submit" name="order" value="divtext" >{% trans 'MappingScript' %}</button></th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for row in queryset.object_list %}
-            <tr class="{% cycle 'row1' 'row2' %}">
-                <td>
-                    <div class="dropdown"><img class="action" src="/media/images/star.png" />
-                        <ul>
-                            <li><button class="botsheader" onclick="document.location.href='/detail/?inidta={{row.idta}}'; return false;" >{% trans 'View detail' %}</button></li>
-                            <li><button class="botsheader" type="submit" name="retransmit" value="{{row.idta}}" >{% trans 'Rereceive' %}</button></li>
-                            <li><button class="botsheader" type="submit" name="delete" value="{{row.idta}}" >{% trans 'Delete file' %}</button></li>
-                        </ul>
-                    </div>
-                </td>
-                <td>{{ row.get_statust_display}}</td>
-                <td><input disabled="True" type="checkbox" {% if row.retransmit %}checked{% endif %}/></td>
-                <td class="nowrap">{{row.ts|date:"Y-m-d H:i:s" }}</td>
-                <td class="nowrap">{{row.idroute}}</td>
-                <td class="nowrap">{{row.fromchannel}}</td>
-                <td><a href="/filer/?action=this&amp;idta={{row.idta}}" target="_blank" class="botslink" title="{{row.infilename}}" >{{row.infilename|shortpath}}</a></td>
-                <td class="nowrap">{{row.ineditype}}</td>
-                <td class="nowrap">{{row.inmessagetype}}</td>
-                <td>{{row.nrmessages}}</td>
-                <td class="nowrap">{% if row.filesize %}{{row.filesize|filesizeformat}}{% endif %}</td>
-                <td class="nowrap">{{row.tochannel}}</td>
-                <td>{% if row.outfilename == '(several values)' %}
-                        <a href="/detail/?inidta={{row.idta}}" class="botslink">{{row.outfilename}}</a>
-                    {% else %}
-                        <a href="/filer/?action=this&amp;idta={{row.outidta}}" target="_blank" class="botslink" title="{{row.outfilename}}">{{row.outfilename|shortpath}}</a>
-                    {% endif %}</td>
-                <td class="nowrap">{{row.outeditype}}</td>
-                <td class="nowrap">{{row.outmessagetype}}</td>
-                <td class="nowrap">{{row.frompartner}}</td>
-                <td class="nowrap">{{row.topartner}}</td>
-                <td style="white-space: pre;">{{row.errortext}}</td>
-                <td class="nowrap">{{row.divtext}}</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</form>
+{% block bots_submit %}
+<button class="button ico-outgoing" name="2outgoing">{% trans 'Outgoing (same selection)' %}</button>
+<button class="button icon-err" name="2process">{% trans 'Process Errors (same selection)' %}</button>
+<button class="button ico-confirm" name="2confirm">{% trans 'Confirm (same selection)' %}</button>
+{{ block.super }}
+{% if perms.bots.change_mutex %}<button class="button ico-yes" name="rereceiveall">{% trans 'Rereceive All' %}</button>
+{% include 'bots/botstable/field/text.html' with field=form.errortext %}
+{% else %}
+{% include 'bots/botstable/field/text.html' with field=form.errortext %}
+{% include 'bots/botstable/field/hidden.html' with field=form.idroute %}
+{% include 'bots/botstable/field/hidden.html' with field=form.fromchannel %}
+{% include 'bots/botstable/field/hidden.html' with field=form.tochannel %}
+{% include 'bots/botstable/field/hidden.html' with field=form.retransmit %}
+{% endif %}{% include 'bots/botstable/field/hidden.html' with field=form.reportidta %}
 {% endblock %}
 
+{% block botstable %}
+<thead>
+<tr>
+    {% include 'bots/botstable/thead/selall.html' %}
+    {% include 'bots/botstable/thead/field.html' with field=form.idta %}
+    {% include 'bots/botstable/thead/field.html' with field=form.statust %}
+    {% if perms.bots.change_mutex %}<th id="th_retransmit"><button class="botsheader center" name="order" value="retransmit" title="{% trans 'Sort by' %} {{ form.retransmit.label }}">Re*</button></th>{% endif %}
+    <th id="th_ts"><button class="botsheader ico-ts" name="order" value="ts" title="{% trans 'Sort by' %} {% trans 'Date/time' %}">{% trans 'Date/time' %}</button></th>
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/field.html' with field=form.idroute %}
+    {% include 'bots/botstable/thead/field.html' with field=form.fromchannel %}{% endif %}
+    <th id="th_infilename"><button class="botsheader ico-infile" name="order" value="infilename">{% trans 'InFile' %}</button></th>
+    {% include 'bots/botstable/thead/field.html' with field=form.ineditype %}
+    {% include 'bots/botstable/thead/field.html' with field=form.inmessagetype %}
+    {% include 'bots/botstable/thead/field.html' with field=form.frompartner %}
+    <th id="th_nrmessages"><button class="botsheader" name="order" value="nrmessages">{% trans '#mes' %}</button></th>
+    <th id="th_filesize"><button class="botsheader" name="order" value="filesize">{% trans 'Size' %}</button></th>
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/field.html' with field=form.tochannel %}{% endif %}
+    <th id="th_outfilename"><button class="botsheader ico-outfile" name="order" value="outfilename">{% trans 'OutFile' %}</button></th>
+    {% include 'bots/botstable/thead/field.html' with field=form.outeditype %}
+    {% include 'bots/botstable/thead/field.html' with field=form.outmessagetype %}
+    {% include 'bots/botstable/thead/field.html' with field=form.topartner %}
+    {% if perms.bots.change_mutex %}<th id="th_divtext"><button class="botsheader ico-tscript" name="order" value="divtext">{% trans 'Mapping Script' %}</button></th>{% endif %}
+</tr>
+<tr>
+    {% if not form.actions.is_hidden %}<th></th>{% endif %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.idta %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.statust get_field_display=True thclass="center" %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/checkbox.html' with field=form.retransmit %}{% endif %}
+    {% include 'bots/botstable/thead/datefields.html' %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/filtered.html' with field=form.idroute %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.fromchannel %}{% endif %}
+    {% include 'bots/botstable/thead/textfield.html' with field=form.infilename %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.ineditype %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.inmessagetype %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.frompartner %}
+    <th></th>
+    <th></th>
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/filtered.html' with field=form.tochannel %}{% endif %}
+    {% include 'bots/botstable/thead/textfield.html' with field=form.outfilename %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.outeditype %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.outmessagetype %}
+    {% include 'bots/botstable/thead/filtered.html' with field=form.topartner %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/thead/textfield.html' with field=form.divtext %}{% endif %}
+</tr>
+</thead>
+<tbody>{% for row in queryset.object_list %}
+<tr class="{% cycle 'row1' 'row2' %} botstrstatus{{ row.statust }}">
+    {% include 'bots/botstable/td/sel.html' %}
+    <td><div class="dropdown">
+      {% if perms.bots.view_ta %}<a href="{% url 'bots:detail' %}/?inidta={{ row.idta }}" onclick="return popup(this, '95%', '75%', '&popup=1')" title="Bots {% trans 'details' %}: {{ row.idta }}" class="button ico-in">{{ row.idta }}</a>{% else %}<button class="button ico-in">{{ row.idta }}</button>{% endif %}
+      <ul>{% if perms.bots.view_report %}
+        {% if user.is_staff %}<li><a class="ico-log" href="{% url 'bots:logfiler' %}/?engine={{ row.reportidta }}" target="_blank">{% trans 'View log' %}</a></li>{% endif %}
+	<li><a class="ico-reports" href="{% url 'bots:reports' %}/?idta={{ row.reportidta }}&popup=1" target="_blank">{% trans 'View report' %}</a></li>{% endif %}
+        {% if form.reportidta.value != row.reportidta %}<li><button name="reportidta" value="{{ row.reportidta }}" class="icon-filter">{% trans 'Filter' %} {% trans 'report' %}: {{ row.reportidta }}</button></li>{% endif %}
+        <li><button name="reportidta" value="-{{ row.reportidta }}" class="ico-no">{% trans 'Exclude' %} {% trans 'report' %}: {{ row.reportidta }}</button></li>
+        {% if form.reportidta.value %}<li><button name="reportidta" value="" class="icon-delete">{% trans 'Clear filter' %} {% trans 'report' %}: {{ form.reportidta.value }}</button></li>{% endif %}
+        {% if perms.bots.change_mutex %}<li><button name="rereceive" value="{{ row.idta }}" class="ico-rereceive">{% trans 'Rereceive' %}</button></li>{% endif %}
+        {% if perms.bots.delete_filereport %}<li><button name="delete" value="{{ row.idta }}" class="ico-trash" onclick="return confirm(this.innerText + ': ' + this.value)">{% trans 'Delete' %} {% trans 'incoming' %}</button></li>{% endif %}
+      </ul>
+    </div>
+    </td>
+    {% include 'bots/botstable/td/statust.html' %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/td/retransmit.html' with td_title=form.retransmit.label %}{% endif %}
+    {% include 'bots/botstable/td/ts.html' %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/td/idroute.html' %}
+    {% include 'bots/botstable/td/fromchannel.html' %}{% endif %}
+    {% include 'bots/botstable/td/infilename.html' %}
+    {% include 'bots/botstable/td/ineditype.html' %}
+    {% include 'bots/botstable/td/inmessagetype.html' %}
+    {% include 'bots/botstable/td/frompartner.html' %}
+    <td class="center">{{ row.nrmessages }}</td>
+    <td>{% if row.filesize %}{{ row.filesize|filesizeformat }}{% endif %}</td>
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/td/tochannel.html' %}{% endif %}
+    {% include 'bots/botstable/td/outfilename.html' %}
+    {% include 'bots/botstable/td/outeditype.html' %}
+    {% include 'bots/botstable/td/outmessagetype.html' %}
+    {% include 'bots/botstable/td/topartner.html' %}
+    {% if perms.bots.change_mutex %}{% include 'bots/botstable/td/divtext.html' %}{% endif %}
+</tr>
+{% if row.errortext %}<tr class="{% cycle 'row1' 'row2' %} botstrstatus{{ row.statust }} errortext">
+    <td></td>{% if not form.actions.is_hidden %}<td></td>{% endif %}
+    <td align="left" class="va-top" colspan="{% if perms.bots.change_mutex %}17{% else %}12{% endif %}">{% include "bots/ta_errortext.html" with truncaterr=True %}</td>
+</tr>{% endif %}
+{% endfor %}</tbody>
+{% endblock %}

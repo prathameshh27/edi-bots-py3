@@ -1,5 +1,3 @@
-DROP TABLE persist ;
-
 CREATE TABLE persist (
 domein VARCHAR(35) ,
 botskey VARCHAR(35) ,
