@@ -30,6 +30,8 @@ def test_path_in_directory(tmp_path):
     (tmp_path / 'logging_other').mkdir()
     inside = botslib.path_in_directory(str(base), 'engine', '123')
     assert inside == os.path.realpath(str(base / 'engine' / '123'))
+    # a backslash is a separator on every platform (the same answer on linux and windows)
+    assert botslib.path_in_directory(str(base), 'engine\\123') == inside
     for name in ('../secret', '..\\secret', '../logging_other/x', str(tmp_path / 'secret'), 'engine/../../secret',
                  '', '.'):
         assert botslib.path_in_directory(str(base), name) is None, name

@@ -231,6 +231,8 @@ Behaviour restored to bots 3.x:
   - source viewer: a ``.py`` file in a directory next to usersys with a name that starts the same
     (``usersys_old``) could be read (WEB-14);
   - a saved selection is read by name from the directory of the user only (WEB-15);
+  - in these checks a backslash in a name is a separator on every platform, as on Windows: a name gives the
+    same file (or the same refusal) on Linux and Windows;
   - file viewer: an incoming file with content type ``text/html`` ran its scripts in the session of the
     user who viewed it; it is now shown in a sandbox: no scripts, no access to the page of bots (WEB-8);
   - lists in the admin (channels, routes): an id or message type with html in it was shown as html; such

@@ -672,8 +672,10 @@ def path_in_directory(directory, *names):
     Absolute path of names in directory; None if that is not a path within directory
     (eg name is '../x', an absolute path, a path to a directory next to directory).
     For file names that are received from outside, eg in a request of the web interface.
+    A backslash is a separator on every platform (as on windows), so a name means the same everywhere.
     """
     directory = os.path.realpath(directory)
+    names = [name.replace('\\', '/') for name in names]
     target = os.path.realpath(os.path.join(directory, *names))
     try:
         if os.path.commonpath([directory, target]) != directory or target == directory:
