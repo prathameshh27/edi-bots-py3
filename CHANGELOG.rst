@@ -55,6 +55,10 @@ Errors that came with the code of bots 3, found by reading the code (each has a 
   the module was imported.
 - xmlrpc: the address has a ``:`` between user name and password. A password written as ``:password`` (the way
   that worked in bots 3) still works.
+- The password of a channel is not shown in the web interface. The form had it as text, so whoever could change
+  (or only view) a channel could read it, and the list showed as many stars as it had characters. Now the form
+  field stays empty (left empty, the channel keeps its password; "Remove the password" removes it), and the list
+  and the read-only view show ``********``. Tests in ``tests/unit/test_web_security.py``.
 
 Carried over from the 3.2.0 release and from a patched bots 3 installation (a 3.2.0 release candidate with
 local changes, compared file by file with the release):

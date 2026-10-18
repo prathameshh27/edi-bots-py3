@@ -280,16 +280,30 @@ class CcodeAdmin(BotsAdmin):
 
 
 class ChannelAdminForm(forms.ModelForm):
+    """The stored password is never sent to the browser: left empty, the channel keeps its password."""
+
+    clear_secret = forms.BooleanField(required=False, label=_('Remove the password'))
 
     class Meta:
         model = models.channel
         fields = "__all__"
+        widgets = {'secret': forms.PasswordInput(render_value=False, attrs={'class': 'vTextField'})}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if 'inorout' in self.fields:
             self.fields["inorout"].widget.attrs["onchange"] = "onchange_inorout()"
             self.fields["type"].widget.attrs["onchange"] = "onchange_inorout()"
+        if 'secret' in self.fields and self.instance.secret:
+            self.fields['secret'].help_text = _('The channel has a password. Leave empty to keep it.')
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get('clear_secret'):
+            cleaned_data['secret'] = ''
+        elif not cleaned_data.get('secret') and self.instance.pk:
+            cleaned_data['secret'] = self.instance.secret
+        return cleaned_data
 
     def clean_host(self):
         # host is mandatory for the types that connect to a host themselves.
@@ -307,7 +321,8 @@ class ChannelAdmin(BotsAdmin):
     """Bots channel admin"""
 
     def secret_(self, obj):
-        return ('*' * len(obj.secret))[:8] if obj.secret else ''
+        # always 8 stars: the number of stars would tell the length of the password
+        return '********' if obj.secret else ''
 
     secret_.short_description = _('Password')
 
@@ -363,7 +378,7 @@ class ChannelAdmin(BotsAdmin):
 
     list_filter = ('inorout', 'type', 'debug')
     ordering = ('idchannel',)
-    readonly_fields = ('comscript_', 'comscript_link',)
+    readonly_fields = ('comscript_', 'comscript_link', 'secret_')
     search_fields = (
         'idchannel',
         'inorout',
@@ -383,7 +398,7 @@ class ChannelAdmin(BotsAdmin):
                 'remove',
                 'comscript_',
                 ('host', 'port'),
-                ('username', 'secret'),
+                ('username', 'secret', 'clear_secret'),
                 ('path', 'filename'),
                 ('archivepath', 'rsrv3'),
                 'desc',
@@ -418,11 +433,14 @@ class ChannelAdmin(BotsAdmin):
     )
 
     def get_fieldsets(self, request, obj=None):
+        fieldsets = copy.deepcopy(self.fieldsets)
+        fields = fieldsets[0][1]['fields']
         if request.user.has_perm('bots.change_translate'):
-            fieldsets = copy.deepcopy(self.fieldsets)
-            fieldsets[0][1]['fields'][fieldsets[0][1]['fields'].index('comscript_')] = 'comscript_link'
-            return fieldsets
-        return self.fieldsets
+            fields[fields.index('comscript_')] = 'comscript_link'
+        if not self.has_change_permission(request, obj):
+            # shown read-only: the password as stars, not as text
+            fields[fields.index(('username', 'secret', 'clear_secret'))] = ('username', 'secret_')
+        return fieldsets
 
     def comscript_(self, obj):
         return script_icon(obj.communicationscript)
