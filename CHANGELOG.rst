@@ -88,7 +88,9 @@ local changes, compared file by file with the release):
   the server being out of step. Bots now waits at most 2 seconds for it.
 - sftp: a file that is not on the server yet is opened for writing, not for append. To append the ssh library
   asks for the size of the file; a server that gives none for a new file got files of 0 bytes and
-  ``TypeError: int() argument ... NoneType`` (the same with bots 3).
+  ``TypeError: int() argument ... NoneType`` (the same with bots 3). The first version of this change put the
+  process record on choosing the mode instead of on sending: a send by sftp was no longer a process, an error in
+  it was not caught, and every file sent made a process record of its own.
 - Channels of type ``db``: new field "Database" (MySQL/MariaDB, PostgreSQL, SQLite, Microsoft SQL Server). When it is
   set bots makes the connection (host, port, username, password; database from "path", or "filename" as the
   scripts of bots 3 used; driver options from "parameters"); the communication script only needs

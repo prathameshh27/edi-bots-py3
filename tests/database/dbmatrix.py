@@ -18,6 +18,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO, DUMPS, WORK = os.path.dirname(os.path.dirname(HERE)), os.path.join(HERE, 'dumps'), os.path.abspath(sys.argv[1])
 WANTED = sys.argv[2:] or ['pg', 'pg2', 'maria', 'mysql']
+os.makedirs(WORK, exist_ok=True)
 SIDE = os.path.join(REPO, 'tests', 'regression', '_side.py')
 UPDATEDB = "import sys; sys.argv[0] = 'bots-updatedb'; from bots.botsupdatedb import start; start()"
 ENGINE = "import sys; sys.argv[0] = 'bots-engine'; from bots.engine import start; start()"

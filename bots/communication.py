@@ -2530,7 +2530,6 @@ class sftp(_comsession):
             if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
                 break
 
-    @botslib.log_session
     def open_mode(self, tofilename, mode):
         """Mode to open a file on the server with. Append ('a') is only needed when the file is there: a new
         file is opened with 'w'. To append the library asks the server for the size of the file; not every
@@ -2542,6 +2541,7 @@ class sftp(_comsession):
                 return 'w'
         return mode
 
+    @botslib.log_session
     def outcommunicate(self):
         """
         do ftp: send files. To be used via receive-dispatcher.

@@ -218,3 +218,26 @@ def test_xmlrpc_address_has_user_and_password_apart(monkeypatch, username, secre
     communication.xmlrpc.connect(session)
     assert seen == [address]
     assert 'pw' not in session.filename
+
+
+def test_an_sftp_send_is_logged_as_a_process_and_choosing_the_mode_is_not(botsenv):
+    """this one came with Bots 4 (the open mode for new files): the process decorator went onto open_mode, so a
+    send was no longer a process, an error in it was not caught, and every file sent wrote a process record"""
+    from bots import botslib, communication
+    from bots.botsconfig import PROCESS
+
+    def processes(name):
+        return len(list(botslib.query('SELECT idta FROM ta WHERE status=%(status)s AND filename=%(name)s',
+                                      {'status': PROCESS, 'name': name})))
+
+    def missing(name):
+        raise IOError(name)
+
+    session = communication.sftp.__new__(communication.sftp)
+    session.session = types.SimpleNamespace(stat=missing)
+    session.channeldict = {'filename': 'x.edi', 'idchannel': 'ut_sftp', 'mdnchannel': ''}
+    session.rootidta = 2 ** 31
+    assert session.open_mode('x.edi', 'a') == 'w'
+    assert processes('open_mode') == 0
+    session.outcommunicate()
+    assert processes('outcommunicate') == 1
