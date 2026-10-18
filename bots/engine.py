@@ -332,7 +332,9 @@ def run():
             botslib.tryrunscript(
                 userscript, scriptname, 'pre' + command, routestorun=use_routestorun
             )
-            errorinrun += router.rundispatcher(command, use_routestorun)
+            errors = router.rundispatcher(command, use_routestorun)
+            # False: the run itself failed (log_session logged the error); that is an error of the run too
+            errorinrun += 1 if errors is False else errors
             botslib.tryrunscript(
                 userscript, scriptname, 'post' + command, routestorun=use_routestorun
             )

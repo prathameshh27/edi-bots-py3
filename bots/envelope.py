@@ -63,9 +63,10 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                 'merge': False,
                 'idroute': idroute,
             }):
+        ta_fromfile = botslib.OldTransaction(row['idta'])
+        ta_tofile = None
         try:
             ta_info = dict(row)
-            ta_fromfile = botslib.OldTransaction(ta_info['idta'])
             # copy db_ta
             ta_tofile = ta_fromfile.copyta(status=endstatus)
             # create filename for enveloped message
@@ -78,12 +79,15 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
             ta_info['filesize'] = os.path.getsize(botslib.abspathdata(ta_info['filename']))
         except Exception:
             txt = txtexc()
+            if ta_tofile is None:
+                # no file for the enveloped message was made: the error stays on the message itself
+                ta_fromfile.update(statust=ERROR, errortext=txt)
+                continue
             ta_tofile.update(statust=ERROR, errortext=txt)
         else:
             # selection is used to update enveloped message;
             ta_tofile.update(statust=OK, **ta_info)
-        finally:
-            ta_fromfile.update(statust=DONE)
+        ta_fromfile.update(statust=DONE)
 
     # **********for messages to merge & envelope
     # editype,messagetype: needed to get right envelope
@@ -115,6 +119,10 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
             # do another query to gather individual idta and filenames
             # rsrv5 (envelope data set in mapping) is part of the group: messages with different
             # envelope data are not merged into one interchange.
+            # an empty value (NULL) of the group only matches NULL ("=" never matches NULL)
+            same_group = ' AND '.join(
+                f'{name} IS NULL' if ta_info[name] is None else f'{name}=%({name})s'
+                for name in ('editype', 'messagetype', 'testindicator', 'envelope', 'rsrv3', 'charset', 'rsrv5'))
             filename_list = []
             for row2 in botslib.query(
                     """SELECT idta, filename
@@ -124,15 +132,9 @@ def mergemessages(startstatus, endstatus, idroute, rootidta=None, **kwargs):
                        AND statust=%(statust)s
                        AND merge=%(merge)s
                        AND idroute=%(idroute)s
-                       AND editype=%(editype)s
-                       AND messagetype=%(messagetype)s
                        AND (frompartner=%(frompartner)s OR frompartner IS NULL)
                        AND (topartner=%(topartner)s OR topartner IS NULL)
-                       AND testindicator=%(testindicator)s
-                       AND envelope=%(envelope)s
-                       AND rsrv3=%(rsrv3)s
-                       AND charset=%(charset)s
-                       AND """ + ('rsrv5 IS NULL' if ta_info['rsrv5'] is None else 'rsrv5=%(rsrv5)s') + """
+                       AND """ + same_group + """
                        ORDER BY idta
                     """,
                     {

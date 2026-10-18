@@ -111,6 +111,7 @@ def _translate_one_file(row, routedict, endstatus, userscript, scriptname):
      - write the results of translation (no enveloping yet)
     """
     # pylint: disable=too-many-locals, too-many-nested-blocks, too-many-branches, too-many-statements, broad-exception-caught  # flake8: E501
+    edifile = None      # stays None when the file can not be read at all (eg an unknown editype)
     try:
         ta_fromfile = botslib.OldTransaction(row['idta'])
         ta_parsed = ta_fromfile.copyta(status=PARSED)
@@ -378,9 +379,13 @@ def _translate_one_file(row, routedict, endstatus, userscript, scriptname):
 
     except Exception:
         txt = txtexc()
-        ta_parsed.update(statust=ERROR, errortext=txt, **edifile.ta_info)
-        ta_parsed.deletechildren()
-        edifile.handleconfirm(ta_fromfile, routedict, error=True)
+        if edifile is None:
+            # nothing was read: no values of the file to keep, no confirmation to make
+            ta_parsed.update(statust=ERROR, errortext=txt)
+        else:
+            ta_parsed.update(statust=ERROR, errortext=txt, **edifile.ta_info)
+            ta_parsed.deletechildren()
+            edifile.handleconfirm(ta_fromfile, routedict, error=True)
         botsglobal.logger.error(
             'Error in translating input file "%(filename)s":\n%(exc)s',
             {'filename': row['filename'], 'exc': txt},

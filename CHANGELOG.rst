@@ -23,6 +23,39 @@ The reference of the regression tests is made with the release.
 - xmlnocheck: a record without the internal ``BOTSIDnr`` (made or changed by a mapping itself) can be written
   again.
 
+Errors that came with the code of bots 3, found by reading the code (each has a test in
+``tests/unit/test_engine_errors.py`` or ``tests/regression/test_engine_run_errors.py``):
+
+- A file that can not be read at all (an unknown editype) is an error of that file. The error handler used the
+  edi file that was never made (``NameError``): the rest of the route's files were skipped in that run.
+- An error while enveloping one message (the copy of its record fails) is put on that message. It went to the
+  file of the message before it, or the handler itself failed.
+- Messages to merge with an empty value (NULL) in one of the columns they are grouped by (editype, messagetype,
+  testindicator, envelope, rsrv3, charset) are merged. They matched nothing, stayed TRANSLATED, and only the log
+  said so.
+- A user script whose own import fails (a library that is not installed) is reported as an error in that
+  script. It counted as "no script": for a communication script bots' own channel class ran instead, without a
+  word, and the failure was remembered for the rest of the run.
+- An error in the set-up of a run itself (crash recovery, automatic retry, resend, rereceive) makes the run end
+  with "errors in the run" (exit code 2). It was counted as no error: exit code 0, no report, no error mail.
+- A received file that can not be removed from its folder (locked, no rights) is an error of the channel; the
+  files after it are still received (it is received again in the next run). The first such file ended the
+  channel. The same for communication scripts that receive files.
+- Sending or receiving that fails still disconnects: the lock file of the channel is removed and the next run is
+  not blocked.
+- A failing database statement in ``query()`` and ``insertta()`` is rolled back (PostgreSQL refused every later
+  statement), and the cursor is closed in all three statement functions.
+- A new counter given a value (``unique(name, updatewith=...)``) stores that value. It stored 1: automatic retry
+  of communication did nothing in its first two runs, and the daily clean-up ran twice on the first day.
+- ``unique_runcounter`` (acceptance tests) starts again at 0 after the largest number, as ``unique`` does.
+- Confirm rules read twice in one process are not doubled.
+- The stack of processes stays right when recording the end of a process fails (later records had the wrong
+  process and the wrong start of the run).
+- Channel debugging (``LoggerPipe``) writes to the engine's logger; its default was the logger that existed when
+  the module was imported.
+- xmlrpc: the address has a ``:`` between user name and password. A password written as ``:password`` (the way
+  that worked in bots 3) still works.
+
 Carried over from the 3.2.0 release and from a patched bots 3 installation (a 3.2.0 release candidate with
 local changes, compared file by file with the release):
 

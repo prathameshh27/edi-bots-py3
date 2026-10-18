@@ -72,8 +72,9 @@ MAXLINE = 100000000
 class LoggerPipe:
     """Class to redirect stderr, stdout write(msg)/flush(), print() text to a logger."""
 
-    def __init__(self, logger=botsglobal.logger, level=LOG_LEVELS['DEBUG']):
-        self.logger = logger
+    def __init__(self, logger=None, level=LOG_LEVELS['DEBUG']):
+        # the engine's logger as it is now (a default argument would be the logger when this module was imported)
+        self.logger = logger or botsglobal.logger
         self.level = level
         self.buffer = ''
 
@@ -296,8 +297,11 @@ class _comsession:
                         })
                     if connect_tries >= maxconnectiontries:
                         raise
-            self.outcommunicate()
-            self.disconnect()
+            try:
+                self.outcommunicate()
+            finally:
+                # also after an error: disconnect removes the channel's lock, a lock left would block the channel
+                self.disconnect()
 
         else:
             # self.channeldict['inorout'] == 'in'
@@ -369,10 +373,26 @@ class _comsession:
                                 # maxfailures is not reached. return without error
                                 return
                             raise
-                self.incommunicate()
-                self.disconnect()
+                try:
+                    self.incommunicate()
+                finally:
+                    # also after an error: disconnect removes the channel's lock, a lock left would block the channel
+                    self.disconnect()
             self.postcommunicate()
         self.archive()
+
+    def remove_received_file(self, filename):
+        """
+        Remove a received file from its folder. A file that can not be removed is an error of the channel, but the
+        files after it are still received; it is received again in the next run.
+        """
+        try:
+            os.remove(filename)
+        except OSError as exc:
+            txt = _('Received file "%(filename)s" could not be removed from its folder;'
+                    ' it will be received again: %(exc)s') % {'filename': filename, 'exc': exc}
+            botsglobal.logger.error(txt)
+            botslib.ErrorProcess(functionname='remove-received-file', errortext=txt, channeldict=self.channeldict)
 
     def archive(self):
         """
@@ -1362,7 +1382,7 @@ class file(_comsession):
                 ta_to.update(filename=tofilename, statust=OK, filesize=filesize)
                 ta_from.update(statust=DONE)
                 if self.channeldict['remove']:
-                    os.remove(fromfilename)
+                    self.remove_received_file(fromfilename)
             finally:
                 remove_ta = False
             if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
@@ -2606,9 +2626,14 @@ class xmlrpc(_comsession):
         # security patch of xmlrpc lib
         defusedxml.xmlrpc.monkey_patch()
 
-        uri = "http://{username}{secret}@{host}:{port}".format_map(self.channeldict)
-        # used as 'filename' in reports etc
-        self.filename = "http://{username}@{host}:{port}".format_map(self.channeldict)
+        # user and password with ':' between them; bots 3 had none, so a secret written as ':password' is accepted
+        username = self.channeldict['username'] or ''
+        secret = (self.channeldict['secret'] or '').removeprefix(':')
+        credentials = f'{username}:{secret}' if secret else username
+        address = f"{self.channeldict['host']}:{self.channeldict['port']}"
+        uri = f'http://{credentials}@{address}' if credentials else f'http://{address}'
+        # used as 'filename' in reports etc (without the password)
+        self.filename = f'http://{username}@{address}' if username else f'http://{address}'
         session = xmlrpclib.ServerProxy(uri)
         # self.xmlrpc_call is called in communication
         self.xmlrpc_call = getattr(session, self.channeldict['path'])
@@ -2985,7 +3010,7 @@ class communicationscript(_comsession):
                     ta_to.update(filename=tofilename, statust=OK, filesize=filesize)
                     ta_from.update(statust=DONE)
                     if self.channeldict['remove']:
-                        os.remove(fromfilename)
+                        self.remove_received_file(fromfilename)
                 finally:
                     remove_ta = False
                 if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
@@ -3030,7 +3055,7 @@ class communicationscript(_comsession):
                     ta_to.update(filename=tofilename, statust=OK, filesize=filesize)
                     ta_from.update(statust=DONE)
                     if self.channeldict['remove']:
-                        os.remove(fromfilename)
+                        self.remove_received_file(fromfilename)
                 finally:
                     remove_ta = False
                 if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:

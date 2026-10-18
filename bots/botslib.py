@@ -248,9 +248,11 @@ class NewProcess(NewTransaction):
         self.processlist.append(self.idta)
 
     def update(self, **ta_info):
-        """update process, delete from process-stack."""
-        super().update(**ta_info)
-        self.processlist.pop()
+        """update process, delete from process-stack (also when the update fails: the process is over)."""
+        try:
+            super().update(**ta_info)
+        finally:
+            self.processlist.pop()
 
 
 # **********************************************************/**
@@ -351,9 +353,15 @@ def dictfetchall(cursor):
 def query(querystring, *args):
     """general query. yields rows from query"""
     cursor = botsglobal.db.cursor()
-    cursor.execute(querystring, *args)
-    results = dictfetchall(cursor)
-    cursor.close()
+    try:
+        cursor.execute(querystring, *args)
+        results = dictfetchall(cursor)
+    except Exception:
+        # rollback is needed for postgreSQL: after an error it refuses every statement until the rollback
+        botsglobal.db.rollback()
+        raise
+    finally:
+        cursor.close()
     yield from results
 
 
@@ -362,14 +370,14 @@ def changeq(querystring, *args):
     cursor = botsglobal.db.cursor()
     try:
         cursor.execute(querystring, *args)
+        botsglobal.db.commit()
+        return cursor.rowcount
     except Exception:
         # rollback is needed for postgreSQL as this is also used by user scripts (eg via persist)
         botsglobal.db.rollback()
         raise
-    botsglobal.db.commit()
-    terug = cursor.rowcount
-    cursor.close()
-    return terug
+    finally:
+        cursor.close()
 
 
 def insertta(querystring, *args):
@@ -378,15 +386,21 @@ def insertta(querystring, *args):
     from insert get back the idta; this is different with postgrSQL.
     """
     cursor = botsglobal.db.cursor()
-    cursor.execute(querystring, *args)
-    newidta = cursor.lastrowid if hasattr(cursor, "lastrowid") else 0
-    if not newidta:
-        # no cursor.lastrowid with postgrSQL
-        cursor.execute("""SELECT lastval() as idta""")
-        newidta = dictfetchone(cursor)["idta"]
-    botsglobal.db.commit()
-    cursor.close()
-    return newidta
+    try:
+        cursor.execute(querystring, *args)
+        newidta = cursor.lastrowid if hasattr(cursor, "lastrowid") else 0
+        if not newidta:
+            # no cursor.lastrowid with postgrSQL
+            cursor.execute("""SELECT lastval() as idta""")
+            newidta = dictfetchone(cursor)["idta"]
+        botsglobal.db.commit()
+        return newidta
+    except Exception:
+        # rollback is needed for postgreSQL: after an error it refuses every statement until the rollback
+        botsglobal.db.rollback()
+        raise
+    finally:
+        cursor.close()
 
 
 def unique_runcounter(domain, updatewith=None):
@@ -395,10 +409,9 @@ def unique_runcounter(domain, updatewith=None):
     domain += 'bots_1_8_4_9_6'
     nummer = getattr(botsglobal, domain, 0)
     if updatewith is None:
-        nummer += 1
+        # as unique: after the largest number the counter starts again at 0
+        nummer = 0 if nummer >= MAXINT else nummer + 1
         updatewith = nummer
-        if updatewith > MAXINT:
-            updatewith = 0
     setattr(botsglobal, domain, updatewith)
     return nummer
 
@@ -475,9 +488,10 @@ def _unique(cursor, domein, updatewith, seedfrom):
             seed = 0
         if 0 < seed < MAXINT:
             nummer = seed + 1
+    # a value given is stored (the next call returns it); the number returned says the counter is new
     cursor.execute(
         """INSERT INTO uniek (domein,nummer) VALUES (%(domein)s,%(nummer)s)""",
-        {"domein": domein, "nummer": nummer})
+        {"domein": domein, "nummer": nummer if updatewith is None else updatewith})
     return nummer
 
 
@@ -629,24 +643,25 @@ def botsimport(*args):
     try:
         module = botsbaseimport(modulepath)
 
-    except ImportError as exc:
-        botsglobal.not_import.add(modulepath)
-        errs = [
-            _('No import of module "%(modulefile)s": %(txt)s.'),
-            {'modulefile': modulefile, 'txt': exc},
-        ]
-        botsglobal.logger.debug(*errs)
-        _exception = BotsImportError(*errs)
-        _exception.__cause__ = None
-        raise _exception from exc
-
     except Exception as exc:
-        errs = [
-            _('Error in import of module "%(modulefile)s":\n%(txt)s'),
-            {'modulefile': modulefile, 'txt': exc},
-        ]
+        # 'no script' only when the script itself (or its folder) is not there; an import inside the script
+        # that fails (eg of a library that is not installed) is an error in the script.
+        missing = (getattr(exc, 'name', None) or '') if isinstance(exc, ImportError) else ''
+        if missing and (modulepath == missing or modulepath.startswith(missing + '.')):
+            botsglobal.not_import.add(modulepath)
+            errs = [
+                _('No import of module "%(modulefile)s": %(txt)s.'),
+                {'modulefile': modulefile, 'txt': exc},
+            ]
+            error_class = BotsImportError
+        else:
+            errs = [
+                _('Error in import of module "%(modulefile)s":\n%(txt)s'),
+                {'modulefile': modulefile, 'txt': exc},
+            ]
+            error_class = ScriptImportError
         botsglobal.logger.debug(*errs)
-        _exception = ScriptImportError(*errs)
+        _exception = error_class(*errs)
         _exception.__cause__ = None
         raise _exception from exc
 
@@ -907,6 +922,8 @@ def prepare_confirmrules():
      - as confirmrules are used for incoming and outgoing (x12, edifact, email)
        this will almost always lead to better performance.
     """
+    # read again from the start: rules read before (eg in an earlier run in this process) are not doubled
+    botsglobal.confirmrules.clear()
     for confirmdict in query(
             """SELECT confirmtype,
                 ruletype,
