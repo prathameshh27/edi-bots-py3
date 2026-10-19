@@ -209,6 +209,9 @@ uses.</td><td>default</td><td>a name in <code>DATABASES</code></td></tr>
 <tr><td><code>django_db_connection</code> <span class="badge green">new in 4.0</span> <span class="badge
 gray">advanced</span></td><td>True: the engine uses the database connection of Django instead of its own
 driver connection.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>sqlite_synchronous</code> <span class="badge green">new in 4.0</span></td><td>SQLite only: how
+much a commit waits for the disk. SQLite is always in WAL mode. See <a href="#databases--sqlite">SQLite: safe
+and fast</a>.</td><td>NORMAL</td><td>NORMAL / FULL / OFF</td></tr>
 <tr><td><code>compatibility_handle_message_errors</code> <span class="badge red">removed</span></td><td>Was for
 mappings of before Bots 3.0. Ignored.</td><td>–</td><td>–</td></tr>
 </table></div>
@@ -853,10 +856,34 @@ class="ui">Plugins</span> → <span class="ui">Read plugin</span>.</li>
 transactions</span> (the history and all counters). That plugin can be very large; use it only when you need the
 history in the new database.</p></div>
 
+<h3 id="databases--sqlite">SQLite: safe and fast <span class="badge orange">changed in 4.0</span></h3>
+<p>Bots 4 keeps SQLite in WAL mode (write-ahead log) with <code>synchronous=NORMAL</code>, for the engine and for
+the web interface. Bots 3 used the rollback journal with <code>synchronous=OFF</code>. Every environment is switched
+the first time a Bots 4 program opens it; nothing has to be done.</p>
+<div class="table-wrap"><table>
+<tr><th><code>bots.ini [settings] sqlite_synchronous</code></th><th>A crash of a program</th><th>A power cut or a
+crash of the system</th><th>200 files passed through</th></tr>
+<tr><td><b>NORMAL</b> (default)</td><td>nothing lost</td><td>the database is never damaged; the last commits (about
+the last second) can be lost</td><td>4.6 s</td></tr>
+<tr><td>FULL</td><td>nothing lost</td><td>nothing that was committed is lost</td><td>59.8 s</td></tr>
+<tr><td>OFF (WAL)</td><td>nothing lost</td><td>recent commits can be lost, the database can be damaged</td><td>–</td></tr>
+<tr><td>Bots 3: rollback journal, OFF</td><td>nothing lost</td><td>recent commits can be lost, the database can be
+damaged</td><td>10.2 s</td></tr>
+</table></div>
+<p>The times: the engine (bots-engine) passing 200 files through, measured on one Windows machine with an SSD (the
+middle of three runs); the rollback journal with <code>FULL</code>, SQLite's own default, took 218 s. WAL is faster
+because a commit no longer makes and removes a journal file, and readers (the web interface) no longer block the
+engine. Use <code>FULL</code> only when losing the last second of work on a power cut is not acceptable.</p>
+<p>In WAL mode SQLite keeps the newest changes in two files next to the database for a while:
+<code>botsdb-wal</code> and <code>botsdb-shm</code>. Keep the database on a disk of the machine itself, never on
+a network drive.</p>
+
 <h3 id="databases--howto-backup">How to back up the database</h3>
 <ul>
-<li><b>SQLite</b>: stop the engine (no run may be going), then copy <code>botssys/sqlitedb/botsdb</code>. A copy made
-during a run can be damaged.</li>
+<li><b>SQLite</b>: stop the engine and the web interface (no run may be going), then copy
+<code>botssys/sqlitedb/botsdb</code> together with <code>botsdb-wal</code> and <code>botsdb-shm</code> if they are
+there; a copy of <code>botsdb</code> alone can miss the newest changes. While Bots runs: <code>sqlite3 botsdb
+".backup botsdb.copy"</code>.</li>
 <li><b>PostgreSQL</b>: <code>pg_dump -h db.example.com -U bots -F c -f botsdb.dump botsdb</code>.</li>
 <li><b>MySQL/MariaDB</b>: <code>mysqldump -h db.example.com -u bots -p --single-transaction botsdb &gt; botsdb.sql</code>.</li>
 <li><b>SQL Server</b>: <code>BACKUP DATABASE botsdb TO DISK = 'D:\backup\botsdb.bak'</code>.</li>
@@ -875,7 +902,8 @@ during a run can be damaged.</li>
 <tr><td><code>HOST</code>, <code>PORT</code></td><td>Server and port. Not used by SQLite.</td><td>empty</td><td><code>db.example.com</code>, <code>5432</code></td></tr>
 <tr><td><code>OPTIONS</code></td><td>Options for the driver. Django-only keys (<code>isolation_level</code>,
 <code>pool</code>, <code>server_side_binding</code>, <code>assume_role</code>) are not passed to the engine's
-driver.</td><td>SQLite: <code>init_command</code> <code>PRAGMA synchronous=OFF;</code>,
+driver.</td><td>SQLite: <code>init_command</code> <code>PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;</code>
+(Bots sets both itself as well, see <a href="#databases--sqlite">SQLite: safe and fast</a>),
 <code>transaction_mode</code> <code>EXCLUSIVE</code>, <code>timeout</code> 99.0</td><td>MySQL <code>{'charset':
 'utf8mb4'}</code>; PostgreSQL <code>{'sslmode': 'require'}</code></td></tr>
 </table></div>
@@ -899,6 +927,11 @@ recognised or no backup confirmed, 3 other error.</p>
 <h3 id="databases--trouble">Troubleshooting</h3>
 <div class="table-wrap"><table class="fix">
 <tr><th>What you see</th><th>Why</th><th>Fix</th></tr>
+<tr><td><em>bots.ini [settings] sqlite_synchronous = …: it can be NORMAL, FULL, OFF.</em></td><td>A value that is
+not one of the three.</td><td>Correct the line in <code>bots.ini</code> or remove it (NORMAL).</td></tr>
+<tr><td><code>botsdb-wal</code> grows large and stays large</td><td>A program keeps a read open for a long time,
+so the changes can not be written into the database.</td><td>Let the run finish and close long lists in the web
+interface; the file is emptied by itself. It is not an error.</td></tr>
 <tr><td><em>Could not connect to database. Database settings are in bots/config/settings.py. Error: "…"</em>
 (engine log)</td><td>Server not reachable, wrong user/password/name, or the driver is missing (<code>No module named
 'MySQLdb'</code>, <code>'psycopg'</code>, <code>'pyodbc'</code>).</td><td>1. Read the error in quotes. 2. Install

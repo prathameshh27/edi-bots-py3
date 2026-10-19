@@ -365,6 +365,11 @@ def generalinit(configdir=None):
     # Init django ##############################################################
     if not django.conf.settings.configured:
         django.setup()
+        # every SQLite connection of django as the engine's (WAL; bots.ini [settings] sqlite_synchronous),
+        # also in environments whose settings.py was made before
+        from django.db.backends.signals import connection_created  # pylint: disable=import-outside-toplevel
+        from . import botssqlite  # pylint: disable=import-outside-toplevel
+        connection_created.connect(botssqlite.on_connection_created, dispatch_uid='bots_sqlite_pragmas')
 
     # settings are accessed using botsglobal
     botsglobal.settings = django.conf.settings

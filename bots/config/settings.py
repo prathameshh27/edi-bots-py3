@@ -57,7 +57,8 @@ DATABASES = {
         "HOST": "",         # not needed for SQLite
         "PORT": "",         # not needed for SQLite
         "OPTIONS": {
-            "init_command": "PRAGMA synchronous=OFF;",
+            # bots sets every connection to WAL with synchronous NORMAL (bots.ini [settings] sqlite_synchronous)
+            "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
             "transaction_mode": "EXCLUSIVE",
             "timeout": 99.0,
             # "detect_types": sqlite3.PARSE_DECLTYPES,

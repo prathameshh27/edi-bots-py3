@@ -22,6 +22,12 @@ The reference of the regression tests is made with the release.
   bytes-like object is required``, and the encoding and the line ends depended on the platform.
 - xmlnocheck: a record without the internal ``BOTSIDnr`` (made or changed by a mapping itself) can be written
   again.
+- SQLite is kept in WAL mode (write-ahead log) with ``synchronous=NORMAL``, for the engine and the web interface,
+  also in environments made before: a power cut or a crash of the system can no longer damage the database (with
+  bots 3's rollback journal and ``synchronous=OFF`` it could), and the engine is faster (200 files passed through:
+  4.6 s instead of 10.2 s on the machine of the tests). New ``bots.ini [settings] sqlite_synchronous``: NORMAL
+  (default; a power cut can lose the last commits), FULL (nothing is lost; 3 to 6 times slower) or OFF. A backup
+  by copying the file takes ``botsdb-wal`` and ``botsdb-shm`` along (manual: Databases for Bots itself).
 
 Errors that came with the code of bots 3, found by reading the code (each has a test in
 ``tests/unit/test_engine_errors.py`` or ``tests/regression/test_engine_run_errors.py``):
