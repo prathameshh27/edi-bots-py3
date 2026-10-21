@@ -170,6 +170,12 @@ failures</span>; when that is empty this value; when both are empty, one try.</t
 (ftp, mail, http, database...).</td><td>10</td><td>seconds</td></tr>
 <tr><td><code>ftptimeout</code></td><td>Time-out in seconds of the ftp, ftps, ftpis and sftp connections.</td>
 <td>10</td><td>seconds</td></tr>
+<tr><td><code>sftp_known_hosts</code> <span class="badge green">new in 4.0</span></td><td>The file with the host keys
+of the sftp servers (OpenSSH known_hosts format). See <a href="#channel-sftp--hostkey">The host key of the
+server</a>.</td><td><code>sftp_known_hosts</code> in the config directory</td><td>a file</td></tr>
+<tr><td><code>sftp_unknown_host</code> <span class="badge green">new in 4.0</span></td><td>An sftp server not in
+that file yet: record its key and check it from then on, refuse it, or accept it unchecked (as Bots 3).</td>
+<td><code>record</code></td><td><code>record</code>, <code>refuse</code>, <code>accept</code></td></tr>
 <tr><td><code>max_number_errors</code></td><td>Number of errors Bots collects in an incoming file before it stops
 parsing it and reports them. Some errors stop parsing at once.</td><td>10</td><td>eg <code>20</code></td></tr>
 <tr><td><code>get_checklevel</code></td><td>How much Bots checks the paths that mappings use in
@@ -1988,21 +1994,18 @@ variables, eg <code>'PASSWORD': os.environ.get('BOTS_DB_PASSWORD', '')</code>, s
 </ol>
 
 <h3 id="security--howto-sftp">How to check the host key of an SFTP server</h3>
-<p>By itself Bots accepts any host key of an SFTP server, as Bots 3 did. To check it, give the channel a
-communication script with a <code>hostkey</code> function.</p>
+<p>Bots checks the host key of every SFTP server against the file <code>sftp_known_hosts</code> in the config
+directory before it sends the password or the key (<a href="#channel-sftp--hostkey">The host key of the
+server</a>). By default the key of a new server is recorded the first time.</p>
 <ol class="steps">
 <li><b>Get the key</b> of the server and check its fingerprint with the partner: <code>ssh-keyscan
-sftp.example.net &gt;&gt; /srv/bots/keys/known_hosts</code>.</li>
-<li><b>Write</b> <code>usersys/communicationscripts/partnera_sftp_out.py</code> (the name of the channel):
-<pre><code class="language-python">import paramiko
-
-
-def hostkey(channeldict):
-    """the key the server must have"""
-    keys = paramiko.hostkeys.HostKeys('/srv/bots/keys/known_hosts')
-    return keys.lookup(channeldict['host'])['ssh-ed25519']
-</code></pre></li>
-<li><b>Run</b> the route. A server with another key is refused with <code>Bad host key from server</code>.</li>
+sftp.example.net</code>, or <code>ssh-keyscan -p 2222 sftp.example.net</code> for another port.</li>
+<li><b>Add the line</b> to <code>config/sftp_known_hosts</code> before the first run. For a server on another
+port the name is written <code>[sftp.example.net]:2222</code>, as ssh-keyscan does.</li>
+<li><b>To be strict</b>, set <code>bots.ini [settings] sftp_unknown_host = refuse</code>: then a server that is
+not in the file yet is never signed in to.</li>
+<li><b>Run</b> the channel. A server with another key is refused with "the host key of … is not the one recorded
+in …"; nothing is sent to it.</li>
 </ol>
 <p>For login with a key instead of a password, set the channel field <span class="ui">Private key file</span>; the
 <span class="ui">password</span> field is then the passphrase of the key. RSA, ECDSA and Ed25519 keys work.</p>
@@ -2064,9 +2067,13 @@ paths; use a key without passphrase readable by the Bots account.</td></tr>
 channel</td><td><span class="ui">Verify server certificate</span> is on and the server's certificate is not from
 a known CA.</td><td>Set <span class="ui">CA certificate file</span> to the CA or server certificate; untick the check
 only if you accept the risk.</td></tr>
-<tr><td><code>Bad host key from server</code> (sftp)</td><td>The key of the server differs from the one your
-<code>hostkey</code> script returns.</td><td>Ask the partner whether the key changed; update
-<code>known_hosts</code> only after checking the fingerprint.</td></tr>
+<tr><td><code>sftp: the host key of … is not the one recorded in …</code></td><td>The key of the server differs
+from the one in <code>sftp_known_hosts</code> (or the one your <code>hostkey</code> script returns).</td><td>Ask the
+partner whether the key changed; remove the server's line from the file only after checking the new
+fingerprint.</td></tr>
+<tr><td><code>sftp: … is not in …, and bots.ini [settings] sftp_unknown_host is refuse</code></td><td>A new server, and
+unknown servers are refused.</td><td>Check the fingerprint in the error with the partner, then add the line it
+gives to the file.</td></tr>
 <tr><td><code>TypeError: 'NoneType' object is not subscriptable</code> in a <code>hostkey</code> script</td><td>The
 host is not in <code>known_hosts</code> (lookup returns None).</td><td>Add the key with <code>ssh-keyscan</code>; the
 name must be the <span class="ui">host</span> of the channel.</td></tr>

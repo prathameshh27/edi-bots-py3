@@ -718,10 +718,25 @@ partner only gets the public half.</p></div>
 <code>{overwrite}</code>; a new file is opened for writing. With a Tmp-part it renames after writing.</li>
 <li>SFTP has no ASCII mode: files are transferred exactly.</li>
 </ol>
-<div class="note warn"><span class="label">Watch out</span><p>Bots does <b>not</b> check the host key of the server,
-unless a communication script supplies it with a function <code>hostkey(channeldict)</code> that returns a paramiko
-key object. This is the same as in Bots 3. Without it, you can not be sure you talk to the right server. See
-<a href="#communication-scripts">Communication scripts</a>.</p></div>
+<h4 id="channel-sftp--hostkey">The host key of the server <span class="badge green">new in 4.0</span></h4>
+<p>Before Bots sends the password or the key, it checks that the server shows the host key recorded for it in the
+file <code>sftp_known_hosts</code> in the config directory (OpenSSH's known_hosts format; another file with
+<code>bots.ini [settings] sftp_known_hosts</code>). So a server that pretends to be the partner's gets nothing.</p>
+<ul>
+<li>The first time Bots connects to a server, its key is added to the file and checked from then on
+(<code>sftp_unknown_host = record</code>, the default). Compare the fingerprint in the log
+(<code>SHA256:…</code>) with the one the partner gives you.</li>
+<li>With <code>sftp_unknown_host = refuse</code> an unknown server is not signed in to: the error gives the line
+to add to the file once you have checked the key with the partner. With <code>accept</code> an unknown server is
+used without a check, as in Bots 3.</li>
+<li>A known server with another key is always refused: "the host key of … is not the one recorded in …". When the
+partner really changed its key, remove the server's line from the file; the new key is recorded at the next
+connection.</li>
+<li>A communication script with <code>hostkey(channeldict)</code> (as in Bots 3) still wins: then that key is
+checked and the file is not used. See <a href="#communication-scripts">Communication scripts</a>.</li>
+</ul>
+<p>A server on port 22 is written as <code>sftp.example.net</code>, on another port as
+<code>[sftp.example.net]:2222</code>, as OpenSSH does; a line copied from OpenSSH's own known_hosts works too.</p>
 
 <h3 id="channel-sftp--howto">How to set up an SFTP channel with a key</h3>
 <ol class="steps">

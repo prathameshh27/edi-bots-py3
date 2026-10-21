@@ -2339,6 +2339,74 @@ def load_private_key(filename, passphrase=None, keytype=None):
         {'filename': filename, 'errors': '; '.join(errors)})
 
 
+SFTP_UNKNOWN_HOST = ('record', 'refuse', 'accept')
+
+
+def sftp_known_hosts():
+    """the known_hosts file of sftp (OpenSSH format): bots.ini [settings] sftp_known_hosts, else config/sftp_known_hosts"""
+    path = botsglobal.ini.get('settings', 'sftp_known_hosts', '')
+    return botslib.join(path) if path else os.path.join(botsglobal.ini.get('directories', 'config'), 'sftp_known_hosts')
+
+
+def sftp_host_entry(hostname, port):
+    """the name of a server in a known_hosts file, as OpenSSH writes it"""
+    return hostname if port == 22 else f'[{hostname}]:{port}'
+
+
+def sftp_fingerprint(key):
+    """as OpenSSH shows it: SHA256:<base64 without padding>"""
+    import hashlib  # pylint: disable=import-outside-toplevel
+    return 'SHA256:' + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode('ascii').rstrip('=')
+
+
+def sftp_check_host_key(transport, hostname, port, expected=None):
+    """
+    Check the server's host key after the SSH handshake and before any password or key is sent.
+    expected: the key a communication script gave (hostkey()); else the keys recorded for this server in
+    the known_hosts file. A server not in the file: bots.ini [settings] sftp_unknown_host
+    'record' (default: the key is added to the file and checked from then on), 'refuse' or 'accept'.
+    """
+    import paramiko  # pylint: disable=import-outside-toplevel
+    server_key = transport.get_remote_server_key()
+    entry = sftp_host_entry(hostname, port)
+    if expected is not None:
+        if server_key != expected:
+            raise CommunicationError(
+                _('sftp: the host key of %(host)s (%(fingerprint)s) is not the one the communication script gives.'),
+                {'host': entry, 'fingerprint': sftp_fingerprint(server_key)})
+        return
+    path = sftp_known_hosts()
+    known = paramiko.HostKeys(path) if os.path.isfile(path) else paramiko.HostKeys()
+    recorded = known.lookup(entry)
+    if recorded:
+        if recorded.get(server_key.get_name()) != server_key:
+            raise CommunicationError(
+                _('sftp: the host key of %(host)s (%(fingerprint)s) is not the one recorded in %(file)s: the server '
+                  'may not be the partner\'s. Nothing was sent. If the partner really changed its key, remove the '
+                  'line of %(host)s from that file; the new key is recorded at the next connection.'),
+                {'host': entry, 'fingerprint': sftp_fingerprint(server_key), 'file': path})
+        return
+    policy = botsglobal.ini.get('settings', 'sftp_unknown_host', 'record').strip().lower()
+    if policy not in SFTP_UNKNOWN_HOST:
+        raise CommunicationError(_('bots.ini [settings] sftp_unknown_host must be one of %(choices)s, not "%(value)s".'),
+                                 {'choices': ', '.join(SFTP_UNKNOWN_HOST), 'value': policy})
+    if policy == 'refuse':
+        raise CommunicationError(
+            _('sftp: %(host)s is not in %(file)s, and bots.ini [settings] sftp_unknown_host is refuse. Nothing was '
+              'sent. Check its host key %(fingerprint)s with the partner, then add this line to that file: %(line)s'),
+            {'host': entry, 'file': path, 'fingerprint': sftp_fingerprint(server_key),
+             'line': f'{entry} {server_key.get_name()} {server_key.get_base64()}'})
+    if policy == 'accept':
+        botsglobal.logger.warning('sftp: the host key of %s (%s) is not checked: it is not in %s.', entry,
+                                  sftp_fingerprint(server_key), path)
+        return
+    botslib.dirshouldbethere(os.path.dirname(path))
+    with open(path, 'a', encoding='ascii') as file:
+        file.write(f'{entry} {server_key.get_name()} {server_key.get_base64()}\n')
+    botsglobal.logger.info('sftp: the host key of %s (%s) is recorded in %s; from now on it is checked.', entry,
+                           sftp_fingerprint(server_key), path)
+
+
 class sftp(_comsession):
     """
     SFTP: SSH File Transfer Protocol (SFTP is not FTP run over SSH,
@@ -2443,18 +2511,34 @@ class sftp(_comsession):
         if ignored:
             botsglobal.logger.debug('sftp channel parameters not used for the connection: %s', ignored)
         parameters = dict((key, value) for key, value in parameters.items() if key in known)
-        # connect and use paramiko Transport to negotiate SSH2 across the connection
+        # connect and use paramiko Transport to negotiate SSH2 across the connection; the server's host key is
+        # checked before the password or the key is sent
         self.transport = paramiko.Transport((hostname, port), **parameters)
-        self.transport.connect(
-            username=self.channeldict["username"],
-            password=secret,
-            hostkey=hostkey,
-            pkey=pkey,
-        )
+        recorded = self._recorded_key_types(paramiko, hostname, port) if hostkey is None else [hostkey.get_name()]
+        if recorded:                    # ask the server for a key of a type that is known for it
+            options = self.transport.get_security_options()
+            options.key_types = [k for k in options.key_types if k in recorded] or options.key_types
+        try:
+            self.transport.start_client(timeout=botsglobal.ini.getint('settings', 'ftptimeout', 10))
+            sftp_check_host_key(self.transport, hostname, port, hostkey)
+            if pkey is not None:
+                self.transport.auth_publickey(self.channeldict['username'], pkey)
+            elif secret is not None:
+                self.transport.auth_password(self.channeldict['username'], secret)
+        except Exception:
+            self.transport.close()
+            raise
         self.session = paramiko.SFTPClient.from_transport(self.transport)
         channel = self.session.get_channel()
         channel.settimeout(botsglobal.ini.getint('settings', 'ftptimeout', 10))
         self.set_cwd()
+
+    @staticmethod
+    def _recorded_key_types(paramiko, hostname, port):
+        path = sftp_known_hosts()
+        if not os.path.isfile(path):
+            return []
+        return list(paramiko.HostKeys(path).lookup(sftp_host_entry(hostname, port)) or {})
 
     def set_cwd(self):
         self.session.chdir('.')

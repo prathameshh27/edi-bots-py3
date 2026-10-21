@@ -7,6 +7,13 @@ Bots - CHANGELOG
 
 Based on 4.0.0rc4 below.
 
+- sftp: the server's host key is checked before the password or the key is sent. Bots 3 checked it only when a
+  communication script gave it (``hostkey()``), so a server pretending to be the partner's received the login.
+  The keys are kept in a known_hosts file (OpenSSH format; ``config/sftp_known_hosts``, or ``bots.ini [settings]
+  sftp_known_hosts``). New ``bots.ini [settings] sftp_unknown_host`` for a server not in the file yet: ``record``
+  (default: its key is added and checked from then on), ``refuse`` (the error gives the line to add) or ``accept``
+  (unchecked, as bots 3). A known server with another key is refused. A ``hostkey()`` script still wins.
+
 What is compared with: "bots 3.2.0" is the release (github eppye-bots/bots, branch ``bots32``; the same as the
 installers on sourceforge). The first rounds of this work compared with the ``master`` branch of that
 repository, which is later development that was never released. Where that made a difference it is said below.

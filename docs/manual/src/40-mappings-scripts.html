@@ -929,7 +929,7 @@ def privatekey(channeldict):
     return ('/srv/edi/keys/partnera_id_ed25519', 'ED25519', 'secret-example')</code></pre></li>
 <li><b>Run the channel.</b> A wrong host key stops the connection with an SSH error; a wrong passphrase gives <code>sftp: can not read private key …</code>.</li>
 </ol>
-<p>Without a script you can also fill <span class="ui">Private key file</span> in the channel; the <span class="ui">Password</span> is then the passphrase of the key. The host key is only checked when a <code>hostkey</code> hook supplies it.</p>
+<p>Without a script you can also fill <span class="ui">Private key file</span> in the channel; the <span class="ui">Password</span> is then the passphrase of the key. Without a <code>hostkey</code> hook the host key is checked against the file <code>sftp_known_hosts</code> (<a href="#channel-sftp--hostkey">The host key of the server</a>).</p>
 
 <h3 id="communication-scripts--howto-script">How to write a channel of type communicationscript</h3>
 <p>Use this type to call your own program, or to fetch or deliver files in a way Bots does not know.</p>
