@@ -39,6 +39,8 @@ QUERIES = 7
 SUBTRANSLATION = 8
 BOTSIDNR = 9
 FIXED_RECORD_LENGTH = 10  # length of fixed record
+LATER = 11  # set by grammar: the record id can also be read after this record; at MAX the parser looks there
+STARTS = 12  # set by grammar on a group followed by a group with the same header: the ids it can start with
 
 # ***grammar.recorddefs: dict keys for fields of record
 # eg: record[FIELDS][ID] == 'C124.0034'

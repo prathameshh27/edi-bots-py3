@@ -6,6 +6,7 @@
 
 import codecs
 import json as simplejson
+import operator
 import time
 
 # bots-modules
@@ -40,6 +41,8 @@ from .botsconfig import (
     FIXED_RECORD_LENGTH,
     QUERIES,
     LEVEL,
+    LATER,
+    STARTS,
 )
 from .botslib import gettext as _
 from .exceptions import BotsImportError, InMessageError, TranslationNotFoundError, txtexc
@@ -454,8 +457,16 @@ class Inmessage(message.Message):
                     # catch when no more lex_record.
                     current_lex_record = None
                 get_next_lex_record = False
+            # a record that matches is still looked for further on (as a non-match):
+            # - when it has reached MAX and the definition has it again later (nested LS...LE loops);
+            # - when the next record can not start this group but can start a later one with the same header
+            #   (eg LS (NTE...) followed by LS (REF...)).
             if current_lex_record is None \
-                    or structure_level[structure_index][ID] != current_lex_record[ID][VALUE]:
+                    or structure_level[structure_index][ID] != current_lex_record[ID][VALUE] \
+                    or (countnrofoccurences >= structure_level[structure_index][MAX]
+                        and LATER in structure_level[structure_index]) \
+                    or (STARTS in structure_level[structure_index]
+                        and self._peek_record_id() not in structure_level[structure_index][STARTS]):
                 if structure_level[structure_index][MIN] and not countnrofoccurences:
                     # is record is required in structure_level, and countnrofoccurences==0: error;
                     # enough check here; message is validated more accurate later
@@ -608,6 +619,15 @@ class Inmessage(message.Message):
                     else:
                         structure_index += 1
                         countnrofoccurences = 0
+
+    def _peek_record_id(self):
+        """The id of the next lex_record without reading it (None at the end of the file).
+        self.iternext_lex_record runs over the list self.lex_records; for a list iterator
+        length_hint is exactly the number of records still to be read."""
+        position = len(self.lex_records) - operator.length_hint(self.iternext_lex_record)
+        if position < len(self.lex_records):
+            return self.lex_records[position][ID][VALUE]
+        return None
 
     @staticmethod
     def _manipulatemessagetype(messagetype, inode):

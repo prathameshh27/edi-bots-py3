@@ -14,6 +14,25 @@ Based on 4.0.0rc4 below.
   (default: its key is added and checked from then on), ``refuse`` (the error gives the line to add) or ``accept``
   (unchecked, as bots 3). A known server with another key is refused. A ``hostkey()`` script still wins.
 
+- Reader (``bots/inmessage.py`` ``_parse``, ``bots/grammar.py`` ``_marklookahead``): a record that matches a
+  record of the grammar that has reached its MAX is looked for further on (the next records of its level, then
+  the levels above) when the grammar has that record there. Nested LS...LE loops (X12 217 and 218: the second LE
+  closes the outer loop) are read; before, the inner loop took the outer LE as one too many and the message failed.
+  A record that can go nowhere else is still one too many (``[S04]``). Tests: ``tests/unit/test_parser_layouts.py``.
+- Reader: of two groups with the same header in a level (only optional records between, eg X12 200 and 832:
+  ``LS`` with ``NTE`` followed by ``LS`` with ``REF``), the record after the header chooses: a group whose records
+  up to its first mandatory one do not include the next record is passed over (before, the first group was always
+  entered and the message failed with ``[S50]``). The check of a message tree (``message._checkifrecordsingrammar``)
+  finds a record by its ``BOTSIDnr`` as well, so the records of the second group are checked against the second
+  group.
+- Grammar check (``bots/grammar.py``): a back-collision or nesting collision names both records ("can also be read
+  as the earlier record ..."), with the mpath written as ``ST-LX-L0-N9``. What is refused is unchanged: the
+  layouts refused in standard definitions (eg X12 304, 830; EDIFACT DELFOR D93A-D96A, INVRPT) can really be read
+  in two ways.
+- Grammar check: a composite with one component is accepted (EDIFACT ARR: ``C770`` with ``9424``, repeated); it is
+  read and written like a simple element, its repeats with the repetition separator. Only a composite without
+  components is refused.
+
 What is compared with: "bots 3.2.0" is the release (github eppye-bots/bots, branch ``bots32``; the same as the
 installers on sourceforge). The first rounds of this work compared with the ``master`` branch of that
 repository, which is later development that was never released. Where that made a difference it is said below.

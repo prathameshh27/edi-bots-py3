@@ -24,6 +24,8 @@ from .botsconfig import (
     LEVEL,
     MANDATORY,
     FORMAT,
+    LATER,
+    STARTS,
 )
 from .botslib import gettext as _
 from .exceptions import BotsImportError, GrammarError, GrammarPartMissing
@@ -593,11 +595,12 @@ class Grammar:
                     ),
                     {'grammar': self.grammarname, 'record': recordid, 'field': field[ID]},
                 )
-            if len(field[SUBFIELDS]) < 2:
+            # one component is allowed: EDIFACT ARR has C770 with only 9424 (written like a simple element)
+            if not field[SUBFIELDS]:
                 raise GrammarError(
                     _(
                         'Grammar "%(grammar)s", in recorddefs, record "%(record)s",'
-                        ' field "%(field)s" has < 2 sfields.'
+                        ' field "%(field)s" has no sfields.'
                     ),
                     {'grammar': self.grammarname, 'record': recordid, 'field': field[ID]},
                 )
@@ -682,6 +685,7 @@ class Grammar:
             self._checkbackcollision(self.structure)
             self._checknestedcollision(self.structure)
         self._checkbotscollision(self.structure)
+        self._marklookahead(self.structure, set())
 
     def _checkstructure(self, structure, mpath):
         """
@@ -788,18 +792,26 @@ class Grammar:
         Case 1:  AAA BBB AAA
         Case 2:  AAA     BBB
                  BBB CCC
+        collision: {record id: mpath of the earlier record a record with this id could also be}
         """
         if not collision:
-            collision = []
+            collision = {}
         headerissave = False
         for i in structure:
             if i[ID] in collision:
                 raise GrammarError(
                     _(
                         'Grammar "%(grammar)s", in structure:'
-                        ' back-collision detected at record "%(mpath)s".'
+                        ' back-collision detected at record "%(mpath)s":'
+                        ' it can also be read as the earlier record "%(other)s".'
+                        ' The layout is ambiguous (a file could be read in two ways);'
+                        ' a copy of the definition for the partner can leave one of the two out.'
                     ),
-                    {'grammar': self.grammarname, 'mpath': i[MPATH]},
+                    {
+                        'grammar': self.grammarname,
+                        'mpath': '-'.join(i[MPATH]),
+                        'other': '-'.join(collision[i[ID]]),
+                    },
                 )
             if i[MIN]:
                 headerissave = True
@@ -807,25 +819,25 @@ class Grammar:
                     # so: fixed number of occurences;
                     # can not lead to collision as is always clear where in structure record is
                     # NOTE: this is mainly used for MIN=1, MAX=1
-                    collision = []
+                    collision = {}
                 else:
                     # previous records do not cause collision.
-                    collision = [i[ID]]
+                    collision = {i[ID]: i[MPATH]}
             else:
-                collision.append(i[ID])
+                collision[i[ID]] = i[MPATH]
             if LEVEL in i:
                 if i[MIN] == i[MAX] == 1:
                     returncollision, returnheaderissave = self._checkbackcollision(i[LEVEL])
                 else:
                     returncollision, returnheaderissave = self._checkbackcollision(
-                        i[LEVEL], [i[ID]]
+                        i[LEVEL], {i[ID]: i[MPATH]}
                     )
-                collision.extend(returncollision)
+                collision.update(returncollision)
                 if returnheaderissave and i[ID] in collision:
                     # one of segment(groups) is required,
                     # there is always a segment after the header segment;
                     # so remove header from nowcollision:
-                    collision.remove(i[ID])
+                    del collision[i[ID]]
         # collision is used to update on higher level;
         # cleared indicates the header segment can not collide anymore
         return collision, headerissave
@@ -846,6 +858,41 @@ class Grammar:
             if LEVEL in i:
                 self._checkbotscollision(i[LEVEL])
 
+    def _marklookahead(self, structure, after):
+        """
+        Recursive.
+        Mark where the parser has to look one step further:
+        - LATER: the record id can also be read after this record (further in its level, or a level up),
+          so a record that has reached MAX is looked for there, not taken as one too many.
+          Eg X12 217: LS (LX..., LE 1..1) inside LS (N1..., LE 1..1): the second LE closes the outer loop.
+        - STARTS: a group followed in its level by a group with the same header (only optional records between)
+          gets the ids it can start with, up to its first mandatory record; the record after the header
+          chooses the group. Eg X12 200 and 832: LS (NTE, LE) followed by LS (REF, LE).
+        after: the record ids that can be read once this level has ended, up to the first mandatory one.
+        """
+        for index, i in enumerate(structure):
+            later = set()
+            alternative = False
+            for j in structure[index + 1:]:
+                later.add(j[ID])
+                if j[ID] == i[ID] and LEVEL in j:
+                    alternative = True
+                if j[MIN]:
+                    break
+            else:
+                later |= after
+            if i[ID] in later:
+                i[LATER] = True
+            if LEVEL in i:
+                self._marklookahead(i[LEVEL], later | {i[ID]})
+                if alternative:
+                    starts = set()
+                    for j in i[LEVEL]:
+                        starts.add(j[ID])
+                        if j[MIN]:
+                            i[STARTS] = starts
+                            break
+
     def _checknestedcollision(self, structure, collision=None):
         """
         Recursive.
@@ -854,18 +901,19 @@ class Grammar:
         Case 1: AAA
                 BBB CCC
                     AAA
+        collision: {record id: mpath of the record of a level above a record with this id could also be}
         """
         if not collision:
-            levelcollision = []
+            levelcollision = {}
         else:
-            levelcollision = collision[:]
+            levelcollision = dict(collision)
         for i in reversed(structure):
             if LEVEL in i:
                 if i[MIN] == i[MAX] == 1 or i[MAX] == 1:
                     isa_safeheadersegment = self._checknestedcollision(i[LEVEL], levelcollision)
                 else:
                     isa_safeheadersegment = self._checknestedcollision(
-                        i[LEVEL], levelcollision + [i[ID]]
+                        i[LEVEL], {**levelcollision, i[ID]: i[MPATH]}
                     )
             else:
                 isa_safeheadersegment = False
@@ -877,12 +925,19 @@ class Grammar:
                 raise GrammarError(
                     _(
                         'Grammar "%(grammar)s", in structure:'
-                        ' nesting collision detected at record "%(mpath)s".'
+                        ' nesting collision detected at record "%(mpath)s":'
+                        ' it can also be read as a new record "%(other)s".'
+                        ' The layout is ambiguous (a file could be read in two ways);'
+                        ' a copy of the definition for the partner can leave one of the two out.'
                     ),
-                    {'grammar': self.grammarname, 'mpath': i[MPATH]},
+                    {
+                        'grammar': self.grammarname,
+                        'mpath': '-'.join(i[MPATH]),
+                        'other': '-'.join(levelcollision[i[ID]]),
+                    },
                 )
             if i[MIN]:
-                levelcollision = []  # empty uppercollision
+                levelcollision = {}  # empty uppercollision
         return not bool(levelcollision)
 
     def class_specific_tests(self):

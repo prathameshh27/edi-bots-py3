@@ -191,7 +191,9 @@ class Message:
             # for every record/childnode:
             for record_definition in structure[LEVEL]:
                 # search in grammar-records
-                if childnode.record['BOTSID'] == record_definition[ID]:
+                # BOTSIDnr: a level can hold two groups with the same header (X12 200: LS...LS)
+                if childnode.record['BOTSID'] == record_definition[ID] \
+                        and childnode.record['BOTSIDnr'] == record_definition[BOTSIDNR]:
                     # found record in grammar
                     # check recursive:
                     self._checkifrecordsingrammar(childnode, record_definition, grammarname)
