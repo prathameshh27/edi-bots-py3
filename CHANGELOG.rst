@@ -75,6 +75,10 @@ Errors that came with the code of bots 3, found by reading the code (each has a 
   channel. The same for communication scripts that receive files.
 - Sending or receiving that fails still disconnects: the lock file of the channel is removed and the next run is
   not blocked.
+- ``maxsecondsperchannel`` (the most seconds a channel receives) is measured on a monotonic clock. It was the
+  wall clock with ``timedelta.seconds``: a clock set back (the end of summer time, a time correction) gave about
+  86400 seconds and the receive stopped after its first file; a receive longer than a day started counting again.
+  All channel types that receive.
 - A failing database statement in ``query()`` and ``insertta()`` is rolled back (PostgreSQL refused every later
   statement), and the cursor is closed in all three statement functions.
 - A new counter given a value (``unique(name, updatewith=...)``) stores that value. It stored 1: automatic retry

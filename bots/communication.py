@@ -1340,7 +1340,7 @@ class file(_comsession):
         """gets files from filesystem."""
         frompath = botslib.join(self.channeldict['path'], self.channeldict['filename'])
         filelist = sorted(filename for filename in glob.iglob(frompath) if os.path.isfile(filename))
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         remove_ta = False
         for fromfilename in filelist:
             try:
@@ -1385,7 +1385,7 @@ class file(_comsession):
                     self.remove_received_file(fromfilename)
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     @botslib.log_session
@@ -1514,7 +1514,7 @@ class pop3(_comsession):
         self.listoftamarkedfordelete = []
         # get list of messages #alt: (response, messagelist, octets) = popsession.list()
         maillist = self.session.list()[1]
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         remove_ta = False
         for mail in maillist:
             try:
@@ -1567,7 +1567,7 @@ class pop3(_comsession):
                 ta_from.update(statust=DONE)
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     def disconnect(self):
@@ -1668,7 +1668,7 @@ class imap4(_comsession):
             raise CommunicationInError(mailbox_name + ": " + data[0].decode())
 
         maillist = data[0].split()
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         remove_ta = False
         for mail in maillist:
             try:
@@ -1707,7 +1707,7 @@ class imap4(_comsession):
                     self.session.expunge()
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
         # Close currently selected mailbox. This is the recommended command before 'LOGOUT'.
@@ -1972,7 +1972,7 @@ class ftp(_comsession):
         each to be imported file is transaction.
         each imported file is transaction.
         """
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         files = []
         try:
             # some ftp servers give errors when directory is empty;
@@ -2038,7 +2038,7 @@ class ftp(_comsession):
                     self.session.delete(fromfilename)
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     @botslib.log_session
@@ -2571,7 +2571,7 @@ class sftp(_comsession):
         each to be imported file is transaction.
         each imported file is transaction.
         """
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         files = self.session.listdir('.')
         lijst = fnmatch.filter(files, self.channeldict['filename'])
         remove_ta = False
@@ -2611,7 +2611,7 @@ class sftp(_comsession):
                     self.session.remove(fromfilename)
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     def open_mode(self, tofilename, mode):
@@ -2724,7 +2724,7 @@ class xmlrpc(_comsession):
 
     @botslib.log_session
     def incommunicate(self):
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         remove_ta = False
         while True:
             try:
@@ -2764,7 +2764,7 @@ class xmlrpc(_comsession):
                 ta_from.update(statust=DONE)
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     @botslib.log_session
@@ -3054,7 +3054,7 @@ class communicationscript(_comsession):
 
     @botslib.log_session
     def incommunicate(self):
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         # process files one by one; communicationscript has to be a generator
         if hasattr(self.userscript, 'main'):
             remove_ta = False
@@ -3097,7 +3097,7 @@ class communicationscript(_comsession):
                         self.remove_received_file(fromfilename)
                 finally:
                     remove_ta = False
-                if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+                if time.monotonic() - starttime >= self.maxsecondsperchannel:
                     break
         else:
             # all files have been set ready by external communicationscript using 'connect'.
@@ -3142,7 +3142,7 @@ class communicationscript(_comsession):
                         self.remove_received_file(fromfilename)
                 finally:
                     remove_ta = False
-                if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+                if time.monotonic() - starttime >= self.maxsecondsperchannel:
                     break
 
     @botslib.log_session
@@ -3334,7 +3334,7 @@ class http(_comsession):
 
     @botslib.log_session
     def incommunicate(self):
-        startdatetime = datetime.datetime.now()
+        starttime = time.monotonic()
         remove_ta = False
         while True:
             # loop until no content is received or max communication time is expired
@@ -3407,7 +3407,7 @@ class http(_comsession):
                 break
             finally:
                 remove_ta = False
-            if (datetime.datetime.now() - startdatetime).seconds >= self.maxsecondsperchannel:
+            if time.monotonic() - starttime >= self.maxsecondsperchannel:
                 break
 
     @botslib.log_session

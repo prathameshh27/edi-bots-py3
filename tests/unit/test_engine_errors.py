@@ -241,3 +241,40 @@ def test_an_sftp_send_is_logged_as_a_process_and_choosing_the_mode_is_not(botsen
     assert processes('open_mode') == 0
     session.outcommunicate()
     assert processes('outcommunicate') == 1
+
+
+def file_receive(tmp_path, maxseconds):
+    """three files in a folder received by a file channel with maxsecondsperchannel; returns the files left"""
+    from bots import communication
+    for name in ('a.edi', 'b.edi', 'c.edi'):
+        (tmp_path / name).write_bytes(b'x')
+    session = communication.file.__new__(communication.file)
+    session.channeldict = {'idchannel': 'ut_maxseconds', 'path': str(tmp_path), 'filename': '*.edi',
+                           'syslock': False, 'remove': True}
+    session.idroute = 'ut_maxseconds'
+    session.maxsecondsperchannel = maxseconds
+    session.incommunicate()
+    return sorted(os.listdir(tmp_path))
+
+
+def test_a_clock_set_back_does_not_stop_a_receive_after_one_file(botsenv, tmp_path, monkeypatch):
+    """bots 3: maxsecondsperchannel was checked with the wall clock and timedelta.seconds; a clock set back (end
+    of summer time, a time correction) gave about 86400 seconds and the receive stopped after its first file"""
+    import datetime
+    from bots import communication
+    times = iter(datetime.datetime(2026, 10, 25, 3, 0) - datetime.timedelta(minutes=minute) for minute in range(9))
+
+    class ClockSetBack(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(times)
+
+    monkeypatch.setattr(communication, 'datetime', types.SimpleNamespace(**dict(vars(datetime), datetime=ClockSetBack)))
+    assert file_receive(tmp_path, 60) == []
+
+
+def test_maxsecondsperchannel_stops_a_receive_on_the_monotonic_clock(botsenv, tmp_path, monkeypatch):
+    from bots import communication
+    ticks = iter(range(0, 1000, 100))
+    monkeypatch.setattr(communication.time, 'monotonic', lambda: next(ticks))
+    assert file_receive(tmp_path, 60) == ['b.edi', 'c.edi']
