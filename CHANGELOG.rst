@@ -13,6 +13,14 @@ Based on 4.0.0rc4 below.
   sftp_known_hosts``). New ``bots.ini [settings] sftp_unknown_host`` for a server not in the file yet: ``record``
   (default: its key is added and checked from then on), ``refuse`` (the error gives the line to add) or ``accept``
   (unchecked, as bots 3). A known server with another key is refused. A ``hostkey()`` script still wins.
+- Outgoing file names: a value filled in (``{botskey}``, ``{topartner}``, any value of the file) is a file name,
+  never a folder. Bots 3 put the values in the name as they are: a ``{botskey}`` of ``../../x`` or ``C:\x`` was
+  written outside the folder of the channel. A value with ``/`` or ``\``, or values that make a ``..`` part, a
+  drive or an absolute path, are an error of that file and nothing is written (types file, ftp, ftps, ftpis, sftp,
+  communicationscript). Folders written in the filename of the channel itself (``{topartner}/{unique}.edi``,
+  ``{datetime:%Y/%m}/*``, ``../archive/*``) work as before; so does a name given by the ``filename()`` of a
+  communication script. Not for mail attachments and the filename and parameters of http.
+  Tests: ``tests/unit/test_channel_security.py``.
 
 - Reader (``bots/inmessage.py`` ``_parse``, ``bots/grammar.py`` ``_marklookahead``): a record that matches a
   record of the grammar that has reached its MAX is looked for further on (the next records of its level, then
@@ -79,6 +87,9 @@ Errors that came with the code of bots 3, found by reading the code (each has a 
   wall clock with ``timedelta.seconds``: a clock set back (the end of summer time, a time correction) gave about
   86400 seconds and the receive stopped after its first file; a receive longer than a day started counting again.
   All channel types that receive.
+- ftp, sftp (and ftps, ftpis): an outgoing file name that can not be made (a placeholder that is not a value of the
+  file) is an error of that file. The error was lost in an ``UnboundLocalError``: the file was marked done but not
+  sent, and the next files of the channel were not sent (test in ``tests/unit/test_channel_security.py``).
 - A failing database statement in ``query()`` and ``insertta()`` is rolled back (PostgreSQL refused every later
   statement), and the cursor is closed in all three statement functions.
 - A new counter given a value (``unique(name, updatewith=...)``) stores that value. It stored 1: automatic retry

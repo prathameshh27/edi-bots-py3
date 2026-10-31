@@ -20,6 +20,7 @@ import inspect
 import io
 import json as simplejson
 import logging
+import ntpath
 import os
 import posixpath
 import re
@@ -27,6 +28,7 @@ import shutil
 import smtplib
 import socket
 import ssl
+import string
 import sys
 import time
 import urllib.parse
@@ -673,7 +675,7 @@ class _comsession:
 
                     # set attachment filename
                     filename_mask = self.channeldict['filename'] or '*'
-                    attachmentfilename = self.filename_formatter(filename_mask, ta_to)
+                    attachmentfilename = self.filename_formatter(filename_mask, ta_to, infolder=False)
 
                     # channel field 'sendmdn' is in the interface: 'as body or as attachment'
                     as_body_or_attachment = self.channeldict['sendmdn'] or ''
@@ -1235,7 +1237,7 @@ class _comsession:
         codec_in = codec_in.lower().replace('_', '-')
         return convertdict.get(codec_in, codec_in)
 
-    def filename_formatter(self, filename_mask, ta, runuserscript=True):
+    def filename_formatter(self, filename_mask, ta, runuserscript=True, infolder=True):
         """
         Output filename generation from template filename configured in the channel
         Basically python's string.Formatter is used; see http://docs.python.org/library/string.html
@@ -1266,6 +1268,11 @@ class _comsession:
          - sort into folders by partner and messagetype.
 
         Note1: {botskey} can only be used if merge is False for that messagetype
+        Note2: a value filled in is a file name, never a folder (infolder, for a file in the folder of the
+        channel): a value with / or \\ is refused, and so is a value that makes a .. part, a drive or an
+        absolute path of the name. Path text of the mask itself stays as it is (eg out/{botskey}.edi,
+        {datetime:%Y/%m}/{unique}.edi, ../archive/*). The name a communication script gives (filename()) is used
+        as it is.
         """
 
         class infilestr(str):
@@ -1321,7 +1328,49 @@ class _comsession:
                 filename=tofilename,
                 ta=ta,
             )
+        if infolder:
+            check_values_in_filename(filename_mask.replace('*', '{unique}'), tofilename, ta.__dict__)
         return tofilename
+
+
+FILENAME_SEPARATOR = re.compile(r'[/\\]')
+
+
+def filename_goes_outside(filename):
+    """True if filename has a .. part, a drive or is an absolute path (on any platform)"""
+    return ('..' in FILENAME_SEPARATOR.split(filename) or bool(ntpath.splitdrive(filename)[0])
+            or filename[:1] in ('/', '\\'))
+
+
+def check_values_in_filename(mask, filename, values):
+    """
+    The values filled in an outgoing filename (eg {botskey}) are file names, not folders:
+    a value with / or \\, or values that make the name go outside the folder of the channel, are an error.
+    The fields bots fills in itself ({unique}, {datetime} in the format of the mask) can not do that.
+    """
+    skeleton = ''
+    for literal, field, format_spec, conversion in string.Formatter().parse(mask):
+        skeleton += literal
+        if field is None:
+            continue
+        value = ('{' + field + ('!' + conversion if conversion else '') + (':' + format_spec if format_spec else '')
+                 + '}').format(**values)
+        if re.match(r'\w*', field).group() in ('unique', 'datetime'):
+            skeleton += value
+            continue
+        skeleton += 'x'
+        if FILENAME_SEPARATOR.search(value):
+            raise CommunicationOutError(
+                _('Outgoing filename "%(filename)s": {%(field)s} is "%(value)s", a value with / or \\; '
+                  'a value filled in is a file name, it is not a folder.'),
+                {'filename': filename, 'field': field, 'value': value},
+            )
+    if filename_goes_outside(filename) and not filename_goes_outside(skeleton):
+        raise CommunicationOutError(
+            _('Outgoing filename "%(filename)s" goes outside the folder of the channel (a .. part, a drive or an '
+              'absolute path made by the values filled in).'),
+            {'filename': filename},
+        )
 
 
 class file(_comsession):
@@ -2072,6 +2121,7 @@ class ftp(_comsession):
                     'statust': OK,
                 }):
             ta_to = None
+            tofilename = ''
             try:
                 ta_from = botslib.OldTransaction(row["idta"])
                 ta_to = ta_from.copyta(status=EXTERNOUT)
@@ -2655,6 +2705,7 @@ class sftp(_comsession):
                     'statust': OK,
                 }):
             ta_to = None
+            tofilename = ''
             try:
                 ta_from = botslib.OldTransaction(row["idta"])
                 ta_to = ta_from.copyta(status=EXTERNOUT)
@@ -3319,7 +3370,7 @@ class http(_comsession):
         parameters = (self.channeldict['parameters'] or '').strip().lstrip('?')
         if parameters:
             if ta_from:
-                parameters = self.filename_formatter(parameters, ta_from, runuserscript=False)
+                parameters = self.filename_formatter(parameters, ta_from, runuserscript=False, infolder=False)
             for sep in ('&', ';', ',', ' '):
                 if sep in parameters:
                     parameters = parameters.split(sep)
@@ -3444,7 +3495,7 @@ class http(_comsession):
                 filename = row["filename"]
                 with botslib.opendata_bin(filename, 'rb') as fromfile:
                     content = fromfile.read()
-                filename = self.filename_formatter(self.channeldict['filename'], ta_from)
+                filename = self.filename_formatter(self.channeldict['filename'], ta_from, infolder=False)
                 # headers for this file only
                 self.headers = dict(self.base_headers)
                 charset = None

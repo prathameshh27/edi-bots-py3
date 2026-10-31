@@ -1,4 +1,5 @@
-"""TLS context of a channel; private keys for sftp."""
+"""TLS context of a channel; private keys for sftp; outgoing file names."""
+import os
 import ssl
 
 import pytest
@@ -124,3 +125,137 @@ def test_sftp_new_file_is_not_opened_for_append():
     channel.session.stat.reset_mock()
     assert channel.open_mode('any.edi', 'w') == 'w'
     channel.session.stat.assert_not_called()
+
+
+# ---------------------------------------------------------------- outgoing file names
+
+def outgoing_ta(channel, **fields):
+    """a file to send by channel, with the given values (eg botskey); returns its transaction"""
+    from bots import botslib
+    from bots.botsconfig import FILEOUT, OK
+    ta = botslib.NewTransaction(status=FILEOUT, statust=OK, tochannel=channel, **fields)
+    ta.update(filename=str(ta.idta))
+    with botslib.opendata_bin(str(ta.idta), 'wb') as data:
+        data.write(b'content')
+    return ta
+
+
+def formatted(mask, **fields):
+    from bots import botslib, communication
+    session = communication._comsession.__new__(communication._comsession)      # pylint: disable=protected-access
+    session.channeldict = {'idchannel': 'ut_names'}
+    session.userscript = None
+    return session.filename_formatter(mask, botslib.OldTransaction(outgoing_ta('ut_names', **fields).idta))
+
+
+@pytest.mark.parametrize('botskey', ['../evil', r'..\evil', 'a/b', r'a\b', '/etc/evil', r'C:\evil', '..', 'C:'])
+def test_a_value_in_an_outgoing_file_name_is_not_a_folder(botsenv, botskey):
+    """bots 3: values were put in the file name as they are; {botskey} of '../x' wrote outside the channel's
+    folder, 'C:' made a name on another drive"""
+    from bots.exceptions import CommunicationOutError
+    with pytest.raises(CommunicationOutError, match='outside the folder of the channel|is not a folder'):
+        formatted('{botskey}', botskey=botskey)
+
+
+def test_path_text_of_the_mask_itself_is_kept(botsenv):
+    assert formatted('{botskey}.edi', botskey='4500012345') == '4500012345.edi'
+    assert formatted('out/{botskey}.edi', botskey='123') == 'out/123.edi'
+    assert formatted('../archive/{botskey}.edi', botskey='123') == '../archive/123.edi'
+    assert formatted('/data/out/{editype}_{botskey}.edi', botskey='123', editype='x12') == '/data/out/x12_123.edi'
+    assert formatted('{datetime:%Y/%m}/{botskey}.edi', botskey='123').endswith('/123.edi')
+    assert formatted('{botskey}..edi', botskey='a') == 'a..edi'
+    assert formatted('{botskey}', botskey='a.b') == 'a.b'
+
+
+def test_a_value_in_the_http_parameters_may_have_a_slash(botsenv):
+    """the parameters of a http channel are no file name"""
+    from bots import botslib, communication
+    session = communication.http.__new__(communication.http)
+    session.channeldict = {'idchannel': 'ut_names', 'parameters': 'order={botskey}'}
+    session.userscript = None
+    session.params = {}
+    session.get_params(botslib.OldTransaction(outgoing_ta('ut_names', botskey='2026/001').idta))
+    assert session.params == {'order': '2026/001'}
+
+
+def send_status(ta):
+    from bots import botslib
+    from bots.botsconfig import EXTERNOUT
+    rows = [dict(row) for row in botslib.query('SELECT statust, errortext FROM ta WHERE parent=%(idta)s AND '
+                                               'status=%(status)s', {'idta': ta.idta, 'status': EXTERNOUT})]
+    return rows[0]['statust'], rows[0]['errortext']
+
+
+def test_a_file_channel_does_not_write_outside_its_folder(botsenv, tmp_path):
+    from bots import communication
+    from bots.botsconfig import DONE, ERROR
+    outdir = tmp_path / 'partner' / 'out'
+    session = communication.file.__new__(communication.file)
+    session.channeldict = {'idchannel': 'ut_names_file', 'path': str(outdir), 'filename': '{botskey}.edi',
+                           'syslock': False, 'mdnchannel': ''}
+    session.userscript = None
+    session.rootidta = outgoing_ta('ut_names_file').idta
+    bad = outgoing_ta('ut_names_file', botskey='../../evil')
+    good = outgoing_ta('ut_names_file', botskey='ok')
+    session.outcommunicate()
+    assert sorted(os.listdir(tmp_path)) == ['partner'] and sorted(os.listdir(outdir)) == ['ok.edi']
+    statust, errortext = send_status(bad)
+    assert statust == ERROR and '{botskey}' in errortext and '../../evil' in errortext
+    assert send_status(good)[0] == DONE
+
+
+@pytest.mark.parametrize('kind', ['ftp', 'sftp', 'communicationscript'])
+def test_other_channels_do_not_send_outside_their_folder(botsenv, tmp_path, kind):
+    from unittest import mock
+    from bots import communication
+    from bots.botsconfig import DONE, ERROR
+    channel = 'ut_names_' + kind
+    session = getattr(communication, kind).__new__(getattr(communication, kind))
+    session.channeldict = {'idchannel': channel, 'path': str(tmp_path), 'filename': '{botskey}.edi',
+                           'mdnchannel': '', 'ftpbinary': True, 'remove': False}
+    session.userscript = session.scriptname = None
+    session.session = mock.MagicMock()
+    session.dirpath = '/out'
+    session.rootidta = outgoing_ta(channel).idta
+    bad = outgoing_ta(channel, botskey=r'..\evil')
+    good = outgoing_ta(channel, botskey='ok')
+    session.outcommunicate()
+    statust, errortext = send_status(bad)
+    assert statust == ERROR and r'..\evil' in errortext
+    assert send_status(good)[0] == DONE
+    sent = [str(call) for call in session.session.mock_calls if 'evil' in str(call)]
+    assert not sent
+    if kind == 'communicationscript':
+        assert os.listdir(tmp_path) == ['ok.edi']
+
+
+@pytest.mark.parametrize('kind', ['ftp', 'sftp'])
+def test_a_file_name_that_can_not_be_made_is_an_error_of_that_file(botsenv, kind):
+    """bots 3: the error of the file name was lost in an UnboundLocalError ('tofilename'); the file was marked
+    done but not sent, the next files were not sent at all"""
+    from unittest import mock
+    from bots import communication
+    from bots.botsconfig import ERROR
+    channel = 'ut_names_mask_' + kind
+    session = getattr(communication, kind).__new__(getattr(communication, kind))
+    session.channeldict = {'idchannel': channel, 'filename': '{nosuchfield}.edi', 'mdnchannel': '',
+                           'ftpbinary': True}
+    session.userscript = session.scriptname = None
+    session.session = mock.MagicMock()
+    session.dirpath = '/out'
+    session.rootidta = outgoing_ta(channel).idta
+    first, second = outgoing_ta(channel), outgoing_ta(channel)
+    session.outcommunicate()
+    assert send_status(first)[0] == send_status(second)[0] == ERROR
+    assert 'nosuchfield' in send_status(second)[1]
+
+
+def test_the_name_a_communication_script_gives_is_used_as_it_is(botsenv):
+    import types as pytypes
+    from bots import botslib, communication
+    session = communication._comsession.__new__(communication._comsession)      # pylint: disable=protected-access
+    session.channeldict = {'idchannel': 'ut_names'}
+    session.userscript = pytypes.SimpleNamespace(filename=lambda channeldict, filename, ta: ta.botskey + '.edi')
+    session.scriptname = 'ut_names'
+    ta = botslib.OldTransaction(outgoing_ta('ut_names', botskey='2026/001').idta)
+    assert session.filename_formatter('{botskey}', ta) == '2026/001.edi'

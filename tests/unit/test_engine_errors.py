@@ -239,8 +239,9 @@ def test_an_sftp_send_is_logged_as_a_process_and_choosing_the_mode_is_not(botsen
     session.rootidta = 2 ** 31
     assert session.open_mode('x.edi', 'a') == 'w'
     assert processes('open_mode') == 0
+    before = processes('outcommunicate')        # other tests of the session send too
     session.outcommunicate()
-    assert processes('outcommunicate') == 1
+    assert processes('outcommunicate') == before + 1
 
 
 def file_receive(tmp_path, maxseconds):
