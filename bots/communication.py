@@ -2539,11 +2539,17 @@ class sftp(_comsession):
             )
             pkey = load_private_key(privatekeyfile, passphrase, pkeytype)
         elif self.channeldict['keyfile']:
-            # keyfile is indicated in channel; any type of key paramiko knows (RSA, ECDSA, Ed25519).
-            pkey = load_private_key(botslib.join(self.channeldict['keyfile']), secret)
-            # if keyfile, secret is used as passphrase.
-            # So clear secret for login (assuming: if keyfile, no password is used)
-            secret = None
+            # keyfile is indicated in channel; any type of key paramiko knows (RSA, ECDSA, Ed25519). The secret is the
+            # passphrase of a key that has one; for a key without one it is the password a server may ask for after
+            # the key (publickey and then password, as bots 3's Transport.connect sent it)
+            keyfile = botslib.join(self.channeldict['keyfile'])
+            try:
+                pkey = load_private_key(keyfile, None)
+            except CommunicationError:
+                if secret is None:
+                    raise
+                pkey = load_private_key(keyfile, secret)
+                secret = None
 
         parameters = {}
         if self.channeldict["parameters"]:
@@ -2572,7 +2578,16 @@ class sftp(_comsession):
             self.transport.start_client(timeout=botsglobal.ini.getint('settings', 'ftptimeout', 10))
             sftp_check_host_key(self.transport, hostname, port, hostkey)
             if pkey is not None:
-                self.transport.auth_publickey(self.channeldict['username'], pkey)
+                remaining = self.transport.auth_publickey(self.channeldict['username'], pkey)
+                if not self.transport.is_authenticated():      # the key was good, the server asks for more
+                    if secret is None:
+                        raise paramiko.AuthenticationException(
+                            _('sftp: the server asks for a password after the key (it allows %(methods)s next), and '
+                              'the channel has none to give: fill in its Password, with a key without a passphrase '
+                              '(the Password of a channel whose key has one is that passphrase).') %
+                            {'methods': ', '.join(remaining or ['nothing'])})
+                    # password, or keyboard-interactive answered with the password (paramiko's fallback)
+                    self.transport.auth_password(self.channeldict['username'], secret)
             elif secret is not None:
                 self.transport.auth_password(self.channeldict['username'], secret)
         except Exception:

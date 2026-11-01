@@ -21,6 +21,12 @@ Based on 4.0.0rc4 below.
   ``{datetime:%Y/%m}/*``, ``../archive/*``) work as before; so does a name given by the ``filename()`` of a
   communication script. Not for mail attachments and the filename and parameters of http.
   Tests: ``tests/unit/test_channel_security.py``.
+- sftp with a Private key file: a server that demands the key and then a password (publickey, then password or
+  keyboard-interactive) is signed in to. The key file is read without a passphrase first; when that works, the
+  Password is the account's password, sent after the key only when the server asks for more. A key with a
+  passphrase takes the Password as its passphrase as before; a server that then still asks for a password is an
+  authentication error that says so. Before, the Password was always taken as the passphrase and such a server
+  refused the sign-in. Tests: ``tests/unit/test_sftp_signin.py``.
 
 - Reader (``bots/inmessage.py`` ``_parse``, ``bots/grammar.py`` ``_marklookahead``): a record that matches a
   record of the grammar that has reached its MAX is looked for further on (the next records of its level, then

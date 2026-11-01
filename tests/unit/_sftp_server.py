@@ -1,10 +1,11 @@
 """A small SFTP server for the tests (paramiko's server side), run in a process of its own:
 
-    python _sftp_server.py <home folder> <user> <password> [<public key file>] [<host key file>]
+    python _sftp_server.py <home folder> <user> <password> [<public key file>] [<host key file>] [<after key>]
 
 prints its port, then serves the home folder until it is killed. Log in with the password, or with the key.
 With a host key file (a private RSA key) the server shows that key, else a new one; every login is written to
-<home folder>/../logins.txt, so a test can see whether a password was sent."""
+<home folder>/../logins.txt, so a test can see whether a password was sent. With <after key> (eg 'password' or
+'keyboard-interactive') the server demands the key and then that method (partial success after the key)."""
 import os
 import socket
 import sys
@@ -16,21 +17,48 @@ from paramiko.sftp import SFTP_FAILURE, SFTP_NO_SUCH_FILE, SFTP_OK
 
 HOME, USER, PASSWORD = sys.argv[1:4]
 PUBLIC_KEY = open(sys.argv[4], encoding='utf8').read().split()[1] if len(sys.argv) > 4 and sys.argv[4] else None
-HOST_KEY_FILE = sys.argv[5] if len(sys.argv) > 5 else None
+HOST_KEY_FILE = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
+AFTER_KEY = sys.argv[6].split(',') if len(sys.argv) > 6 and sys.argv[6] else []
 LOGINS = os.path.join(os.path.dirname(os.path.abspath(HOME)), 'logins.txt')
 
 
+def logged(line):
+    with open(LOGINS, 'a', encoding='utf8') as log:
+        log.write(line + '\n')
+
+
 class Server(paramiko.ServerInterface):
+    key_done = False
+
     def check_auth_password(self, username, password):
-        with open(LOGINS, 'a', encoding='utf8') as log:
-            log.write(f'password {username}\n')
+        logged(f'password {username}')
+        if AFTER_KEY and not (self.key_done and 'password' in AFTER_KEY):
+            return paramiko.AUTH_FAILED
         return paramiko.AUTH_SUCCESSFUL if (username, password) == (USER, PASSWORD) else paramiko.AUTH_FAILED
 
     def check_auth_publickey(self, username, key):
-        return paramiko.AUTH_SUCCESSFUL if username == USER and key.get_base64() == PUBLIC_KEY else paramiko.AUTH_FAILED
+        logged(f'publickey {username}')
+        ok = username == USER and key.get_base64() == PUBLIC_KEY
+        if ok and AFTER_KEY:
+            self.key_done = True
+            return paramiko.AUTH_PARTIALLY_SUCCESSFUL
+        return paramiko.AUTH_SUCCESSFUL if ok else paramiko.AUTH_FAILED
+
+    def check_auth_interactive(self, username, submethods):
+        logged(f'keyboard-interactive {username}')
+        if not (self.key_done and 'keyboard-interactive' in AFTER_KEY) or username != USER:
+            return paramiko.AUTH_FAILED
+        query = paramiko.InteractiveQuery()
+        query.add_prompt('Password: ', False)
+        return query
+
+    def check_auth_interactive_response(self, responses):
+        return paramiko.AUTH_SUCCESSFUL if list(responses) == [PASSWORD] else paramiko.AUTH_FAILED
 
     def get_allowed_auths(self, username):
-        return 'password,publickey'
+        if self.key_done:
+            return ','.join(AFTER_KEY)
+        return 'publickey' if AFTER_KEY else 'password,publickey'
 
     def check_channel_request(self, kind, chanid):
         return paramiko.OPEN_SUCCEEDED
