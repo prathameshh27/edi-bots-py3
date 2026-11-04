@@ -183,8 +183,12 @@ class Inmessage(message.Message):
     def set_syntax_used(self):
         """Update self.syntax dict depending on message type."""
 
-    def handleconfirm(self, ta_fromfile, routedict, error):
-        """end of edi file handling: writing of confirmations, etc."""
+    def handleconfirm(self, ta_fromfile, routedict, error, envelope_syntax=None):
+        """end of edi file handling: writing of confirmations, etc.
+        envelope_syntax: syntax (version, separators) the confirmation is written and enveloped with, over the
+        grammars but not over the partner syntax (see preset_envelope_syntax). None: with bots.ini [settings]
+        acknowledgement_envelope_as_received = True that of the interchange received, else the grammars' (bots 3).
+        """
 
     def _formatfield(self, value, field_definition, structure_record, node_instance):
         """
@@ -1091,6 +1095,14 @@ class idoc(fixed):
 class var(Inmessage):
     """abstract class for edi-objects with records of variabele length."""
 
+    def envelope_as_received(self):
+        """Syntax of the interchange received that its acknowledgement is enveloped with: the separators.
+        Not when a line break ends the segments: bots writes one after each segment, so its own are used then.
+        """
+        if self.ta_info['record_sep'] in ('\r', '\n'):
+            return {}
+        return {key: self.ta_info[key] for key in ('field_sep', 'sfield_sep', 'record_sep', 'reserve')}
+
     def _lex(self):
         """
         lexes file with variable records to list of lex_records,
@@ -1718,6 +1730,7 @@ class edifact(var):
             rawinput = rawinput[count:].lstrip()
         else:
             has_una_string = False
+        self.has_una_string = has_una_string
         # *****check if there is UNB
         if not rawinput.startswith('UNB'):
             # also: UNA too short. not possible if mailbag is used.
@@ -1926,7 +1939,15 @@ class edifact(var):
                         )
             botsglobal.logmap.debug('Parsing edifact envelopes is OK')
 
-    def handleconfirm(self, ta_fromfile, routedict, error):
+    def envelope_as_received(self):
+        """Syntax of the interchange received that its CONTRL is enveloped with: the separators (see var),
+        the syntax identifier (charset) and version of UNB S001, a UNA if it had one."""
+        syntax = super().envelope_as_received()
+        syntax.update((key, self.ta_info[key]) for key in ('charset', 'version', 'escape', 'decimaal'))
+        syntax['forceUNA'] = self.has_una_string
+        return syntax
+
+    def handleconfirm(self, ta_fromfile, routedict, error, envelope_syntax=None):
         """
         done at end of edifact file handling.
         generates CONTRL messages (or not)
@@ -1939,6 +1960,9 @@ class edifact(var):
         confirmtype = 'send-edifact-CONTRL'
         if not botslib.globalcheckconfirmrules(confirmtype):
             return
+        if envelope_syntax is None and botsglobal.ini.getboolean(
+                'settings', 'acknowledgement_envelope_as_received', False):
+            envelope_syntax = self.envelope_as_received()
         editype = 'edifact'
         AcknowledgeCode = '7' if not error else '4'
         # copy fields from UNB received to UNB of CONTRL to send
@@ -2005,6 +2029,7 @@ class edifact(var):
             # reverse!
             # out.ta_info['topartner'] = self.ta_info['frompartner']  # sender
             out.ta_info['topartner'] = sender
+            kept = preset_envelope_syntax(out, envelope_syntax) if envelope_syntax else []
             if translationscript and hasattr(translationscript, 'main'):
                 botslib.runscript(
                     translationscript,
@@ -2088,6 +2113,10 @@ class edifact(var):
                 confirmasked=True,
                 confirmidta=ta_confirmation.idta,
             )
+            if kept:
+                # for the envelope (envelope.envelope): the values the confirmation is written with
+                out.ta_info['rsrv5'] = simplejson.dumps(
+                    {'envelope_syntax': {key: out.ta_info[key] for key in kept}}, ensure_ascii=False)
             # update ta for confirmation
             ta_confirmation.update(**out.ta_info)
 
@@ -2326,7 +2355,18 @@ class x12(var):
                         return
                 return
 
-    def handleconfirm(self, ta_fromfile, routedict, error):
+    def envelope_as_received(self):
+        """Syntax of the interchange received that its 997 is enveloped with: the separators (see var), the
+        version (ISA12) and before 00403 ISA11 (from 00403 on ISA11 is the repetition separator)."""
+        syntax = super().envelope_as_received()
+        for ISA in self.getloop({'BOTSID': 'ISA'}):
+            syntax['version'] = ISA.get({'BOTSID': 'ISA', 'ISA12': None}) or ''
+            if syntax['version'] < '00403':
+                syntax['ISA11'] = ISA.get({'BOTSID': 'ISA', 'ISA11': None}) or 'U'
+            break
+        return syntax
+
+    def handleconfirm(self, ta_fromfile, routedict, error, envelope_syntax=None):
         """
         at end of edi file handling:
         send 997 messages (or not)
@@ -2340,6 +2380,9 @@ class x12(var):
         if not botslib.globalcheckconfirmrules(confirmtype):
             # global check...less usefull for x12 than for edifact
             return
+        if envelope_syntax is None and botsglobal.ini.getboolean(
+                'settings', 'acknowledgement_envelope_as_received', False):
+            envelope_syntax = self.envelope_as_received()
         editype = 'x12'  # self.__class__.__name__
         AcknowledgeCode = 'A' if not error else 'R'
         confirmasked = False
@@ -2413,6 +2456,7 @@ class x12(var):
             out.ta_info['frompartner'] = receiver
             # reverse!
             out.ta_info['topartner'] = sender
+            kept = preset_envelope_syntax(out, envelope_syntax) if envelope_syntax else []
             if translationscript and hasattr(translationscript, 'main'):
                 botslib.runscript(
                     translationscript,
@@ -2495,6 +2539,10 @@ class x12(var):
                 confirmasked=True,
                 confirmidta=ta_confirmation.idta,
             )
+            if kept:
+                # for the envelope (envelope.envelope): the values the confirmation is written with
+                out.ta_info['rsrv5'] = simplejson.dumps(
+                    {'envelope_syntax': {key: out.ta_info[key] for key in kept}}, ensure_ascii=False)
             # update ta for confirmation
             ta_confirmation.update(**out.ta_info)
 
@@ -2730,6 +2778,24 @@ def x12_997_messagetype(version_received, editype='x12'):
         except BotsImportError:
             continue
     return '997004010'
+
+
+def preset_envelope_syntax(out, envelope_syntax):
+    """Set envelope_syntax in out.ta_info: the confirmation out is written with it (over its grammars, as values
+    set by a mapping script are). Not what the partner syntax of its partners sets: that is explicit and wins.
+    Empty values are left to the grammars. Returns the keys set."""
+    explicit = set()
+    for partner in (out.ta_info.get('frompartner'), out.ta_info.get('topartner')):
+        if partner:
+            try:
+                explicit.update(
+                    grammar.grammarread(out.ta_info['editype'], partner, typeofgrammarfile='partners').syntax)
+            except BotsImportError:
+                # no partner syntax (is not an error)
+                pass
+    kept = {key: value for key, value in envelope_syntax.items() if key not in explicit and value not in ('', None)}
+    out.ta_info.update(kept)
+    return list(kept)
 
 
 class mailbag(xml):

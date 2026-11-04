@@ -201,6 +201,11 @@ sender and receiver. A counter used for the first time continues where the Bots 
 of a 997 that Bots makes itself. False: always grammar <code>997004010</code>, as Bots 3. True: the version in GS08
 of the received group when usersys has that 997 grammar (eg <code>997004060</code>), else
 <code>997004010</code>.</td><td>False</td><td>True / False</td></tr>
+<tr><td><code>acknowledgement_envelope_as_received</code> <span class="badge green">new in 4.0</span></td><td>Envelope
+of a 997 or CONTRL that Bots makes. False: the version and separators of the envelope grammar, as Bots 3. True:
+those of the interchange it answers (X12 ISA12, ISA11 or the repetition separator, separators; EDIFACT UNB S001,
+separators, UNA); not the separators when a line break ends the segments. The partner syntax wins. See
+<a href="#acknowledgements">Acknowledgements</a>.</td><td>False</td><td>True / False</td></tr>
 <tr><td><code>multiplevaluesasterisk</code></td><td>In the incoming view, a file with several values (eg several
 message types) shows <code>*</code> (True) or the first value (False).</td><td>True</td><td>True / False</td></tr>
 <tr><td><code>limit</code></td><td>Number of lines per page in the report screens (incoming, outgoing, runs...).

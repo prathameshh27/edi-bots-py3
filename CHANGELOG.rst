@@ -7,6 +7,15 @@ Bots - CHANGELOG
 
 Based on 4.0.0rc4 below.
 
+- Acknowledgements: new ``bots.ini [settings] acknowledgement_envelope_as_received`` (default ``False``: as bots 3).
+  With ``True`` a 997 or CONTRL that bots makes is written and enveloped with the syntax of the interchange it
+  answers: x12 ISA12, ISA11 (before 00403) or the repetition separator, the element, sub-element and segment
+  separators; edifact the syntax identifier and version (UNB S001), the separators and a UNA if it had one. Before,
+  the envelope grammar's syntax was used: a 00401 interchange got a 997 with ISA12 ``00403`` and ``^`` in ISA11
+  (``x12.py``: version "only for sending"), a ``UNOA:2`` interchange a ``UNOC:3`` CONTRL. The separators are not
+  taken over when a line break ends the segments (bots writes one after each segment). What the partner syntax
+  sets wins over the received values. ``inmessage.handleconfirm`` takes ``envelope_syntax``; the values go to the
+  envelope in ``rsrv5``. Tests: ``tests/unit/test_acknowledgement_envelope.py``.
 - Logging: without ``[settings] log_file_number`` in ``bots.ini`` the engine log kept 10 old files when a new file
   is started per run (``log_when`` not set or ``report``) but 30 with ``log_when = daily``; all keep 30 now, as
   documented (one default, ``botsinit.LOG_FILE_NUMBER``, also for the logs of the servers).

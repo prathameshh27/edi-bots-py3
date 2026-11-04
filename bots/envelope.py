@@ -240,6 +240,8 @@ def envelope(ta_info, ta_list, **kwargs):
                     _('Not found envelope "%(envelope)s" for editype "%(editype)s".'), ta_info) from exc
 
     info_from_mapping = simplejson.loads(ta_info['rsrv5']) if ta_info['rsrv5'] else {}
+    # an acknowledgement is enveloped with the syntax it is written with (inmessage.preset_envelope_syntax)
+    ta_info.update(info_from_mapping.get('envelope_syntax') or {})
     env = classtocall(
         ta_info, ta_list, userscript, scriptname,
         info_from_mapping.get('envelope_content') or [{}, {}, {}, {}],

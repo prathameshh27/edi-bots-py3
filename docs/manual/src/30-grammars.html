@@ -1132,6 +1132,7 @@ out.put({'BOTSID': 'ST'}, {'BOTSID': 'SE', 'SE01': out.getcount() + 1,
 <tr><td>envelope data from the mapping</td><td><code>out.envelope_content[0]</code> (ISA fields, for example <code>'ISA14'</code>, <code>'ISA15'</code>) and <code>out.envelope_content[1]</code> (GS fields, for example <code>'GS02'</code>, <code>'GS08'</code>) have priority.</td><td>empty</td><td>see <a href="#envelopes">Envelopes</a></td></tr>
 <tr><td>message type</td><td><code>ST01</code> + <code>GS08</code>.</td><td>-</td><td><code>850004010</code>, <code>810004010</code>, <code>856005010</code></td></tr>
 <tr><td><code>[settings] x12_997_version_as_received</code> in <code>bots.ini</code></td><td><code>False</code>: Bots writes its own 997 with grammar <code>997004010</code>. <code>True</code>: the version of the received GS08 if that grammar exists.</td><td><code>False</code></td><td>see <a href="#acknowledgements">Acknowledgements</a></td></tr>
+<tr><td><code>[settings] acknowledgement_envelope_as_received</code> in <code>bots.ini</code></td><td><code>False</code>: the 997 Bots makes gets <code>version</code>, <code>ISA11</code> and the separators of the envelope grammar. <code>True</code>: those of the interchange it answers, unless the partner syntax sets them.</td><td><code>False</code></td><td>see <a href="#acknowledgements">Acknowledgements</a></td></tr>
 </table></div>
 
 <h3 id="editype-x12--trouble">Troubleshooting</h3>
