@@ -7,6 +7,10 @@ Bots - CHANGELOG
 
 Based on 4.0.0rc4 below.
 
+- Logging: without ``[settings] log_file_number`` in ``bots.ini`` the engine log kept 10 old files when a new file
+  is started per run (``log_when`` not set or ``report``) but 30 with ``log_when = daily``; all keep 30 now, as
+  documented (one default, ``botsinit.LOG_FILE_NUMBER``, also for the logs of the servers).
+  Tests: ``tests/unit/test_config_and_headers.py``.
 - sftp: the server's host key is checked before the password or the key is sent. Bots 3 checked it only when a
   communication script gave it (``hostkey()``), so a server pretending to be the partner's received the login.
   The keys are kept in a known_hosts file (OpenSSH format; ``config/sftp_known_hosts``, or ``bots.ini [settings]

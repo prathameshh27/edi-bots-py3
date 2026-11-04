@@ -21,6 +21,27 @@ def test_botsconfig_get_defaults():
     assert ini.getint('s', 'missing', 7) == 7 and ini.getboolean('s', 'missing', True) is True
 
 
+@pytest.mark.parametrize('log_when', [None, 'daily', 'report'])
+def test_the_engine_log_keeps_30_old_files_when_bots_ini_names_no_log_file_number(botsenv, monkeypatch, log_when):
+    """without [settings] log_file_number the log of a new file per run kept 10 old files, the daily one 30"""
+    import logging.handlers
+    from bots import botsglobal, botsinit
+    real_get, real_getint = botsglobal.ini.get, botsglobal.ini.getint
+    monkeypatch.setattr(botsglobal.ini, 'get', lambda section, option, *args, **kwargs:
+                        log_when if (section, option) == ('settings', 'log_when')
+                        else real_get(section, option, *args, **kwargs))
+    monkeypatch.setattr(botsglobal.ini, 'getint', lambda section, option, default=None:
+                        default if option == 'log_file_number' else real_getint(section, option, default))
+    logger = botsinit.initenginelogging('ut_log_file_number')
+    try:
+        rotating = [h for h in logger.handlers if isinstance(h, logging.handlers.BaseRotatingHandler)]
+        assert [h.backupCount for h in rotating] == [30]
+    finally:
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
+
+
 def test_section_or_option_twice_in_bots_ini_is_read_as_python2_did():
     """a bots.ini of bots 3 with a section twice (python 2 accepts it) must not stop bots: last value counts"""
     from bots.botsinit import BotsConfig

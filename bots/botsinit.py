@@ -29,6 +29,7 @@ from .exceptions import (
 LOG_FORMAT = '%(asctime)s %(levelname)-9s [%(name)s] %(message)s'
 LOG_DT_FORMAT = '%Y.%m.%d %H:%M:%S'
 LOG_CONSOLE_FORMAT = LOG_FORMAT
+LOG_FILE_NUMBER = 30        # old log files kept when bots.ini names no log_file_number
 
 
 class BotsConfig(configparser.RawConfigParser):
@@ -577,13 +578,13 @@ def initenginelogging(logname):
             os.path.join(logdir, proc_name + '.log'),
             encoding="utf-8",
             when='midnight',
-            backupCount=botsglobal.ini.getint('settings', 'log_file_number', 30),
+            backupCount=botsglobal.ini.getint('settings', 'log_file_number', LOG_FILE_NUMBER),
         )
     else:
         handler = logging.handlers.RotatingFileHandler(
             os.path.join(logdir, proc_name + '.log'),
             encoding="utf-8",
-            backupCount=botsglobal.ini.getint('settings', 'log_file_number', 10),
+            backupCount=botsglobal.ini.getint('settings', 'log_file_number', LOG_FILE_NUMBER),
         )
         if log_when is None:
             # each run a new log file is used; old one is rotated
@@ -632,7 +633,7 @@ def initserverlogging(logname):
         encoding="utf-8",
         when='midnight',
         backupCount=botsglobal.ini.getint(
-            proc_name, 'log_file_number', botsglobal.ini.getint('settings', 'log_file_number', 30)),
+            proc_name, 'log_file_number', botsglobal.ini.getint('settings', 'log_file_number', LOG_FILE_NUMBER)),
     )
     fileformat = logging.Formatter(LOG_FORMAT, LOG_DT_FORMAT)
     handler.setFormatter(fileformat)
